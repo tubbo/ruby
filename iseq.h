@@ -118,6 +118,45 @@ enum defined_type {
     DEFINED_FUNC
 };
 
+#define OPT_OP_RECHECK_INIT 10
+
+#if 1
+#define FUNC_FASTCALL_(x) x
+#else
+#define FUNC_FASTCALL_(x) FUNC_FASTCALL(x)
+#endif
+
+typedef FUNC_FASTCALL_(VALUE (*opt_data_unary_func_t)(VALUE a));
+typedef FUNC_FASTCALL_(VALUE (*opt_data_binary_func_t)(VALUE a, VALUE b));
+typedef struct opt_data_base *OPDATA;
+
+struct opt_data_base {
+    int counter;
+    ID selector;
+};
+
+struct opt_data_unary {
+    int counter;
+    ID selector;
+
+    opt_data_unary_func_t func;
+    struct opt_data_unary_func_entry {
+	opt_data_unary_func_t func;
+	struct opt_data_unary_func_entry *next;
+    } *func_list;
+};
+
+struct opt_data_binary {
+    int counter;
+    ID selector;
+
+    opt_data_binary_func_t func;
+    struct opt_data_binary_func_entry {
+	opt_data_binary_func_t func;
+	struct opt_data_binary_func_entry *next;
+    } *func_list;
+};
+
 #if defined __GNUC__ && __GNUC__ >= 4
 #pragma GCC visibility pop
 #endif

@@ -1867,3 +1867,57 @@ check_match(VALUE pattern, VALUE target, enum vm_check_match_type type)
     }
 }
 
+static VALUE
+opt_unary_func(VALUE a, struct opt_data_unary *data)
+{
+    VALUE ret;
+
+    ret = (*data->func)(a);
+
+    if (UNLIKELY(ret == Qundef)) {
+	struct opt_data_unary_func_entry *entry = data->func_list;
+
+	while (entry) {
+	    ret = (*entry->func)(a);
+	    if (ret != Qundef) {
+		data->func = entry->func;
+		data->counter = OPT_OP_RECHECK_INIT;
+		return ret;
+	    }
+	    entry = entry->next;
+	}
+
+	/* not found */
+	data->counter--;
+	return Qundef;
+    }
+    else {
+	return ret;
+    }
+}
+
+static VALUE
+opt_binary_func(VALUE a, VALUE b, struct opt_data_binary *data)
+{
+    VALUE ret;
+
+    if (LIKELY(data->func && (ret = (*data->func)(a, b)) != Qundef)) {
+	return ret;
+    }
+    else {
+	struct opt_data_binary_func_entry *entry = data->func_list;
+
+	while (entry) {
+	    ret = (*entry->func)(a, b);
+	    if (ret != Qundef) {
+		data->func = entry->func;
+		data->counter = OPT_OP_RECHECK_INIT;
+		return ret;
+	    }
+	    entry = entry->next;
+	}
+	/* not found */
+	data->counter--;
+	return Qundef;
+    }
+}

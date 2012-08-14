@@ -1501,6 +1501,11 @@ iseq_set_sequence(rb_iseq_t *iseq, LINK_ANCHOR *anchor)
 			    generated_iseq[pos + 1 + j] = (VALUE)entry;
 			}
 			break;
+		      case TS_OPDATA:
+			{
+			    generated_iseq[pos + 1 + j] = operands[j];
+			}
+			break;
 		      default:
 			rb_compile_error(RSTRING_PTR(iseq->location.path), iobj->line_no,
 					 "unknown operand type: %c", type);
@@ -1855,6 +1860,65 @@ insn_set_specialized_instruction(rb_iseq_t *iseq, INSN *iobj, int insn_id)
     return COMPILE_OK;
 }
 
+#define FIXNUM_2_P(a, b) ((a) & (b) & 1)
+
+static VALUE
+FUNC_FASTCALL_(minus_fixnum_func)(VALUE recv, VALUE arg)
+{
+    if (LIKELY(FIXNUM_2_P(recv, arg))) {
+	long a, b, c;
+	a = FIX2LONG(recv);
+	b = FIX2LONG(arg);
+	c = a - b;
+
+	if (LIKELY(FIXABLE(c))) {
+	    return LONG2FIX(c);
+	}
+	else {
+	    return rb_big_minus(rb_int2big(a), rb_int2big(b));
+	}
+    }
+    else {
+	return Qundef;
+    }
+}
+
+#define HEAP_CLASS_OF(obj) RBASIC(obj)->klass
+
+static VALUE
+FUNC_FASTCALL_(minus_float_func)(VALUE recv, VALUE obj)
+{
+    if (!SPECIAL_CONST_P(recv) && !SPECIAL_CONST_P(obj)) {
+	if (HEAP_CLASS_OF(recv) == rb_cFloat && HEAP_CLASS_OF(obj) == rb_cFloat) {
+	    return DBL2NUM(RFLOAT_VALUE(recv) - RFLOAT_VALUE(obj));
+	}
+    }
+    return Qundef;
+}
+
+struct opt_data_binary_func_entry minus_funclist = {
+    minus_float_func, 0
+};
+
+static int
+insn_set_opt_binary(rb_iseq_t *iseq, INSN *iobj, ID mid)
+{
+    struct opt_data_binary *data = (struct opt_data_binary *)malloc(sizeof(struct opt_data_binary));
+    /* TODO: gc, etc */
+    data->counter = OPT_OP_RECHECK_INIT;
+    data->selector = mid;
+    data->func_list = &minus_funclist;
+    data->func = data->func_list->func;
+
+    iobj->insn_id = BIN(opt_binary);
+    iobj->operand_size = 2;
+    iobj->operands[0] = (VALUE)data;
+    iobj->operands[1] = INT2FIX(iseq->ic_size++);
+
+    return COMPILE_OK;
+}
+
+
 static int
 iseq_specialized_instruction(rb_iseq_t *iseq, INSN *iobj)
 {
@@ -1879,7 +1943,6 @@ iseq_specialized_instruction(rb_iseq_t *iseq, INSN *iobj)
 	      case 1:
 		switch (mid) {
 		  case idPLUS:	 SP_INSN(plus);	  break;
-		  case idMINUS:	 SP_INSN(minus);  break;
 		  case idMULT:	 SP_INSN(mult);	  break;
 		  case idDIV:	 SP_INSN(div);	  break;
 		  case idMOD:	 SP_INSN(mod);	  break;
@@ -1891,8 +1954,18 @@ iseq_specialized_instruction(rb_iseq_t *iseq, INSN *iobj)
 		  case idGE:	 SP_INSN(ge);	  break;
 		  case idLTLT:	 SP_INSN(ltlt);	  break;
 		  case idAREF:	 SP_INSN(aref);	  break;
+		  case idMINUS:	{
+		      if (0) {
+			  SP_INSN(minus);
+		      }
+		      else {
+			  insn_set_opt_binary(iseq, iobj, mid);
+		      }
+		      break;
+		  }
+		  default:
+		    break;
 		}
-		break;
 	    }
 	}
     }
@@ -5246,6 +5319,11 @@ insn_data_to_s_detail(INSN *iobj)
 	      case TS_CDHASH:	/* case/when condition cache */
 		rb_str_cat2(str, "<ch>");
 		break;
+	      case TS_OPDATA: {
+		  struct opt_data_base *data = (struct opt_data_base *)OPERAND_AT(iobj, j);
+		  rb_str_catf(str, "<ic:%s>", rb_id2name(data->selector));
+		  break;
+	      }
 	      default:{
 		rb_raise(rb_eSyntaxError, "unknown operand type: %c", type);
 	      }

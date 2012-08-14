@@ -948,6 +948,8 @@ class RubyVM
         "TS_ISEQ"
       when /rb_insn_func_t/
         "TS_FUNCPTR"
+      when /OPDATA/
+        "TS_OPDATA"
       else
         raise "unknown op type: #{op}"
       end
@@ -966,6 +968,7 @@ class RubyVM
       'TS_ISEQ'      => 'S',
       'TS_VARIABLE'  => '.',
       'TS_FUNCPTR'   => 'F',
+      'TS_OPDATA'    => 'P',
     }
 
     # insns_info.inc

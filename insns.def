@@ -2126,6 +2126,58 @@ opt_regexpmatch2
 
 /**
   @c optimize
+  @e optimized unary operation
+  @j 最適化された単項演算
+ */
+DEFINE_INSN
+opt_unary
+(OPDATA dataptr, IC ic)
+(VALUE a)
+(VALUE val)
+{
+    struct opt_data_unary *data = (struct opt_data_unary *)dataptr;
+
+    if (data->counter == 0 || (val = opt_unary_func(a, data)) == Qundef) {
+	PUSH(a);
+	CALL_SIMPLE_METHOD(0, data->selector, a);
+    }
+}
+
+/**
+  @c optimize
+  @e optimized unary operation
+  @j 最適化された単項演算
+ */
+DEFINE_INSN
+opt_binary
+(OPDATA dataptr, IC ic)
+(VALUE recv, VALUE obj)
+(VALUE val)
+{
+    struct opt_data_binary *data = (struct opt_data_binary *)dataptr;
+
+    if (FIXNUM_2_P(recv, obj) && BASIC_OP_UNREDEFINED_P(BOP_MINUS, FIXNUM_REDEFINED_OP_FLAG)) {
+	long a, b, c;
+	a = FIX2LONG(recv);
+	b = FIX2LONG(obj);
+	c = a - b;
+
+	if (LIKELY(FIXABLE(c))) {
+	    val = LONG2FIX(c);
+	}
+	else {
+	    val = rb_big_minus(rb_int2big(a), rb_int2big(b));
+	}
+    }
+    else if (data->counter == 0 || (val = opt_binary_func(recv, obj, data)) == Qundef) {
+	PUSH(recv);
+	PUSH(obj);
+	CALL_SIMPLE_METHOD(1, data->selector, recv);
+    }
+}
+
+/**
+  @c optimize
   @e call native compiled method
   @j ネイティブコンパイルしたメソッドを起動。
  */

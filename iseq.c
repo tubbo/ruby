@@ -1046,6 +1046,10 @@ insn_operand_intern(rb_iseq_t *iseq,
 	ret = rb_str_new2("<funcptr>");
 	break;
 
+      case TS_OPDATA:
+	ret = rb_sprintf("<opdata:%s>", rb_id2name(((struct opt_data_base *)op)->selector));
+	break;
+
       default:
 	rb_bug("rb_iseq_disasm: unknown operand type: %c", type);
     }
