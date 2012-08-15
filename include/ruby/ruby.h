@@ -1416,16 +1416,8 @@ int ruby_native_thread_p(void);
 typedef unsigned int rb_event_flag_t;
 typedef void (*rb_event_hook_func_t)(rb_event_flag_t evflag, VALUE data, VALUE self, ID mid, VALUE klass);
 
-typedef struct rb_event_hook_struct {
-    rb_event_flag_t flag;
-    rb_event_hook_func_t func;
-    VALUE data;
-    struct rb_event_hook_struct *next;
-} rb_event_hook_t;
-
 #define RB_EVENT_HOOKS_HAVE_CALLBACK_DATA 1
-void rb_add_event_hook(rb_event_hook_func_t func, rb_event_flag_t events,
-		       VALUE data);
+void rb_add_event_hook(rb_event_hook_func_t func, rb_event_flag_t events, VALUE data);
 int rb_remove_event_hook(rb_event_hook_func_t func);
 
 /* locale insensitive functions */
