@@ -274,7 +274,7 @@ exec_hooks(rb_thread_t *th, rb_hook_list_t *list, rb_event_flag_t event, VALUE s
     TH_PUSH_TAG(th);
     if ((state = TH_EXEC_TAG()) == 0) {
 	while (hook) {
-	    if (LIKELY(!(hook->hook_flags & RUBY_HOOK_FLAG_DELETED))) {
+	    if (LIKELY(!(hook->hook_flags & RUBY_HOOK_FLAG_DELETED)) && (event & hook->events)) {
 		(*hook->func)(event, hook->data, self, id, klass);
 	    }
 	    hook = hook->next;

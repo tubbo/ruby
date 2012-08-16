@@ -93,6 +93,8 @@ class TestContinuation < Test::Unit::TestCase
     cont = callcc { |cc| cc }
     if cont
       set_trace_func(func)
+    else
+      set_trace_func(nil)
     end
   end
 
@@ -117,6 +119,8 @@ class TestContinuation < Test::Unit::TestCase
     cont = callcc { |cc| cc }
     if cont
       Thread.current.set_trace_func(func)
+    else
+      set_trace_func(nil)
     end
   end
 
