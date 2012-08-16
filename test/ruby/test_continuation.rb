@@ -82,15 +82,17 @@ class TestContinuation < Test::Unit::TestCase
     cont = nil
     func = lambda do |*args|
       if orig_thread == Thread.current
-        @memo += 1
-        cont.call(nil)
+        if cont
+          @memo += 1
+          c = cont
+          cont = nil
+          c.call(nil)
+        end
       end
     end
     cont = callcc { |cc| cc }
     if cont
       set_trace_func(func)
-    else
-      set_trace_func(nil)
     end
   end
 
@@ -105,14 +107,16 @@ class TestContinuation < Test::Unit::TestCase
   def tracing_with_thread_set_trace_func
     cont = nil
     func = lambda do |*args|
-      @memo += 1
-      cont.call(nil)
+      if cont
+        @memo += 1
+        c = cont
+        cont = nil
+        c.call(nil)
+      end
     end
     cont = callcc { |cc| cc }
     if cont
       Thread.current.set_trace_func(func)
-    else
-      Thread.current.set_trace_func(nil)
     end
   end
 
