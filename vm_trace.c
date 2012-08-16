@@ -219,14 +219,6 @@ rb_clear_trace_func(void)
 
 /* invoke hooks */
 
-struct event_call_args {
-    VALUE klass;
-    VALUE self;
-    VALUE proc;
-    ID id;
-    rb_event_flag_t event;
-};
-
 static void
 clean_hooks(rb_hook_list_t *list)
 {
@@ -263,13 +255,15 @@ exec_hooks(rb_thread_t *th, rb_hook_list_t *list, rb_event_flag_t event, VALUE s
     int state;
     volatile int raised;
 
-    if (list->need_clean) {
+    if (UNLIKELY(list->need_clean)) {
 	clean_hooks(list);
     }
 
     raised = rb_threadptr_reset_raised(th);
 
     hook = list->hooks;
+
+    /* TODO: Support !RUBY_HOOK_FLAG_SAFE hooks */
 
     TH_PUSH_TAG(th);
     if ((state = TH_EXEC_TAG()) == 0) {
@@ -302,10 +296,13 @@ rb_threadptr_exec_event_hooks(rb_thread_t *th, rb_event_flag_t event, VALUE self
 	{
 	    const VALUE errinfo = th->errinfo;
 
+	    /* thread local traces */
 	    if (th->event_hooks.events & event) {
 		state = exec_hooks(th, &th->event_hooks, event, self, id, klass);
 		if (state) goto terminate;
 	    }
+
+	    /* vm global traces */
 	    if (th->vm->event_hooks.events & event) {
 		state = exec_hooks(th, &th->vm->event_hooks, event, self, id, klass);
 		if (state) goto terminate;
