@@ -262,14 +262,12 @@ exec_hooks(rb_thread_t *th, rb_hook_list_t *list, rb_event_flag_t event, VALUE s
     rb_event_hook_t *hook;
     int state;
     volatile int raised;
-    volatile int outer_state;
 
     if (list->need_clean) {
 	clean_hooks(list);
     }
 
     raised = rb_threadptr_reset_raised(th);
-    outer_state = th->state;
 
     hook = list->hooks;
 
@@ -287,7 +285,6 @@ exec_hooks(rb_thread_t *th, rb_hook_list_t *list, rb_event_flag_t event, VALUE s
     if (raised) {
 	rb_threadptr_set_raised(th);
     }
-    th->state = outer_state;
 
     return state;
 }
@@ -296,19 +293,14 @@ void
 rb_threadptr_exec_event_hooks(rb_thread_t *th, rb_event_flag_t event, VALUE self, ID id, VALUE klass)
 {
     if (th->trace_running == 0 &&
-	self != rb_mRubyVMFrozenCore /* skip special method. TODO: remove it. */) {
+	self != rb_mRubyVMFrozenCore /* skip special methods. TODO: remove it. */) {
 	int state;
+	int outer_state = th->state;
+	th->state = 0;
 
 	th->trace_running = 1;
 	{
 	    const VALUE errinfo = th->errinfo;
-	    struct event_call_args args;
-
-	    args.event = event;
-	    args.self = self;
-	    args.id = id;
-	    args.klass = klass;
-	    args.proc = 0;
 
 	    if (th->event_hooks.events & event) {
 		state = exec_hooks(th, &th->event_hooks, event, self, id, klass);
@@ -319,7 +311,6 @@ rb_threadptr_exec_event_hooks(rb_thread_t *th, rb_event_flag_t event, VALUE self
 		if (state) goto terminate;
 	    }
 	    th->errinfo = errinfo;
-
 	}
       terminate:
 	th->trace_running = 0;
@@ -327,6 +318,7 @@ rb_threadptr_exec_event_hooks(rb_thread_t *th, rb_event_flag_t event, VALUE self
 	if (state) {
 	    TH_JUMP_TAG(th, state);
 	}
+	th->state = outer_state;
     }
 }
 
@@ -355,12 +347,12 @@ rb_suppress_tracing(VALUE (*func)(VALUE), VALUE arg)
 	rb_threadptr_set_raised(th);
     }
     th->trace_running = tracing;
-    th->state = outer_state;
 
     if (state) {
 	JUMP_TAG(state);
     }
 
+    th->state = outer_state;
     return result;
 }
 
@@ -417,7 +409,6 @@ set_trace_func(VALUE obj, VALUE trace)
     rb_remove_event_hook(call_trace_func);
 
     if (NIL_P(trace)) {
-	rb_remove_event_hook(call_trace_func);
 	return Qnil;
     }
 
@@ -474,9 +465,9 @@ thread_set_trace_func_m(VALUE obj, VALUE trace)
     rb_threadptr_remove_event_hook(th, call_trace_func);
 
     if (NIL_P(trace)) {
-	rb_threadptr_remove_event_hook(th, call_trace_func);
 	return Qnil;
     }
+
     thread_add_trace_func(th, trace);
     return trace;
 }
