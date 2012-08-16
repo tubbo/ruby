@@ -176,10 +176,11 @@ remove_event_hook_by_func(rb_hook_list_t *list, rb_event_hook_func_t func)
 	if (func == 0 || hook->func == func) {
 	    hook->hook_flags |= RUBY_HOOK_FLAG_DELETED;
 	    ret+=1;
+	    list->need_clean++;
 	}
 	hook = hook->next;
     }
-    list->need_clean++;
+
     return ret;
 }
 
@@ -223,6 +224,7 @@ static void
 clean_hooks(rb_hook_list_t *list)
 {
     rb_event_hook_t *hook = list->hooks, *prev = 0;
+
     list->events = 0;
     list->need_clean = 0;
 
@@ -235,6 +237,7 @@ clean_hooks(rb_hook_list_t *list)
 	    else {
 		prev->next = hook->next;
 	    }
+
 	    recalc_remove_ruby_vm_event_flags(hook->events);
 	    xfree(hook);
 	    goto next_iter;
@@ -255,7 +258,7 @@ exec_hooks(rb_thread_t *th, rb_hook_list_t *list, rb_event_flag_t event, VALUE s
     int state;
     volatile int raised;
 
-    if (UNLIKELY(list->need_clean)) {
+    if (UNLIKELY(list->need_clean > 0)) {
 	clean_hooks(list);
     }
 
@@ -295,16 +298,19 @@ rb_threadptr_exec_event_hooks(rb_thread_t *th, rb_event_flag_t event, VALUE self
 	th->trace_running = 1;
 	{
 	    const VALUE errinfo = th->errinfo;
+	    rb_hook_list_t *list;
 
 	    /* thread local traces */
-	    if (th->event_hooks.events & event) {
-		state = exec_hooks(th, &th->event_hooks, event, self, id, klass);
+	    list = &th->event_hooks;
+	    if (list->events & event) {
+		state = exec_hooks(th, list, event, self, id, klass);
 		if (state) goto terminate;
 	    }
 
 	    /* vm global traces */
-	    if (th->vm->event_hooks.events & event) {
-		state = exec_hooks(th, &th->vm->event_hooks, event, self, id, klass);
+	    list = &th->vm->event_hooks;
+	    if (list->events & event) {
+		state = exec_hooks(th, list, event, self, id, klass);
 		if (state) goto terminate;
 	    }
 	    th->errinfo = errinfo;
