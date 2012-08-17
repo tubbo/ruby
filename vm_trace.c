@@ -50,8 +50,10 @@ static int ruby_event_flag_count[MAX_EVENT_NUM] = {0};
 /* Safe API.  Callback will be called under PUSH_TAG() */
 void rb_add_event_hook(rb_event_hook_func_t func, rb_event_flag_t events, VALUE data);
 int rb_remove_event_hook(rb_event_hook_func_t func);
+int rb_remove_event_hook_with_data(rb_event_hook_func_t func, VALUE data);
 void rb_thread_add_event_hook(VALUE thval, rb_event_hook_func_t func, rb_event_flag_t events, VALUE data);
 int rb_thread_remove_event_hook(VALUE thval, rb_event_hook_func_t func);
+int rb_thread_remove_event_hook_with_data(VALUE thval, rb_event_hook_func_t func, VALUE data);
 
 /* Raw API.  Callback will be called without PUSH_TAG() */
 void rb_add_raw_event_hook(rb_event_hook_func_t func, rb_event_flag_t events, VALUE data);
@@ -167,16 +169,18 @@ rb_add_raw_event_hook(rb_event_hook_func_t func, rb_event_flag_t events, VALUE d
 
 /* if func is 0, then clear all funcs */
 static int
-remove_event_hook_by_func(rb_hook_list_t *list, rb_event_hook_func_t func)
+remove_event_hook(rb_hook_list_t *list, rb_event_hook_func_t func, VALUE data)
 {
     int ret = 0;
     rb_event_hook_t *hook = list->hooks;
 
     while (hook) {
 	if (func == 0 || hook->func == func) {
-	    hook->hook_flags |= RUBY_HOOK_FLAG_DELETED;
-	    ret+=1;
-	    list->need_clean++;
+	    if (data == Qundef || hook->data == data) {
+		hook->hook_flags |= RUBY_HOOK_FLAG_DELETED;
+		ret+=1;
+		list->need_clean++;
+	    }
 	}
 	hook = hook->next;
     }
@@ -185,21 +189,33 @@ remove_event_hook_by_func(rb_hook_list_t *list, rb_event_hook_func_t func)
 }
 
 static int
-rb_threadptr_remove_event_hook(rb_thread_t *th, rb_event_hook_func_t func)
+rb_threadptr_remove_event_hook(rb_thread_t *th, rb_event_hook_func_t func, VALUE data)
 {
-    return remove_event_hook_by_func(&th->event_hooks, func);
+    return remove_event_hook(&th->event_hooks, func, data);
 }
 
 int
 rb_thread_remove_event_hook(VALUE thval, rb_event_hook_func_t func)
 {
-    return rb_threadptr_remove_event_hook(thval2thread_t(thval), func);
+    return rb_threadptr_remove_event_hook(thval2thread_t(thval), func, Qundef);
+}
+
+int
+rb_thread_remove_event_hook_with_data(VALUE thval, rb_event_hook_func_t func, VALUE data)
+{
+    return rb_threadptr_remove_event_hook(thval2thread_t(thval), func, data);
 }
 
 int
 rb_remove_event_hook(rb_event_hook_func_t func)
 {
-    return remove_event_hook_by_func(&GET_VM()->event_hooks, func);
+    return remove_event_hook(&GET_VM()->event_hooks, func, Qundef);
+}
+
+int
+rb_remove_event_hook_with_data(rb_event_hook_func_t func, VALUE data)
+{
+    return remove_event_hook(&GET_VM()->event_hooks, func, data);
 }
 
 static int
@@ -207,7 +223,7 @@ clear_trace_func_i(st_data_t key, st_data_t val, st_data_t flag)
 {
     rb_thread_t *th;
     GetThreadPtr((VALUE)key, th);
-    rb_threadptr_remove_event_hook(th, 0);
+    rb_threadptr_remove_event_hook(th, 0, Qundef);
     return ST_CONTINUE;
 }
 
@@ -465,7 +481,7 @@ thread_set_trace_func_m(VALUE obj, VALUE trace)
 {
     rb_thread_t *th;
     GetThreadPtr(obj, th);
-    rb_threadptr_remove_event_hook(th, call_trace_func);
+    rb_threadptr_remove_event_hook(th, call_trace_func, Qundef);
 
     if (NIL_P(trace)) {
 	return Qnil;
@@ -479,24 +495,37 @@ static const char *
 get_event_name(rb_event_flag_t event)
 {
     switch (event) {
-      case RUBY_EVENT_LINE:
-	return "line";
-      case RUBY_EVENT_CLASS:
-	return "class";
-      case RUBY_EVENT_END:
-	return "end";
-      case RUBY_EVENT_CALL:
-	return "call";
-      case RUBY_EVENT_RETURN:
-	return "return";
-      case RUBY_EVENT_C_CALL:
-	return "c-call";
-      case RUBY_EVENT_C_RETURN:
-	return "c-return";
-      case RUBY_EVENT_RAISE:
-	return "raise";
+      case RUBY_EVENT_LINE:     return "line";
+      case RUBY_EVENT_CLASS:    return "class";
+      case RUBY_EVENT_END:      return "end";
+      case RUBY_EVENT_CALL:     return "call";
+      case RUBY_EVENT_RETURN:	return "return";
+      case RUBY_EVENT_C_CALL:	return "c-call";
+      case RUBY_EVENT_C_RETURN:	return "c-return";
+      case RUBY_EVENT_RAISE:	return "raise";
       default:
 	return "unknown";
+    }
+}
+
+static ID
+get_event_id(rb_event_flag_t event)
+{
+    ID id;
+
+    switch (event) {
+#define C(name, NAME) case RUBY_EVENT_##NAME: CONST_ID(id, #name); return id;
+	C(line, LINE);
+	C(class, CLASS);
+	C(end, END);
+	C(call, CALL);
+	C(return, RETURN);
+	C(c_call, C_CALL);
+	C(c_return, C_RETURN);
+	C(raise, RAISE);
+#undef C
+      default:
+	return 0;
     }
 }
 
@@ -536,16 +565,294 @@ call_trace_func(rb_event_flag_t event, VALUE proc, VALUE self, ID id, VALUE klas
     rb_proc_call_with_block(proc, 6, argv, Qnil);
 }
 
-/* (2-2) TracePoint API (not yet) */
+/* (2-2) TracePoint API */
 
+static VALUE rb_cTracePoint;
+
+typedef struct rb_tp_struct {
+    rb_thread_t *target_th;
+    rb_event_flag_t events;
+    int tracing;
+    VALUE proc;
+
+    /* event, file, line, id, binding, klass */
+    rb_event_flag_t event;
+    VALUE self;
+    ID id;
+    VALUE klass;
+} rb_tp_t;
+
+static void
+tp_mark(void *ptr)
+{
+    rb_tp_t *tp = (rb_tp_t *)ptr;
+    if (ptr) {
+	if (tp->target_th) rb_gc_mark(tp->target_th->self);
+	rb_gc_mark(tp->proc);
+
+	rb_gc_mark(tp->target_th->self);
+	rb_gc_mark(tp->klass);
+    }
+}
+
+static void
+tp_free(void *ptr)
+{
+    /* do nothing */
+}
+
+static size_t
+tp_memsize(const void *ptr)
+{
+    return sizeof(rb_tp_t);
+}
+
+static const rb_data_type_t tp_data_type = {
+    "tracepoint",
+    {tp_mark, tp_free, tp_memsize,},
+};
+
+static VALUE
+tp_alloc(VALUE klass)
+{
+    rb_tp_t *tp;
+    return TypedData_Make_Struct(klass, rb_tp_t, &tp_data_type, tp);
+}
+
+static rb_event_flag_t
+symbol2event_flag(VALUE v)
+{
+    static ID id;
+    VALUE sym = rb_convert_type(v, T_SYMBOL, "Symbol", "to_sym");
+
+#define C(name, NAME) CONST_ID(id, #name); if (sym == ID2SYM(id)) return RUBY_EVENT_##NAME
+    C(line, LINE);
+    C(class, CLASS);
+    C(end, END);
+    C(call, CALL);
+    C(return, RETURN);
+    C(c_call, C_CALL);
+    C(c_return, C_RETURN);
+    C(raise, RAISE);
+#undef C
+    rb_raise(rb_eArgError, "unknown event: %s", rb_id2name(SYM2ID(sym)));
+}
+
+static rb_tp_t *
+tpptr(VALUE tpval)
+{
+    rb_tp_t *tp;
+    TypedData_Get_Struct(tpval, rb_tp_t, &tp_data_type, tp);
+    return tp;
+}
+
+static void
+tp_attr_check_active(rb_tp_t *tp)
+{
+    if (tp->event == 0) {
+	rb_raise(rb_eRuntimeError, "access from outside");
+    }
+}
+
+static VALUE
+tp_attr_event_m(VALUE tpval)
+{
+    rb_tp_t *tp = tpptr(tpval);
+    tp_attr_check_active(tp);
+    return ID2SYM(get_event_id(tp->event));
+}
+
+static VALUE
+tp_attr_line_m(VALUE tpval)
+{
+    rb_tp_t *tp = tpptr(tpval);
+    tp_attr_check_active(tp);
+    return INT2FIX(rb_sourceline());
+}
+
+static VALUE
+tp_attr_file_m(VALUE tpval)
+{
+    rb_tp_t *tp = tpptr(tpval);
+    const char *srcfile = rb_sourcefile();
+
+    tp_attr_check_active(tp);
+    return srcfile ? rb_str_new2(srcfile) : Qnil;
+}
+
+static VALUE
+tp_attr_id_m(VALUE tpval)
+{
+    rb_tp_t *tp = tpptr(tpval);
+    tp_attr_check_active(tp);
+    if (!tp->klass)
+      rb_thread_method_id_and_class(GET_THREAD(), &tp->id, &tp->klass);
+    return ID2SYM(tp->id);
+}
+
+static VALUE
+tp_attr_klass_m(VALUE tpval)
+{
+    rb_tp_t *tp = tpptr(tpval);
+    tp_attr_check_active(tp);
+
+    if (!tp->klass)
+      rb_thread_method_id_and_class(GET_THREAD(), 0, &tp->klass);
+    return tp->klass;
+}
+
+static VALUE
+tp_attr_binding_m(VALUE tpval)
+{
+    rb_tp_t *tp = tpptr(tpval);
+    tp_attr_check_active(tp);
+
+    return (tp->self && rb_sourcefile()) ? rb_binding_new() : Qnil;
+}
+
+static VALUE
+tp_attr_self_m(VALUE tpval)
+{
+    rb_tp_t *tp = tpptr(tpval);
+    tp_attr_check_active(tp);
+
+    return tp->self;
+}
+
+static void
+tp_call_trace(rb_event_flag_t event, VALUE tpval, VALUE self, ID id, VALUE klass)
+{
+    rb_tp_t *tp = tpptr(tpval);
+    rb_thread_t *th = GET_THREAD();
+    int state;
+
+    if (UNLIKELY(id == ID_ALLOCATOR)) {
+	return;
+    }
+
+    tp->event = event;
+    tp->self = self;
+    tp->id = id;
+    tp->klass = klass;
+
+    TH_PUSH_TAG(th);
+    if ((state = TH_EXEC_TAG()) == 0) {
+	rb_proc_call_with_block(tp->proc, 1, &tpval, Qnil);
+    }
+    TH_POP_TAG();
+
+    /* clear event */
+    tp->event = 0;
+
+    if (state) {
+	TH_JUMP_TAG(th, state);
+    }
+}
+
+static VALUE
+tp_set_trace(VALUE tpval)
+{
+    rb_tp_t *tp = tpptr(tpval);
+
+    if (tp->tracing) {
+	/* already tracing */
+	/* TODO: raise error? */
+    }
+    else {
+	if (tp->target_th) {
+	    rb_thread_add_event_hook(tp->target_th->self, tp_call_trace, tp->events, tpval);
+	}
+	else {
+	    rb_add_event_hook(tp_call_trace, tp->events, tpval);
+	}
+	tp->tracing = 1;
+    }
+
+    return tpval;
+}
+
+static VALUE
+tp_unset_trace(VALUE tpval)
+{
+    rb_tp_t *tp = tpptr(tpval);
+
+    if (!tp->tracing) {
+	/* not tracing */
+	/* TODO: raise error? */
+    }
+    else {
+	if (tp->target_th) {
+	    rb_thread_remove_event_hook_with_data(tp->target_th->self, tp_call_trace, tpval);
+	}
+	else {
+	    rb_remove_event_hook_with_data(tp_call_trace, tpval);
+	}
+	tp->tracing = 0;
+    }
+
+    return tpval;
+}
+
+static VALUE
+tp_initialize(rb_thread_t *target_th, rb_event_flag_t events, VALUE proc)
+{
+    VALUE tpval = tp_alloc(rb_cTracePoint);
+    rb_tp_t *tp;
+    TypedData_Get_Struct(tpval, rb_tp_t, &tp_data_type, tp);
+
+    tp->proc = proc;
+    tp->events = events;
+
+    tp_set_trace(tpval);
+
+    return tpval;
+}
+
+static VALUE
+tp_trace_s(int argc, VALUE *argv)
+{
+    rb_event_flag_t events = 0;
+    int i;
+
+    if (argc > 0) {
+	for (i=0; i<argc; i++) {
+	    events |= symbol2event_flag(argv[i]);
+	}
+    }
+    else {
+	events = RUBY_EVENT_ALL;
+    }
+
+    if (!rb_block_given_p()) {
+	rb_raise(rb_eThreadError, "must be called with a block");
+    }
+
+    return tp_initialize(0, events, rb_block_proc());
+}
 
 /* This function is called from inits.c */
 void
 Init_vm_trace(void)
 {
-    /* trace */
+    /* trace_func */
     rb_define_global_function("set_trace_func", set_trace_func, 1);
     rb_define_method(rb_cThread, "set_trace_func", thread_set_trace_func_m, 1);
     rb_define_method(rb_cThread, "add_trace_func", thread_add_trace_func_m, 1);
-}
 
+    /* TracePoint */
+    rb_cTracePoint = rb_define_class("TracePoint", rb_cObject);
+    rb_undef_alloc_func(rb_cTracePoint);
+    rb_undef_method(CLASS_OF(rb_cTracePoint), "new");
+    rb_define_singleton_method(rb_cTracePoint, "trace", tp_trace_s, -1);
+
+    rb_define_method(rb_cTracePoint, "retrace", tp_set_trace, 0);
+    rb_define_method(rb_cTracePoint, "untrace", tp_unset_trace, 0);
+
+    rb_define_method(rb_cTracePoint, "event", tp_attr_event_m, 0);
+    rb_define_method(rb_cTracePoint, "line", tp_attr_line_m, 0);
+    rb_define_method(rb_cTracePoint, "file", tp_attr_file_m, 0);
+    rb_define_method(rb_cTracePoint, "id", tp_attr_id_m, 0);
+    rb_define_method(rb_cTracePoint, "klass", tp_attr_klass_m, 0);
+    rb_define_method(rb_cTracePoint, "binding", tp_attr_binding_m, 0);
+    rb_define_method(rb_cTracePoint, "self", tp_attr_self_m, 0);
+}
