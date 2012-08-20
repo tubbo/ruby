@@ -589,8 +589,6 @@ tp_mark(void *ptr)
     if (ptr) {
 	if (tp->target_th) rb_gc_mark(tp->target_th->self);
 	rb_gc_mark(tp->proc);
-
-	rb_gc_mark(tp->target_th->self);
 	rb_gc_mark(tp->klass);
     }
 }
