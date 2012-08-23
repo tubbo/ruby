@@ -214,7 +214,7 @@ enum vm_regan_acttype {
 #define BASIC_OP_UNREDEFINED_P(op, klass) (LIKELY((ruby_vm_redefined_flag[(op)]&(klass)) == 0))
 
 #define FIXNUM_2_P(a, b) ((a) & (b) & 1)
-#ifdef USE_FLONUM
+#if USE_FLONUM
 #define FLONUM_2_P(a, b) (((((a)^2) | ((b)^2)) & 3) == 0) /* (FLONUM_P(a) && FLONUM_P(b)) */
 #else
 #define FLONUM_2_P(a, b) 0

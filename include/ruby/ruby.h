@@ -350,11 +350,15 @@ rb_long2int_inline(long n)
 #define ID2SYM(x) (((VALUE)(x)<<RUBY_SPECIAL_SHIFT)|SYMBOL_FLAG)
 #define SYM2ID(x) RSHIFT((unsigned long)(x),RUBY_SPECIAL_SHIFT)
 
+#ifndef USE_FLONUM
 #if SIZEOF_VALUE >= SIZEOF_DOUBLE
 #define USE_FLONUM 1
+#else
+#define USE_FLONUM 0
+#endif
 #endif
 
-#ifdef USE_FLONUM
+#if USE_FLONUM
 #define FLONUM_P(x) ((((int)(SIGNED_VALUE)(x))&FLONUM_MASK) == FLONUM_FLAG)
 #else
 #define FLONUM_P(x) 0
@@ -386,7 +390,7 @@ USE_FLONUM
 
 /* special constants - i.e. non-zero and non-fixnum constants */
 enum ruby_special_consts {
-#ifdef USE_FLONUM
+#if USE_FLONUM
     RUBY_Qfalse = 0x00,
     RUBY_Qtrue  = 0x14,
     RUBY_Qnil   = 0x08,
@@ -417,7 +421,7 @@ enum ruby_special_consts {
 #define Qundef ((VALUE)RUBY_Qundef)	/* undefined value for placeholder */
 #define IMMEDIATE_MASK RUBY_IMMEDIATE_MASK
 #define FIXNUM_FLAG RUBY_FIXNUM_FLAG
-#ifdef USE_FLONUM
+#if USE_FLONUM
 #define FLONUM_MASK RUBY_FLONUM_MASK
 #define FLONUM_FLAG RUBY_FLONUM_FLAG
 #endif
@@ -721,7 +725,7 @@ struct RFloat {
 
 VALUE rb_float_new_in_heap(double);
 
-#ifdef USE_FLONUM
+#if USE_FLONUM
 #define RUBY_BIT_ROTL(v, n) (((v) << (n)) | ((v) >> ((sizeof(v) * 8) - n)))
 #define RUBY_BIT_ROTR(v, n) (((v) >> (n)) | ((v) << ((sizeof(v) * 8) - n)))
 
@@ -1493,7 +1497,7 @@ rb_type(VALUE obj)
     return BUILTIN_TYPE(obj);
 }
 
-#ifdef USE_FLONUM
+#if USE_FLONUM
 #define RB_FLOAT_TYPE_P(obj) (FLONUM_P(obj) || TYPE(obj) == T_FLOAT)
 #else
 #define RB_FLOAT_TYPE_P(obj) (!SPECIAL_CONST_P(obj) && BUILTIN_TYPE(obj) == T_FLOAT)
