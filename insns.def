@@ -866,7 +866,7 @@ trace
 {
     rb_event_flag_t flag = (rb_event_flag_t)nf;
 
-    EXEC_EVENT_HOOK(th, flag, GET_SELF(), 0, 0 /* TODO: id, klass */);
+    EXEC_EVENT_HOOK(th, flag, GET_CFP());
 }
 
 /**********************************************************/

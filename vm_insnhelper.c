@@ -432,23 +432,28 @@ vm_call_cfunc(rb_thread_t *th, rb_control_frame_t *reg_cfp,
 {
     volatile VALUE val = 0;
     const rb_method_definition_t *def = me->def;
+    rb_control_frame_t *cfp;
 
-    EXEC_EVENT_HOOK(th, RUBY_EVENT_C_CALL, recv, me->called_id, me->klass);
+    cfp = vm_push_frame(th, 0, VM_FRAME_MAGIC_CFUNC, recv, defined_class,
+			VM_ENVVAL_BLOCK_PTR(blockptr), 0, th->cfp->sp, 1, me);
+    {
+	if (recv != rb_mRubyVMFrozenCore) { /* TODO: remove this check */
+	    EXEC_EVENT_HOOK(th, RUBY_EVENT_C_CALL, cfp);
+	}
 
-    vm_push_frame(th, 0, VM_FRAME_MAGIC_CFUNC, recv, defined_class,
-		  VM_ENVVAL_BLOCK_PTR(blockptr), 0, th->cfp->sp, 1, me);
+	reg_cfp->sp -= num + 1;
 
-    reg_cfp->sp -= num + 1;
+	val = call_cfunc(def->body.cfunc.func, recv, (int)def->body.cfunc.argc, num, reg_cfp->sp + 1);
 
-    val = call_cfunc(def->body.cfunc.func, recv, (int)def->body.cfunc.argc, num, reg_cfp->sp + 1);
+	if (reg_cfp != th->cfp + 1) {
+	    rb_bug("cfp consistency error - send");
+	}
 
-    if (reg_cfp != th->cfp + 1) {
-	rb_bug("cfp consistency error - send");
+	if (recv != rb_mRubyVMFrozenCore) { /* TODO: remove this check */
+	    EXEC_EVENT_HOOK(th, RUBY_EVENT_C_RETURN, cfp);
+	}
     }
-
     vm_pop_frame(th);
-
-    EXEC_EVENT_HOOK(th, RUBY_EVENT_C_RETURN, recv, me->called_id, me->klass);
 
     return val;
 }
@@ -461,14 +466,14 @@ vm_call_bmethod(rb_thread_t *th, VALUE recv, int argc, const VALUE *argv,
     rb_proc_t *proc;
     VALUE val;
 
-    EXEC_EVENT_HOOK(th, RUBY_EVENT_CALL, recv, me->called_id, me->klass);
+    EXEC_EVENT_HOOK(th, RUBY_EVENT_CALL, th->cfp); /* TODO: bug. solve it! */
 
     /* control block frame */
     th->passed_me = me;
     GetProcPtr(me->def->body.proc, proc);
     val = vm_invoke_proc(th, proc, recv, defined_class, argc, argv, blockptr);
 
-    EXEC_EVENT_HOOK(th, RUBY_EVENT_RETURN, recv, me->called_id, me->klass);
+    EXEC_EVENT_HOOK(th, RUBY_EVENT_RETURN, th->cfp); /* TODO: bug. solve it! */
 
     return val;
 }

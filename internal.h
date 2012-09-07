@@ -300,7 +300,6 @@ VALUE rb_make_backtrace(void);
 void rb_backtrace_print_as_bugreport(void);
 int rb_backtrace_p(VALUE obj);
 VALUE rb_backtrace_to_str_ary(VALUE obj);
-VALUE rb_vm_backtrace_object();
 
 #if defined __GNUC__ && __GNUC__ >= 4
 #pragma GCC visibility push(default)

@@ -233,4 +233,7 @@ translit_char(char *p, int from, int to)
 }
 #endif
 
+/* vm_backtrace.c */
+VALUE rb_vm_backtrace_object(rb_thread_t *th, rb_control_frame_t *cfp);
+
 #endif /* RUBY_EVAL_INTERN_H */

@@ -67,24 +67,23 @@ vm_call0(rb_thread_t* th, VALUE recv, VALUE id, int argc, const VALUE *argv,
       }
       case VM_METHOD_TYPE_NOTIMPLEMENTED:
       case VM_METHOD_TYPE_CFUNC: {
-	EXEC_EVENT_HOOK(th, RUBY_EVENT_C_CALL, recv, id, klass);
-	{
-	    rb_control_frame_t *reg_cfp = th->cfp;
-	    rb_control_frame_t *cfp =
-		vm_push_frame(th, 0, VM_FRAME_MAGIC_CFUNC,
-			      recv, klass, VM_ENVVAL_BLOCK_PTR(blockptr),
-			      0, reg_cfp->sp, 1, me);
+	  rb_control_frame_t *reg_cfp = th->cfp;
+	  rb_control_frame_t *cfp =
+	    vm_push_frame(th, 0, VM_FRAME_MAGIC_CFUNC,
+			  recv, klass, VM_ENVVAL_BLOCK_PTR(blockptr),
+			  0, reg_cfp->sp, 1, me);
+	  {
+	      cfp->me = me;
+	      EXEC_EVENT_HOOK(th, RUBY_EVENT_C_CALL, cfp);
+	      val = call_cfunc(def->body.cfunc.func, recv, def->body.cfunc.argc, argc, argv);
 
-	    cfp->me = me;
-	    val = call_cfunc(def->body.cfunc.func, recv, def->body.cfunc.argc, argc, argv);
-
-	    if (reg_cfp != th->cfp + 1) {
-		rb_bug("cfp consistency error - call0");
-	    }
-	    vm_pop_frame(th);
-	}
-	EXEC_EVENT_HOOK(th, RUBY_EVENT_C_RETURN, recv, id, klass);
-	break;
+	      if (reg_cfp != th->cfp + 1) {
+		  rb_bug("cfp consistency error - call0");
+	      }
+	      EXEC_EVENT_HOOK(th, RUBY_EVENT_C_RETURN, cfp);
+	  }
+	  vm_pop_frame(th);
+	  break;
       }
       case VM_METHOD_TYPE_ATTRSET: {
 	rb_check_arity(argc, 1, 1);
@@ -916,8 +915,7 @@ rb_iterate(VALUE (* it_proc) (VALUE), VALUE data1,
 		    printf("skipped frame: %s\n", vm_frametype_name(th->cfp));
 #endif
 		    if (UNLIKELY(VM_FRAME_TYPE(th->cfp) == VM_FRAME_MAGIC_CFUNC)) {
-			const rb_method_entry_t *me = th->cfp->me;
-			EXEC_EVENT_HOOK(th, RUBY_EVENT_C_RETURN, th->cfp->self, me->called_id, me->klass);
+			EXEC_EVENT_HOOK(th, RUBY_EVENT_C_RETURN, th->cfp);
 		    }
 
 		    th->cfp = RUBY_VM_PREVIOUS_CONTROL_FRAME(th->cfp);

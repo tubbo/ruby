@@ -48,12 +48,15 @@ typedef struct rb_trace_arg_struct {
     rb_event_flag_t event;
     rb_thread_t *th;
     rb_control_frame_t *cfp;
-    VALUE self;
     ID id;
     VALUE klass;
 } rb_trace_arg_t;
 
 typedef void (*rb_event_hook_raw_arg_func_t)(VALUE data, const rb_trace_arg_t *arg);
+
+rb_control_frame_t *rb_vm_get_ruby_level_next_cfp(rb_thread_t *th, rb_control_frame_t *cfp);
+int rb_vm_control_frame_id_and_class(rb_control_frame_t *cfp, ID *idp, VALUE *klassp);
+VALUE rb_binding_new_with_cfp(rb_thread_t *th, rb_control_frame_t *src_cfp);
 
 #define MAX_EVENT_NUM 32
 
@@ -268,7 +271,7 @@ clean_hooks(rb_hook_list_t *list)
 }
 
 static int
-exec_hooks(rb_thread_t *th, rb_hook_list_t *list, const rb_trace_arg_t *trace_arg)
+exec_hooks(rb_thread_t *th, rb_hook_list_t *list, rb_trace_arg_t *trace_arg)
 {
     int state;
     volatile int raised;
@@ -288,7 +291,10 @@ exec_hooks(rb_thread_t *th, rb_hook_list_t *list, const rb_trace_arg_t *trace_ar
 	for (hook = list->hooks; hook; hook = hook->next) {
 	    if (LIKELY(!(hook->hook_flags & RUBY_HOOK_FLAG_DELETED)) && (trace_arg->event & hook->events)) {
 		if (!(hook->hook_flags & RUBY_HOOK_FLAG_RAW_ARG)) {
-		    (*hook->func)(trace_arg->event, hook->data, trace_arg->self, trace_arg->id, trace_arg->klass);
+		    if (trace_arg->klass == 0) {
+			rb_vm_control_frame_id_and_class(trace_arg->cfp, &trace_arg->id, &trace_arg->klass);
+		    }
+		    (*hook->func)(trace_arg->event, hook->data, trace_arg->cfp->self, trace_arg->id, trace_arg->klass);
 		}
 		else {
 		    (*((rb_event_hook_raw_arg_func_t)hook->func))(hook->data, trace_arg);
@@ -306,10 +312,14 @@ exec_hooks(rb_thread_t *th, rb_hook_list_t *list, const rb_trace_arg_t *trace_ar
 }
 
 void
-rb_threadptr_exec_event_hooks(rb_thread_t *th, rb_event_flag_t event, VALUE self, ID id, VALUE klass)
+rb_threadptr_exec_event_hooks(rb_thread_t *th, rb_event_flag_t event, rb_control_frame_t *cfp)
 {
+    VALUE self = cfp->self;
+
     if (th->trace_running == 0 &&
-	self != rb_mRubyVMFrozenCore /* skip special methods. TODO: remove it. */) {
+	self != rb_mRubyVMFrozenCore /* skip special methods. TODO: remove it. */ &&
+	!((VM_FRAME_TYPE(cfp) == VM_FRAME_MAGIC_CFUNC) && (cfp->me->called_id == ID_ALLOCATOR)) /* skip ID_ALLOCATOR. TODO: remove it */
+	) {
 	int state = 0;
 	int outer_state = th->state;
 	th->state = 0;
@@ -322,10 +332,9 @@ rb_threadptr_exec_event_hooks(rb_thread_t *th, rb_event_flag_t event, VALUE self
 
 	    ta.event = event;
 	    ta.th = th;
-	    ta.cfp = th->cfp;
-	    ta.self = self;
-	    ta.id = id;
-	    ta.klass = klass;
+	    ta.cfp = cfp;
+	    ta.id = 0;
+	    ta.klass = 0;
 
 	    /* thread local traces */
 	    list = &th->event_hooks;
@@ -554,9 +563,6 @@ call_trace_func(rb_event_flag_t event, VALUE proc, VALUE self, ID id, VALUE klas
 	rb_thread_method_id_and_class(th, &id, &klass);
     }
 
-    if (id == ID_ALLOCATOR)
-      return;
-
     if (klass) {
 	if (RB_TYPE_P(klass, T_ICLASS)) {
 	    klass = RBASIC(klass)->klass;
@@ -665,10 +671,6 @@ tp_attr_event_m(VALUE tpval)
     return ID2SYM(get_event_id(tp->trace_arg->event));
 }
 
-rb_control_frame_t *rb_vm_get_ruby_level_next_cfp(rb_thread_t *th, rb_control_frame_t *cfp);
-int rb_vm_control_frame_id_and_class(rb_control_frame_t *cfp, ID *idp, VALUE *klassp);
-VALUE rb_binding_new_with_cfp(rb_thread_t *th, rb_control_frame_t *src_cfp);
-
 static VALUE
 tp_attr_line_m(VALUE tpval)
 {
@@ -704,8 +706,7 @@ tp_attr_file_m(VALUE tpval)
 static void
 fill_id_and_klass(rb_trace_arg_t *trace_arg)
 {
-    if (!trace_arg->klass)
-      rb_vm_control_frame_id_and_class(trace_arg->cfp, &trace_arg->id, &trace_arg->klass);
+    if (!trace_arg->klass) rb_vm_control_frame_id_and_class(trace_arg->cfp, &trace_arg->id, &trace_arg->klass);
 
     if (trace_arg->klass) {
 	if (RB_TYPE_P(trace_arg->klass, T_ICLASS)) {
@@ -768,7 +769,7 @@ tp_attr_self_m(VALUE tpval)
     rb_tp_t *tp = tpptr(tpval);
     tp_attr_check_active(tp);
 
-    return tp->trace_arg->self;
+    return tp->trace_arg->cfp->self;
 }
 
 static void
@@ -777,10 +778,6 @@ tp_call_trace(VALUE tpval, rb_trace_arg_t *trace_arg)
     rb_tp_t *tp = tpptr(tpval);
     rb_thread_t *th = GET_THREAD();
     int state;
-
-    if (UNLIKELY(trace_arg->id == ID_ALLOCATOR)) {
-	return;
-    }
 
     tp->trace_arg = trace_arg;
 

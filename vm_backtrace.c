@@ -356,13 +356,12 @@ backtrace_alloc(VALUE klass)
 }
 
 static void
-backtrace_each(rb_thread_t *th,
+backtrace_each(rb_thread_t *th, rb_control_frame_t *last_cfp,
 	       void (*init)(void *arg, size_t size),
 	       void (*iter_iseq)(void *arg, const rb_iseq_t *iseq, const VALUE *pc),
 	       void (*iter_cfunc)(void *arg, ID mid),
 	       void *arg)
 {
-    rb_control_frame_t *last_cfp = th->cfp;
     rb_control_frame_t *start_cfp = RUBY_VM_END_CONTROL_FRAME(th);
     rb_control_frame_t *cfp;
     ptrdiff_t size, i;
@@ -446,12 +445,12 @@ bt_iter_cfunc(void *ptr, ID mid)
 }
 
 static VALUE
-backtrace_object(rb_thread_t *th)
+backtrace_object(rb_thread_t *th, rb_control_frame_t *cfp)
 {
     struct bt_iter_arg arg;
     arg.prev_loc = 0;
 
-    backtrace_each(th,
+    backtrace_each(th, cfp,
 		   bt_init,
 		   bt_iter_iseq,
 		   bt_iter_cfunc,
@@ -461,9 +460,9 @@ backtrace_object(rb_thread_t *th)
 }
 
 VALUE
-rb_vm_backtrace_object(void)
+rb_vm_backtrace_object(rb_thread_t *th, rb_control_frame_t *cfp)
 {
-    return backtrace_object(GET_THREAD());
+    return backtrace_object(th, cfp);
 }
 
 static VALUE
@@ -575,13 +574,13 @@ backtrace_load_data(VALUE self, VALUE str)
 VALUE
 vm_backtrace_str_ary(rb_thread_t *th, int lev, int n)
 {
-    return backtrace_to_str_ary2(backtrace_object(th), lev, n);
+    return backtrace_to_str_ary2(backtrace_object(th, th->cfp), lev, n);
 }
 
 VALUE
 vm_backtrace_frame_ary(rb_thread_t *th, int lev, int n)
 {
-    return backtrace_to_frame_ary(backtrace_object(th), lev, n);
+    return backtrace_to_frame_ary(backtrace_object(th, th->cfp), lev, n);
 }
 
 /* make old style backtrace directly */
@@ -644,10 +643,11 @@ static void
 vm_backtrace_print(FILE *fp)
 {
     struct oldbt_arg arg;
+    rb_thread_t *th = GET_THREAD();
 
     arg.func = oldbt_print;
     arg.data = (void *)fp;
-    backtrace_each(GET_THREAD(),
+    backtrace_each(th, th->cfp,
 		   oldbt_init,
 		   oldbt_iter_iseq,
 		   oldbt_iter_cfunc,
@@ -676,11 +676,12 @@ rb_backtrace_print_as_bugreport(void)
 {
     struct oldbt_arg arg;
     int i;
+    rb_thread_t *th = GET_THREAD();
 
     arg.func = oldbt_bugreport;
     arg.data = (int *)&i;
 
-    backtrace_each(GET_THREAD(),
+    backtrace_each(th, th->cfp,
 		   oldbt_init,
 		   oldbt_iter_iseq,
 		   oldbt_iter_cfunc,

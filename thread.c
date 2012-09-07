@@ -1744,7 +1744,7 @@ rb_threadptr_execute_interrupts_common(rb_thread_t *th, int blocking_timing)
 	    if (status == THREAD_RUNNABLE || status == THREAD_TO_KILL)
 		th->running_time_us += TIME_QUANTUM_USEC;
 
-	    EXEC_EVENT_HOOK(th, RUBY_EVENT_SWITCH, th->cfp->self, 0, 0);
+	    EXEC_EVENT_HOOK(th, RUBY_EVENT_SWITCH, th->cfp);
 
 	    rb_thread_schedule_limits(limits_us);
 	}

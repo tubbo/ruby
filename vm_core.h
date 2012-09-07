@@ -643,8 +643,8 @@ enum vm_special_object_type {
 #define VM_FRAME_TYPE(cfp) ((cfp)->flag & VM_FRAME_MAGIC_MASK)
 
 /* other frame flag */
-#define VM_FRAME_FLAG_PASSED 0x0100
-#define VM_FRAME_FLAG_FINISH 0x0200
+#define VM_FRAME_FLAG_PASSED    0x0100
+#define VM_FRAME_FLAG_FINISH    0x0200
 #define VM_FRAME_TYPE_FINISH_P(cfp) (((cfp)->flag & VM_FRAME_FLAG_FINISH) != 0)
 
 #define RUBYVM_CFUNC_FRAME_P(cfp) \
@@ -820,12 +820,12 @@ void rb_thread_lock_destroy(rb_thread_lock_t *);
 
 /* tracer */
 void
-rb_threadptr_exec_event_hooks(rb_thread_t *th, rb_event_flag_t flag, VALUE self, ID id, VALUE klass);
+rb_threadptr_exec_event_hooks(rb_thread_t *th, rb_event_flag_t flag, rb_control_frame_t *cfp);
 
-#define EXEC_EVENT_HOOK(th, flag, self, id, klass) do { \
+#define EXEC_EVENT_HOOK(th, flag, cfp) do { \
     if (UNLIKELY(ruby_vm_event_flags & (flag))) { \
 	if (((th)->event_hooks.events | (th)->vm->event_hooks.events) & (flag)) { \
-	    rb_threadptr_exec_event_hooks((th), (flag), (self), (id), (klass)); \
+	    rb_threadptr_exec_event_hooks((th), (flag), (cfp)); \
 	} \
     } \
 } while (0)

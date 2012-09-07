@@ -421,7 +421,7 @@ rb_frozen_class_p(VALUE klass)
 NORETURN(static void rb_longjmp(int, volatile VALUE));
 
 static void
-setup_exception(rb_thread_t *th, int tag, volatile VALUE mesg)
+setup_exception(rb_thread_t *th, int tag, volatile VALUE mesg, rb_control_frame_t *cfp)
 {
     VALUE at;
     VALUE e;
@@ -447,7 +447,7 @@ setup_exception(rb_thread_t *th, int tag, volatile VALUE mesg)
 	else {
 	    at = get_backtrace(mesg);
 	    if (NIL_P(at)) {
-		at = rb_vm_backtrace_object();
+		at = rb_vm_backtrace_object(th, cfp);
 		if (OBJ_FROZEN(mesg)) {
 		    mesg = rb_obj_dup(mesg);
 		}
@@ -499,7 +499,7 @@ setup_exception(rb_thread_t *th, int tag, volatile VALUE mesg)
     }
 
     if (tag != TAG_FATAL) {
-	EXEC_EVENT_HOOK(th, RUBY_EVENT_RAISE, th->cfp->self, 0, 0);
+	EXEC_EVENT_HOOK(th, RUBY_EVENT_RAISE, cfp);
     }
 }
 
@@ -507,7 +507,7 @@ static void
 rb_longjmp(int tag, volatile VALUE mesg)
 {
     rb_thread_t *th = GET_THREAD();
-    setup_exception(th, tag, mesg);
+    setup_exception(th, tag, mesg, th->cfp);
     rb_thread_raised_clear(th);
     JUMP_TAG(tag);
 }
@@ -639,16 +639,12 @@ void
 rb_raise_jump(VALUE mesg)
 {
     rb_thread_t *th = GET_THREAD();
-    rb_control_frame_t *cfp = th->cfp;
-    VALUE klass = cfp->me->klass;
-    VALUE self = cfp->self;
-    ID mid = cfp->me->called_id;
+    rb_control_frame_t *prev_cfp = RUBY_VM_PREVIOUS_CONTROL_FRAME(th->cfp);
 
-    th->cfp = RUBY_VM_PREVIOUS_CONTROL_FRAME(th->cfp);
+    setup_exception(th, TAG_RAISE, mesg, prev_cfp);
+    EXEC_EVENT_HOOK(th, RUBY_EVENT_C_RETURN, th->cfp);
+    th->cfp = prev_cfp;
 
-    setup_exception(th, TAG_RAISE, mesg);
-
-    EXEC_EVENT_HOOK(th, RUBY_EVENT_C_RETURN, self, mid, klass);
     rb_thread_raised_clear(th);
     JUMP_TAG(TAG_RAISE);
 }
