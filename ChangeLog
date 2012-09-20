@@ -1,3 +1,20 @@
+Thu Sep 20 09:52:36 2012  Koichi Sasada  <ko1@atdot.net>
+
+	* ext/objspace/objspace.c: add ObjectSpace#all_references_from.
+	  This method returns an array of objects referenced by given object.
+	  If given object is special objects such as true/false/nil/Fixnum etc
+	  then it returns nil.
+
+	* test/objspace/test_objspace.rb: add a test for this method.
+
+	* gc.c: add rb_objspace_all_references_from().
+	  To make this function, add several members to rb_objspace_t,
+	  mark_func and mark_refs. If mark_func is not zero, then
+	  gc_mark() calls mark_func.
+	  This version of codes is not sophisticated I feel.
+
+	* gc.h: export rb_objspace_all_references_from().
+
 Sun Sep 16 17:47:00 2012  Eric Hodel  <drbrain@segment7.net>
 
 	* tool/change_maker.rb:  Update svn detection for subversion 1.7's

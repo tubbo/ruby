@@ -68,4 +68,16 @@ class TestObjSpace < Test::Unit::TestCase
     ObjectSpace.count_tdata_objects(arg)
     assert_equal(false, arg.empty?)
   end
+
+  def test_all_references_from
+    ObjectSpace.each_object{|o|
+      refs = ObjectSpace.all_references_from(o)
+      unless refs.nil?
+        refs.each{|ro|
+          # check this referenced object is not internal object
+          assert_equal(false, ro.nil?)
+        }
+      end
+    }
+  end
 end

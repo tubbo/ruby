@@ -263,6 +263,8 @@ typedef struct rb_objspace {
     struct gc_list *global_list;
     size_t count;
     int gc_stress;
+    VALUE mark_refs;
+    void (*mark_func)(struct rb_objspace *, VALUE, int);
 } rb_objspace_t;
 
 #if defined(ENABLE_VM_OBJSPACE) && ENABLE_VM_OBJSPACE
@@ -1123,30 +1125,40 @@ struct os_each_struct {
 };
 
 static int
+internal_object_p(VALUE obj)
+{
+    RVALUE *p = (RVALUE *)obj;
+
+    if (p->as.basic.flags) {
+	switch (BUILTIN_TYPE(p)) {
+	  case T_NONE:
+	  case T_ICLASS:
+	  case T_NODE:
+	  case T_ZOMBIE:
+	    break;
+	  case T_CLASS:
+	    if (FL_TEST(p, FL_SINGLETON))
+	      break;
+	  default:
+	    if (!p->as.basic.klass) break;
+	    return 0;
+	}
+    }
+    return 1;
+}
+
+static int
 os_obj_of_i(void *vstart, void *vend, size_t stride, void *data)
 {
     struct os_each_struct *oes = (struct os_each_struct *)data;
     RVALUE *p = (RVALUE *)vstart, *pend = (RVALUE *)vend;
-    volatile VALUE v;
 
     for (; p != pend; p++) {
-	if (p->as.basic.flags) {
-	    switch (BUILTIN_TYPE(p)) {
-	      case T_NONE:
-	      case T_ICLASS:
-	      case T_NODE:
-	      case T_ZOMBIE:
-		continue;
-	      case T_CLASS:
-		if (FL_TEST(p, FL_SINGLETON))
-		    continue;
-	      default:
-		if (!p->as.basic.klass) continue;
-		v = (VALUE)p;
-		if (!oes->of || rb_obj_is_kind_of(v, oes->of)) {
-		    rb_yield(v);
-		    oes->num++;
-		}
+	volatile VALUE v = (VALUE)p;
+	if (!internal_object_p(v)) {
+	    if (!oes->of || rb_obj_is_kind_of(v, oes->of)) {
+		rb_yield(v);
+		oes->num++;
 	    }
 	}
     }
@@ -2391,15 +2403,8 @@ gc_mark_ptr(rb_objspace_t *objspace, VALUE ptr)
 }
 
 static void
-gc_mark(rb_objspace_t *objspace, VALUE ptr, int lev)
+gc_mark_original(rb_objspace_t *objspace, VALUE ptr, int lev)
 {
-    register RVALUE *obj;
-
-    obj = RANY(ptr);
-    if (rb_special_const_p(ptr)) return; /* special const not marked */
-    if (obj->as.basic.flags == 0) return;       /* free cell */
-    if (!gc_mark_ptr(objspace, ptr)) return;	/* already marked */
-
     if (lev > GC_LEVEL_MAX || (lev == 0 && stack_check(STACKFRAME_FOR_GC_MARK))) {
 	if (!mark_stack_overflow) {
 	    if (mark_stack_ptr - mark_stack < MARK_STACK_MAX) {
@@ -2413,6 +2418,33 @@ gc_mark(rb_objspace_t *objspace, VALUE ptr, int lev)
 	return;
     }
     gc_mark_children(objspace, ptr, lev+1);
+}
+
+static int
+markable_object_p(rb_objspace_t *objspace, VALUE ptr)
+{
+    register RVALUE *obj = RANY(ptr);
+
+    if (rb_special_const_p(ptr)) return 0; /* special const not marked */
+    if (obj->as.basic.flags == 0) return 0 ;       /* free cell */
+
+    return 1;
+}
+
+static void
+gc_mark(rb_objspace_t *objspace, VALUE ptr, int lev)
+{
+    if (markable_object_p(objspace, ptr) == 0) {
+	return;
+    }
+
+    if (LIKELY(objspace->mark_func == 0)) {
+	if (!gc_mark_ptr(objspace, ptr)) return; /* already marked */
+	gc_mark_original(objspace, ptr, lev);
+    }
+    else {
+	objspace->mark_func(objspace, ptr, lev);
+    }
 }
 
 void
@@ -2429,10 +2461,16 @@ gc_mark_children(rb_objspace_t *objspace, VALUE ptr, int lev)
     goto marking;		/* skip */
 
   again:
-    obj = RANY(ptr);
-    if (rb_special_const_p(ptr)) return; /* special const not marked */
-    if (obj->as.basic.flags == 0) return;       /* free cell */
-    if (!gc_mark_ptr(objspace, ptr)) return;  /* already marked */
+    if (LIKELY(objspace->mark_func == 0)) {
+	obj = RANY(ptr);
+	if (rb_special_const_p(ptr)) return; /* special const not marked */
+	if (obj->as.basic.flags == 0) return;       /* free cell */
+	if (!gc_mark_ptr(objspace, ptr)) return;  /* already marked */
+    }
+    else {
+	gc_mark(objspace, ptr, lev+1);
+	return;
+    }
 
   marking:
     if (FL_TEST(obj, FL_EXIVAR)) {
@@ -2866,6 +2904,9 @@ rb_gc_unregister_address(VALUE *addr)
 static int
 garbage_collect(rb_objspace_t *objspace)
 {
+    void (*prev_mark_func)(rb_objspace_t *objspace, VALUE, int);
+    VALUE prev_mark_refs;
+    
     if (GC_NOTIFY) printf("start garbage_collect()\n");
 
     if (!heaps) {
@@ -2877,6 +2918,9 @@ garbage_collect(rb_objspace_t *objspace)
 
     gc_prof_timer_start(objspace);
 
+    prev_mark_func = objspace->mark_func; objspace->mark_func = 0;
+    prev_mark_refs = objspace->mark_refs; objspace->mark_refs = Qnil;
+
     rest_sweep(objspace);
 
     during_gc++;
@@ -2885,6 +2929,9 @@ garbage_collect(rb_objspace_t *objspace)
     gc_prof_sweep_timer_start(objspace);
     gc_sweep(objspace);
     gc_prof_sweep_timer_stop(objspace);
+
+    objspace->mark_func = prev_mark_func;
+    objspace->mark_refs = prev_mark_refs;
 
     gc_prof_timer_stop(objspace, Qtrue);
     if (GC_NOTIFY) printf("end garbage_collect()\n");
@@ -3151,6 +3198,36 @@ rb_gc_set_params(void)
 	if (free_min_i > 0) {
 	    initial_free_min = free_min_i;
 	}
+    }
+}
+
+static void
+collect_refs(rb_objspace_t *objspace, VALUE obj, int lev)
+{
+    if (markable_object_p(objspace, obj) && !internal_object_p(obj)) {
+	rb_hash_aset(objspace->mark_refs, obj, Qtrue);
+    }
+}
+
+VALUE
+rb_objspace_all_references_from(VALUE obj)
+{
+    rb_objspace_t *objspace = &rb_objspace;
+
+    if (markable_object_p(objspace, obj)) {
+	VALUE refs = rb_hash_new();
+	objspace->mark_refs = refs;
+	objspace->mark_func = collect_refs;
+
+	gc_mark_children(objspace, obj, 0);
+
+	objspace->mark_func = 0;
+	objspace->mark_refs = Qnil;
+
+	return rb_funcall(refs, rb_intern("keys"), 0);
+    }
+    else {
+	return Qnil;
     }
 }
 
