@@ -520,24 +520,21 @@ vm_setup_method(rb_thread_t *th, rb_control_frame_t *cfp,
     }
     else {
 	VALUE *src_argv = argv;
+	VALUE *sp_orig;
 	int src_argc = sp - src_argv;
 	VALUE finish_flag = VM_FRAME_TYPE_FINISH_P(cfp) ? VM_FRAME_FLAG_FINISH : 0;
 	cfp = th->cfp = RUBY_VM_PREVIOUS_CONTROL_FRAME(th->cfp); /* pop cf */
 
-	argv = cfp->sp;
+	sp = sp_orig = cfp->sp;
 
-#define X 1
-#if X
 	/* push self */
-	argv[0] = recv;
-	argv++;
-#endif
+	sp[0] = recv;
+	sp++;
+
 	/* copy arguments */
 	for (i=0; i < src_argc; i++) {
-	    argv[i] = src_argv[i];
+	    *sp++ = src_argv[i];
 	}
-
-	sp = argv + src_argc; /* argv; */ /* sp - (src_argv - argv); */
 
 	/* clear local variables */
 	for (i = 0; i < iseq->local_size - iseq->arg_size; i++) {
@@ -548,9 +545,7 @@ vm_setup_method(rb_thread_t *th, rb_control_frame_t *cfp,
 		      recv, defined_class, VM_ENVVAL_BLOCK_PTR(blockptr),
 		      iseq->iseq_encoded + opt_pc, sp, 0, me);
 
-#if X
-	cfp->sp = argv - 1 /* recv */;
-#endif
+	cfp->sp = sp_orig;
     }
 }
 
