@@ -160,3 +160,4 @@ ruby_set_debug_option(const char *str)
 {
     ruby_each_words(str, set_debug_option, 0);
 }
+

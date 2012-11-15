@@ -638,9 +638,7 @@ rb_tracepoint_attr_event(VALUE tpval)
     return ID2SYM(get_event_id(tp->trace_arg->event));
 }
 
-rb_control_frame_t *rb_vm_get_ruby_level_next_cfp(rb_thread_t *th, rb_control_frame_t *cfp);
 int rb_vm_control_frame_id_and_class(rb_control_frame_t *cfp, ID *idp, VALUE *klassp);
-VALUE rb_binding_new_with_cfp(rb_thread_t *th, rb_control_frame_t *src_cfp);
 
 VALUE
 rb_tracepoint_attr_line(VALUE tpval)
