@@ -847,6 +847,7 @@ typedef VALUE (*rb_debug_inspector_func_t)(const rb_debug_inspector_t *, void *)
 VALUE rb_debug_inspector_open(rb_debug_inspector_func_t func, void *data);
 VALUE rb_debug_inspector_frame_binding_get(const rb_debug_inspector_t *dc, int index);
 VALUE rb_debug_inspector_frame_class_get(const rb_debug_inspector_t *dc, int index);
+VALUE rb_debug_inspector_frame_iseq_get(const rb_debug_inspector_t *dc, int index);
 VALUE rb_debug_inspector_backtrace_locations(const rb_debug_inspector_t *dc);
 
 #if defined __GNUC__ && __GNUC__ >= 4
@@ -857,7 +858,7 @@ struct rb_debug_inspector_struct {
     rb_thread_t *th;
     rb_control_frame_t *cfp;
     VALUE backtrace;
-    VALUE contexts; /* [[klass, binding], ...] */
+    VALUE contexts; /* [[klass, binding, iseq, cfp], ...] */
     int backtrace_size;
 };
 
@@ -876,7 +877,12 @@ static void
 collect_caller_bindings_iseq(void *arg, const rb_control_frame_t *cfp)
 {
     struct collect_caller_bindings_data *data = (struct collect_caller_bindings_data *)arg;
-    rb_ary_push(data->ary, rb_ary_new3(2, cfp->klass, rb_binding_new_with_cfp(data->th, cfp)));
+    rb_ary_push(data->ary,
+		rb_ary_new3(4,
+			    cfp->klass,
+			    rb_binding_new_with_cfp(data->th, cfp),
+			    cfp->iseq ? cfp->iseq->self : Qnil,
+			    GC_GUARDED_PTR(cfp)));
 }
 
 static void
@@ -936,7 +942,7 @@ rb_debug_inspector_open(rb_debug_inspector_func_t func, void *data)
 }
 
 static VALUE
-frame_binding(const rb_debug_inspector_t *dc, int index)
+frame_get(const rb_debug_inspector_t *dc, int index)
 {
     if (index < 0 || index >= dc->backtrace_size) {
 	rb_raise(rb_eArgError, "no such frame");
@@ -945,17 +951,24 @@ frame_binding(const rb_debug_inspector_t *dc, int index)
 }
 
 VALUE
+rb_debug_inspector_frame_class_get(const rb_debug_inspector_t *dc, int index)
+{
+    VALUE frame = frame_get(dc, index);
+    return rb_ary_entry(frame, 0);
+}
+
+VALUE
 rb_debug_inspector_frame_binding_get(const rb_debug_inspector_t *dc, int index)
 {
-    VALUE frame = frame_binding(dc, index);
+    VALUE frame = frame_get(dc, index);
     return rb_ary_entry(frame, 1);
 }
 
 VALUE
-rb_debug_inspector_frame_class_get(const rb_debug_inspector_t *dc, int index)
+rb_debug_inspector_frame_iseq_get(const rb_debug_inspector_t *dc, int index)
 {
-    VALUE frame = frame_binding(dc, index);
-    return rb_ary_entry(frame, 0);
+    VALUE frame = frame_get(dc, index);
+    return rb_ary_entry(frame, 2);
 }
 
 VALUE
@@ -963,3 +976,4 @@ rb_debug_inspector_backtrace_locations(const rb_debug_inspector_t *dc)
 {
     return dc->backtrace;
 }
+

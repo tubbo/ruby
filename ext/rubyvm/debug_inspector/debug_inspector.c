@@ -17,6 +17,7 @@ typedef VALUE (*rb_debug_inspector_func_t)(const rb_debug_inspector_t *, void *)
 VALUE rb_debug_inspector_open(rb_debug_inspector_func_t func, void *data);
 VALUE rb_debug_inspector_frame_binding_get(const rb_debug_inspector_t *dc, int index);
 VALUE rb_debug_inspector_frame_class_get(const rb_debug_inspector_t *dc, int index);
+VALUE rb_debug_inspector_frame_iseq_get(const rb_debug_inspector_t *dc, int index);
 VALUE rb_debug_inspector_backtrace_locations(const rb_debug_inspector_t *dc);
 
 static size_t
@@ -63,6 +64,13 @@ di_frame_class(VALUE self, VALUE index)
 }
 
 static VALUE
+di_frame_iseq(VALUE self, VALUE index)
+{
+    const rb_debug_inspector_t *dc = di_get_dc(self);
+    return rb_debug_inspector_frame_iseq_get(dc, NUM2INT(index));
+}
+
+static VALUE
 breakpoint_i(const rb_debug_inspector_t *dc, void *ptr)
 {
     VALUE self = (VALUE)ptr;
@@ -105,4 +113,5 @@ Init_debug_inspector(void)
     rb_define_method(cDebugInspector, "backtrace_locations", di_backtrace_locations, 0);
     rb_define_method(cDebugInspector, "frame_binding", di_binding, 1);
     rb_define_method(cDebugInspector, "frame_class", di_frame_class, 1);
+    rb_define_method(cDebugInspector, "frame_iseq", di_frame_iseq, 1);
 }
