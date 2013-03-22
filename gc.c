@@ -267,6 +267,9 @@ typedef struct rb_objspace {
     } *mark_func_data;
 } rb_objspace_t;
 
+static st_table *ruby_gc_remember_set;
+static st_table *ruby_gc_suspicious_set;
+
 #if defined(ENABLE_VM_OBJSPACE) && ENABLE_VM_OBJSPACE
 #define rb_objspace (*GET_VM()->objspace)
 #define ruby_initial_gc_stress	initial_params.gc_stress
@@ -4510,6 +4513,9 @@ Init_GC(void)
     VALUE rb_mObSpace;
     VALUE rb_mProfiler;
 
+    ruby_gc_remember_set = st_init_numtable();
+    ruby_gc_suspicious_set = st_init_numtable();
+
     rb_mGC = rb_define_module("GC");
     rb_define_singleton_method(rb_mGC, "start", rb_gc_start, 0);
     rb_define_singleton_method(rb_mGC, "enable", rb_gc_enable, 0);
@@ -4561,4 +4567,33 @@ Init_GC(void)
     rb_define_singleton_method(rb_mGC, "malloc_allocated_size", gc_malloc_allocated_size, 0);
     rb_define_singleton_method(rb_mGC, "malloc_allocations", gc_malloc_allocations, 0);
 #endif
+}
+
+/* temporary */
+
+void
+rb_gc_wb(VALUE a, VALUE b)
+{
+    if (!rb_gc_remembered(a)) {
+	rb_gc_remember(a);
+    }
+}
+
+void
+rb_gc_remember(VALUE obj)
+{
+    st_insert(ruby_gc_remember_set, obj, Qtrue);
+}
+
+int
+rb_gc_remembered(VALUE obj)
+{
+    return st_is_member(ruby_gc_remember_set, obj);
+}
+
+void
+rb_gc_giveup_writebarrier(VALUE obj)
+{
+    FL_UNSET(obj, FL_GC_WB);
+    st_insert(ruby_gc_suspicious_set, obj, Qtrue);
 }

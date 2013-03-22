@@ -885,11 +885,18 @@ struct RArray {
      (long)((RBASIC(a)->flags >> RARRAY_EMBED_LEN_SHIFT) & \
 	 (RARRAY_EMBED_LEN_MASK >> RARRAY_EMBED_LEN_SHIFT)) : \
      RARRAY(a)->as.heap.len)
-#define RARRAY_PTR(a) \
-    ((RBASIC(a)->flags & RARRAY_EMBED_FLAG) ? \
+
+#define RARRAY_LENINT(ary) rb_long2int(RARRAY_LEN(ary))
+
+#define RARRAY_RAWPTR(a) \
+    ((OBJ_WB_GIVEUP(a), (RBASIC(a)->flags & RARRAY_EMBED_FLAG)) ? \
      RARRAY(a)->as.ary : \
      RARRAY(a)->as.heap.ptr)
-#define RARRAY_LENINT(ary) rb_long2int(RARRAY_LEN(ary))
+
+#define RARRAY_AREF(a, i)    (RARRAY_RAWPTR(a)[i])
+#define RARRAY_ASET(a, i, v) (OBJ_WB((a), (v)), RARRAY_RAWPTR(a)[i] = (v))
+
+#define RARRAY_PTR(a) RARRAY_RAWPTR(a)
 
 struct RRegexp {
     struct RBasic basic;
@@ -1093,8 +1100,8 @@ struct RBignum {
 #define RCOMPLEX(obj) (R_CAST(RComplex)(obj))
 
 #define FL_SINGLETON FL_USER0
-#define FL_RESERVED1 (((VALUE)1)<<5)
-#define FL_RESERVED2 (((VALUE)1)<<6) /* will be used in the future GC */
+#define FL_GC_WB     (((VALUE)1)<<5)
+#define FL_GC_OLD    (((VALUE)1)<<6)
 #define FL_FINALIZE  (((VALUE)1)<<7)
 #define FL_TAINT     (((VALUE)1)<<8)
 #define FL_UNTRUSTED (((VALUE)1)<<9)
@@ -1146,6 +1153,18 @@ struct RBignum {
 
 #define OBJ_FROZEN(x) (!!(FL_ABLE(x)?(RBASIC(x)->flags&(FL_FREEZE)):(FIXNUM_P(x)||FLONUM_P(x))))
 #define OBJ_FREEZE(x) FL_SET((x), FL_FREEZE)
+
+#define OBJ_WB_PROTECTED(x) (FL_TEST((x), FL_GC_WB))
+#define OBJ_WB_GIVEUP(x)    (OBJ_WB_PROTECTED(x) && (rb_gc_giveup_writebarrier((VALUE)x), 0))
+#define OBJ_PROMOTED(x)     (FL_TEST((x), FL_GC_OLD))
+#define OBJ_PROMOTE(x)      (FL_SET((x), FL_GC_OLD))
+
+void rb_gc_wb(VALUE a, VALUE b);
+void rb_gc_giveup_writebarrier(VALUE obj);
+void rb_gc_remember(VALUE obj);
+int rb_gc_remembered(VALUE obj);
+
+#define OBJ_WB(a, b) (OBJ_PROMOTED(a) && !OBJ_PROMOTED(b) && (rb_gc_wb((a), (b)), 1))
 
 #if SIZEOF_INT < SIZEOF_LONG
 # define INT2NUM(v) INT2FIX((int)(v))
