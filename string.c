@@ -375,7 +375,7 @@ rb_str_capacity(VALUE str)
 static inline VALUE
 str_alloc(VALUE klass)
 {
-    NEWOBJ_OF(str, struct RString, klass, T_STRING);
+    NEWOBJ_OF(str, struct RString, klass, T_STRING | FL_KEEP_WB /* TODO: WB */);
 
     str->as.heap.ptr = 0;
     str->as.heap.len = 0;
