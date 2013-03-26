@@ -1900,6 +1900,7 @@ objspace_live_num(rb_objspace_t *objspace)
 
 static const char *obj_type_name(VALUE obj);
 #define DEBUG_RGENGC 0
+#define RGENGC_SIMPLEBENCH 0
 
 static int
 living_object(VALUE p, uintptr_t *bits, int during_minor_gc)
@@ -2090,6 +2091,24 @@ rest_sweep(rb_objspace_t *objspace)
 
 static void gc_marks(rb_objspace_t *objspace);
 
+static void
+gc_sweep(rb_objspace_t *objspace)
+{
+    struct heaps_slot *next;
+
+    before_gc_sweep(objspace);
+
+    while (objspace->heap.sweep_slots) {
+        next = objspace->heap.sweep_slots->next;
+	slot_sweep(objspace, objspace->heap.sweep_slots);
+        objspace->heap.sweep_slots = next;
+    }
+
+    after_gc_sweep(objspace);
+
+    during_gc = 0;
+}
+
 static int
 gc_prepare_free_objects(rb_objspace_t *objspace)
 {
@@ -2137,35 +2156,23 @@ gc_prepare_free_objects(rb_objspace_t *objspace)
     }
 
     gc_prof_sweep_timer_start(objspace);
-    if (!(res = lazy_sweep(objspace))) {
-        after_gc_sweep(objspace);
-        if (has_free_object) {
-            res = TRUE;
-            during_gc = 0;
-        }
+    if (RGENGC_SIMPLEBENCH) {
+	gc_sweep(objspace);
+	res = TRUE;
+    }
+    else {
+	if (!(res = lazy_sweep(objspace))) {
+	    after_gc_sweep(objspace);
+	    if (has_free_object) {
+		res = TRUE;
+		during_gc = 0;
+	    }
+	}
     }
     gc_prof_sweep_timer_stop(objspace);
 
     gc_prof_timer_stop(objspace, Qtrue);
     return res;
-}
-
-static void
-gc_sweep(rb_objspace_t *objspace)
-{
-    struct heaps_slot *next;
-
-    before_gc_sweep(objspace);
-
-    while (objspace->heap.sweep_slots) {
-        next = objspace->heap.sweep_slots->next;
-	slot_sweep(objspace, objspace->heap.sweep_slots);
-        objspace->heap.sweep_slots = next;
-    }
-
-    after_gc_sweep(objspace);
-
-    during_gc = 0;
 }
 
 /* Marking stack */
@@ -2730,7 +2737,7 @@ gc_mark_children(rb_objspace_t *objspace, VALUE ptr)
   marking:
 
     if (objspace->during_minor_gc) {
-	if (DEBUG_RGENGC && BUILTIN_TYPE(obj) == T_ARRAY && RARRAY_LEN(obj) >= 100) {
+	if ((DEBUG_RGENGC) && BUILTIN_TYPE(obj) == T_ARRAY && RARRAY_LEN(obj) >= 100) {
 	    if (OBJ_PROMOTED(obj)) {
 		fprintf(stderr, "gc_mark_children: %p (%s > %d) was promoted!\n", obj, obj_type_name((VALUE)obj), RARRAY_LENINT(obj));
 	    }
@@ -2739,7 +2746,7 @@ gc_mark_children(rb_objspace_t *objspace, VALUE ptr)
 	    }
 	}
 
-	if (OBJ_PROMOTED(obj)) {
+	if (0) if (OBJ_PROMOTED(obj)) {
 	    if (DEBUG_RGENGC) fprintf(stderr, "gc_mark_children: %p (%s) was promoted.\n", obj, obj_type_name((VALUE)obj));
 	    return; /* old gen */
 	}
@@ -2755,7 +2762,6 @@ gc_mark_children(rb_objspace_t *objspace, VALUE ptr)
     }
 
     if (FL_TEST(obj, FL_EXIVAR)) {
-	/* TODO: RGENGC */
 	rb_mark_generic_ivar(ptr);
     }
 
@@ -2924,7 +2930,7 @@ gc_mark_children(rb_objspace_t *objspace, VALUE ptr)
 	if (!RCLASS_EXT(obj)) break;
 	mark_tbl(objspace, RCLASS_IV_TBL(obj));
 	mark_const_tbl(objspace, RCLASS_CONST_TBL(obj));
-	ptr = RCLASS_SUPER(obj);
+	ptr = RCLASS_SUPER((VALUE)obj);
 	goto again;
 
       case T_ARRAY:
@@ -3064,6 +3070,8 @@ gc_marks(rb_objspace_t *objspace)
     th->vm->self ? rb_gc_mark(th->vm->self) : rb_vm_mark(th->vm);
 
     if (objspace->during_minor_gc) {
+	if (RGENGC_SIMPLEBENCH) fprintf(stderr, "gc_marks: minor gc\n");
+
 	if (DEBUG_RGENGC) {
 	    fprintf(stderr, "gc_marks: ruby_gc_suspicious_set has %d entries.\n", ruby_gc_suspicious_set->num_entries);
 	    fprintf(stderr, "gc_marks: ruby_gc_remember_set has %d entries.\n", ruby_gc_remember_set->num_entries);
@@ -3073,6 +3081,7 @@ gc_marks(rb_objspace_t *objspace)
 	st_clear(ruby_gc_remember_set);
     }
     else {
+	fprintf(stderr, "gc_marks: major gc\n");
 	st_clear(ruby_gc_suspicious_set);
 	st_clear(ruby_gc_remember_set);
     }
@@ -4127,9 +4136,13 @@ gc_prof_timer_stop(rb_objspace_t *objspace, int marked)
 
 #if !GC_PROFILE_MORE_DETAIL
 
+static clock_t mark_start_time;
+static clock_t sweep_start_time;
+
 static inline void
 gc_prof_mark_timer_start(rb_objspace_t *objspace)
 {
+    if (RGENGC_SIMPLEBENCH) mark_start_time = clock();
     if (RUBY_DTRACE_GC_MARK_BEGIN_ENABLED()) {
 	RUBY_DTRACE_GC_MARK_BEGIN();
     }
@@ -4138,6 +4151,7 @@ gc_prof_mark_timer_start(rb_objspace_t *objspace)
 static inline void
 gc_prof_mark_timer_stop(rb_objspace_t *objspace)
 {
+    if (RGENGC_SIMPLEBENCH) fprintf(stderr, "mark time: %ld (clock)\n", clock() - mark_start_time);
     if (RUBY_DTRACE_GC_MARK_END_ENABLED()) {
 	RUBY_DTRACE_GC_MARK_END();
     }
@@ -4146,6 +4160,7 @@ gc_prof_mark_timer_stop(rb_objspace_t *objspace)
 static inline void
 gc_prof_sweep_timer_start(rb_objspace_t *objspace)
 {
+    if (RGENGC_SIMPLEBENCH) sweep_start_time = clock();
     if (RUBY_DTRACE_GC_SWEEP_BEGIN_ENABLED()) {
 	RUBY_DTRACE_GC_SWEEP_BEGIN();
     }
@@ -4154,6 +4169,7 @@ gc_prof_sweep_timer_start(rb_objspace_t *objspace)
 static inline void
 gc_prof_sweep_timer_stop(rb_objspace_t *objspace)
 {
+    if (RGENGC_SIMPLEBENCH) fprintf(stderr, "sweep time: %ld (clock)\n", clock() - sweep_start_time);
     if (RUBY_DTRACE_GC_SWEEP_END_ENABLED()) {
 	RUBY_DTRACE_GC_SWEEP_END();
     }
@@ -4720,6 +4736,9 @@ Init_GC(void)
 
 /* temporary */
 
+static int keepwb_counter = 0;
+static int giveup_wb_counter = 0;
+
 void
 rb_gc_wb(VALUE a, VALUE b)
 {
@@ -4747,8 +4766,17 @@ rb_gc_remembered(VALUE obj)
     return result;
 }
 
-static int keepwb_counter = 0;
-static int giveup_wb_counter = 0;
+void
+rb_gc_giveup_writebarrier(VALUE obj)
+{
+    if (OBJ_PROMOTED(obj)) {
+	FL_UNSET(obj, FL_KEEP_WB);
+	OBJ_DEMOTE(obj);
+	st_insert(ruby_gc_suspicious_set, obj, Qtrue);
+	giveup_wb_counter++;
+	if (DEBUG_RGENGC) fprintf(stderr, "rb_gc_giveup_writebarrier: %p (%s)\n", (void *)obj, obj_type_name(obj));
+    }
+}
 
 static void
 keepwb(VALUE obj)
@@ -4764,14 +4792,3 @@ print_wb_counter(void)
 	    ruby_gc_suspicious_set->num_entries);
 }
 
-void
-rb_gc_giveup_writebarrier(VALUE obj)
-{
-    if (OBJ_PROMOTED(obj)) {
-	FL_UNSET(obj, FL_KEEP_WB);
-	OBJ_DEMOTE(obj);
-	st_insert(ruby_gc_suspicious_set, obj, Qtrue);
-	giveup_wb_counter++;
-	if (DEBUG_RGENGC) fprintf(stderr, "rb_gc_giveup_writebarrier: %p (%s)\n", (void *)obj, obj_type_name(obj));
-    }
-}

@@ -1706,7 +1706,7 @@ rb_class_initialize(int argc, VALUE *argv, VALUE klass)
 	    rb_raise(rb_eTypeError, "can't inherit uninitialized class");
 	}
     }
-    RCLASS_SUPER(klass) = super;
+    RCLASS_SET_SUPER(klass, super);
     rb_make_metaclass(klass, RBASIC(super)->klass);
     rb_class_inherited(super, klass);
     rb_mod_initialize(klass);
@@ -1841,7 +1841,7 @@ rb_class_superclass(VALUE klass)
 VALUE
 rb_class_get_superclass(VALUE klass)
 {
-    return RCLASS_SUPER(klass);
+    return RCLASS_EXT(klass)->super;
 }
 
 #define id_for_setter(name, type, message) \

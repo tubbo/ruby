@@ -895,10 +895,6 @@ struct RArray {
 
 #define RARRAY_PTR(a) (OBJ_WB_GIVEUP(a), RARRAY_RAWPTR(a))
 
-#define RARRAY_AREF(a, i)    (RARRAY_RAWPTR(a)[i])
-#define RARRAY_ASET(a, i, v) (OBJ_WB((a), (v)), RARRAY_RAWPTR(a)[i] = (v))
-
-
 struct RRegexp {
     struct RBasic basic;
     struct re_pattern_buffer *ptr;
@@ -1167,7 +1163,14 @@ void rb_gc_giveup_writebarrier(VALUE obj);
 void rb_gc_remember(VALUE obj);
 int rb_gc_remembered(VALUE obj);
 
-#define OBJ_WB(a, b) (OBJ_PROMOTED(a) && !OBJ_PROMOTED(b) && (rb_gc_wb((a), (b)), 1))
+#define OBJ_WB(a, b) (!SPECIAL_CONST_P(b) && OBJ_PROMOTED(a) && !OBJ_PROMOTED(b) && (rb_gc_wb((a), (b)), 1))
+
+#define RARRAY_AREF(a, i)    (RARRAY_RAWPTR(a)[i])
+static inline void
+RARRAY_ASET(VALUE a, long index, VALUE v) {
+    OBJ_WB(a, v);
+    RARRAY_RAWPTR(a)[index] = v;
+}
 
 #if SIZEOF_INT < SIZEOF_LONG
 # define INT2NUM(v) INT2FIX((int)(v))

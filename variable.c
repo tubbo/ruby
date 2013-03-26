@@ -945,6 +945,7 @@ generic_ivar_set(VALUE obj, ID id, VALUE val)
 	return;
     }
     st_insert((st_table *)data, (st_data_t)id, (st_data_t)val);
+    OBJ_WB(obj, val);
 }
 
 static VALUE
@@ -1181,11 +1182,13 @@ rb_ivar_set(VALUE obj, ID id, VALUE val)
             }
         }
         ROBJECT_IVPTR(obj)[index] = val;
+	OBJ_WB(obj, val);
 	break;
       case T_CLASS:
       case T_MODULE:
 	if (!RCLASS_IV_TBL(obj)) RCLASS_IV_TBL(obj) = st_init_numtable();
 	st_insert(RCLASS_IV_TBL(obj), (st_data_t)id, val);
+	OBJ_WB(obj, val);
         break;
       default:
       generic:

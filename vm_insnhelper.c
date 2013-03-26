@@ -578,6 +578,7 @@ vm_setivar(VALUE obj, ID id, VALUE val, IC ic, rb_call_info_t *ci, int is_attr)
 
 	    if (index < len) {
 		ptr[index] = val;
+		OBJ_WB(obj, val);
 		return val; /* inline cache hit */
 	    }
 	}

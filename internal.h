@@ -64,15 +64,27 @@ struct rb_classext_struct {
     rb_alloc_func_t allocator;
 };
 
-#undef RCLASS_SUPER
 #define RCLASS_EXT(c) (RCLASS(c)->ptr)
-#define RCLASS_SUPER(c) (RCLASS_EXT(c)->super)
 #define RCLASS_IV_TBL(c) (RCLASS_EXT(c)->iv_tbl)
 #define RCLASS_CONST_TBL(c) (RCLASS_EXT(c)->const_tbl)
 #define RCLASS_M_TBL(c) (RCLASS(c)->m_tbl)
 #define RCLASS_IV_INDEX_TBL(c) (RCLASS(c)->iv_index_tbl)
 #define RCLASS_ORIGIN(c) (RCLASS_EXT(c)->origin)
 #define RCLASS_REFINED_CLASS(c) (RCLASS_EXT(c)->refined_class)
+
+#undef RCLASS_SUPER
+static inline VALUE
+RCLASS_SUPER(VALUE c)
+{
+  return RCLASS_EXT(c)->super;
+}
+
+static inline VALUE
+RCLASS_SET_SUPER(VALUE a, VALUE b) {
+  OBJ_WB(a, b);
+  RCLASS_EXT(a)->super = b;
+  return b;
+}
 
 struct vtm; /* defined by timev.h */
 
