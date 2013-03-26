@@ -651,6 +651,7 @@ str_replace_shared_without_enc(VALUE str2, VALUE str)
 	RSTRING(str2)->as.heap.ptr = RSTRING_PTR(str);
 	RSTRING(str2)->as.heap.aux.shared = str;
 	FL_SET(str2, ELTS_SHARED);
+	OBJ_WB(str2, str);
     }
     return str2;
 }
@@ -701,10 +702,12 @@ str_new4(VALUE klass, VALUE str)
 	assert(OBJ_FROZEN(shared));
 	FL_SET(str2, ELTS_SHARED);
 	RSTRING(str2)->as.heap.aux.shared = shared;
+	/* WB is not needed because str2 is *new* object */
     }
     else {
 	FL_SET(str, ELTS_SHARED);
 	RSTRING(str)->as.heap.aux.shared = str2;
+	OBJ_WB(str, str2);
     }
     rb_enc_cr_str_exact_copy(str2, str);
     OBJ_INFECT(str2, str);
@@ -743,6 +746,7 @@ rb_str_new_frozen(VALUE orig)
 	str = str_new4(klass, orig);
 	FL_SET(str, STR_ASSOC);
 	RSTRING(str)->as.heap.aux.shared = assoc;
+	/* WB is not needed because str is new object */
     }
     else {
 	str = str_new4(klass, orig);
@@ -884,6 +888,7 @@ rb_str_shared_replace(VALUE str, VALUE str2)
     else {
 	RSTRING(str)->as.heap.aux.capa = RSTRING(str2)->as.heap.aux.capa;
     }
+    OBJ_WB(str, str2);
     STR_SET_EMBED(str2);	/* abandon str2 */
     RSTRING_PTR(str2)[0] = 0;
     STR_SET_EMBED_LEN(str2, 0);
@@ -926,6 +931,7 @@ str_replace(VALUE str, VALUE str2)
 	FL_SET(str, ELTS_SHARED);
 	FL_UNSET(str, STR_ASSOC);
 	RSTRING(str)->as.heap.aux.shared = shared;
+	OBJ_WB(str, shared);
     }
     else {
 	str_replace_shared(str, str2);
@@ -1448,6 +1454,7 @@ rb_str_associate(VALUE str, VALUE add)
 	FL_SET(str, STR_ASSOC);
 	RBASIC(add)->klass = 0;
 	RSTRING(str)->as.heap.aux.shared = add;
+	OBJ_WB(str, add);
     }
 }
 

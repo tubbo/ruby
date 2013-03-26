@@ -310,6 +310,12 @@ rb_bug(const char *fmt, ...)
     _set_abort_behavior( 0, _CALL_REPORTFAULT);
 #endif
 
+    {
+	char buff[100];
+	sprintf(buff, "gdb -p %d", getpid());
+	system(buff);
+    }
+
     abort();
 }
 

@@ -268,6 +268,8 @@ typedef struct rb_objspace {
 
     int during_minor_gc;
     int parent_object_is_promoted;
+    int parent_object_was_promoted; /* for RGENGC_CHECK_MODE */
+    VALUE parent_object;            /* for RGENGC_CHECK_MODE */
 } rb_objspace_t;
 
 static st_table *ruby_gc_remember_set;
@@ -1900,7 +1902,7 @@ objspace_live_num(rb_objspace_t *objspace)
 
 static const char *obj_type_name(VALUE obj);
 #define DEBUG_RGENGC 0
-#define RGENGC_SIMPLEBENCH 0
+#define RGENGC_SIMPLEBENCH 1
 
 static int
 living_object(VALUE p, uintptr_t *bits, int during_minor_gc)
@@ -2665,7 +2667,6 @@ obj_type_name(VALUE obj)
 	    TYPE_NAME(T_STRUCT);
 	    TYPE_NAME(T_BIGNUM);
 	    TYPE_NAME(T_FILE);
-	    TYPE_NAME(T_DATA);
 	    TYPE_NAME(T_MATCH);
 	    TYPE_NAME(T_COMPLEX);
 	    TYPE_NAME(T_RATIONAL);
@@ -2678,14 +2679,38 @@ obj_type_name(VALUE obj)
 	    TYPE_NAME(T_NODE);
 	    TYPE_NAME(T_ICLASS);
 	    TYPE_NAME(T_ZOMBIE);
+      case T_DATA:
+	if (rb_objspace_data_type_name(obj)) {
+	    return rb_objspace_data_type_name(obj);
+	}
+	return "T_DATA";
 #undef TYPE_NAME
     }
     return "unknown";
 }
 
+#define RGENGC_CHECK_MODE 1
+
+static int rb_gc_in_suspicious_set(VALUE obj);
+
 static void
 gc_check_suspicious(rb_objspace_t *objspace, VALUE obj)
 {
+    if (RGENGC_CHECK_MODE) {
+	if (objspace->parent_object_was_promoted) {
+	    if (OBJ_PROMOTED(obj) ||
+		rb_gc_remembered(obj) ||
+		rb_gc_in_suspicious_set(obj)) {
+		/* ok */
+	    }
+	    else {
+		rb_bug("gc_check_suspicious: %p (%s) missed WB - child is: %p (%s)",
+		       (void *)objspace->parent_object, obj_type_name(objspace->parent_object),
+		       (void *)obj, obj_type_name(obj));
+	    }
+	}
+    }
+    
     if (objspace->during_minor_gc && objspace->parent_object_is_promoted && !OBJ_WB_PROTECTED(obj)) {
 	if (((DEBUG_RGENGC) && !st_is_member(ruby_gc_suspicious_set, obj)))
 	  fprintf(stderr, "gc_check_suspicious: %p (%s)\n", (void *)obj, obj_type_name(obj));
@@ -2746,9 +2771,24 @@ gc_mark_children(rb_objspace_t *objspace, VALUE ptr)
 	    }
 	}
 
-	if (0) if (OBJ_PROMOTED(obj)) {
-	    if (DEBUG_RGENGC) fprintf(stderr, "gc_mark_children: %p (%s) was promoted.\n", obj, obj_type_name((VALUE)obj));
-	    return; /* old gen */
+	if (RGENGC_CHECK_MODE) {
+	    objspace->parent_object_was_promoted = FALSE;
+	}
+
+	if (OBJ_PROMOTED(obj)) {
+	    if (RGENGC_CHECK_MODE) {
+		/* Check children. Children must be:
+		 *  * old gen            or
+		 *  * in remember's set  or
+		 *  * in suspicious set
+		 */
+		objspace->parent_object_was_promoted = TRUE;
+		objspace->parent_object = (VALUE)obj;
+	    }
+	    else {
+		if (DEBUG_RGENGC) fprintf(stderr, "gc_mark_children: %p (%s) was promoted.\n", obj, obj_type_name((VALUE)obj));
+		return; /* old gen */
+	    }
 	}
 
 	if (OBJ_WB_PROTECTED(obj)) {
@@ -3066,6 +3106,8 @@ gc_marks(rb_objspace_t *objspace)
     SET_STACK_END;
 
     objspace->parent_object_is_promoted = FALSE;
+    objspace->parent_object_was_promoted = FALSE;
+    objspace->parent_object = Qundef;
 
     th->vm->self ? rb_gc_mark(th->vm->self) : rb_vm_mark(th->vm);
 
@@ -4763,6 +4805,14 @@ rb_gc_remembered(VALUE obj)
 {
     int result = st_is_member(ruby_gc_remember_set, obj);
     if (DEBUG_RGENGC) fprintf(stderr, "rb_gc_remembered: %p (%s) => %d\n", (void *)obj, obj_type_name(obj), result);
+    return result;
+}
+
+static int
+rb_gc_in_suspicious_set(VALUE obj)
+{
+    int result = st_is_member(ruby_gc_suspicious_set, obj);
+    if (DEBUG_RGENGC) fprintf(stderr, "rb_gc_is_suspicious: %p (%s) => %d\n", (void *)obj, obj_type_name(obj), result);
     return result;
 }
 
