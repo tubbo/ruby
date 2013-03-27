@@ -49,7 +49,7 @@ static ID id_attached;
 static VALUE
 class_alloc(VALUE flags, VALUE klass)
 {
-    NEWOBJ_OF(obj, struct RClass, klass, flags /* | FL_KEEP_WB /* TODO: WB */);
+    NEWOBJ_OF(obj, struct RClass, klass, flags /* | FL_KEEP_WB TODO: WB */);
     obj->ptr = ALLOC(rb_classext_t);
     RCLASS_IV_TBL(obj) = 0;
     RCLASS_CONST_TBL(obj) = 0;
@@ -200,7 +200,7 @@ rb_mod_init_copy(VALUE clone, VALUE orig)
     }
     rb_obj_init_copy(clone, orig);
     if (!FL_TEST(CLASS_OF(clone), FL_SINGLETON)) {
-	RBASIC(clone)->klass = rb_singleton_class_clone(orig);
+	RBASIC_SET_CLASS(clone, rb_singleton_class_clone(orig));
 	rb_singleton_class_attached(RBASIC(clone)->klass, (VALUE)clone);
     }
     RCLASS_SET_SUPER(clone, RCLASS_SUPER(orig));
@@ -255,10 +255,10 @@ rb_singleton_class_clone_and_attach(VALUE obj, VALUE attach)
 	VALUE clone = class_alloc(RBASIC(klass)->flags, 0);
 
 	if (BUILTIN_TYPE(obj) == T_CLASS) {
-	    RBASIC(clone)->klass = clone;
+	    RBASIC_SET_CLASS(clone, clone);
 	}
 	else {
-	    RBASIC(clone)->klass = rb_singleton_class_clone(klass);
+	    RBASIC_SET_CLASS(clone, rb_singleton_class_clone(klass));
 	}
 
 	RCLASS_SET_SUPER(clone, RCLASS_SUPER(klass));
@@ -299,6 +299,7 @@ rb_singleton_class_attached(VALUE klass, VALUE obj)
 
 
 #define METACLASS_OF(k) RBASIC(k)->klass
+#define SET_METACLASS_OF(k, cls) RBASIC_SET_CLASS(k, cls)
 
 /*!
  * whether k is a meta^(n)-class of Class class
@@ -346,12 +347,13 @@ make_metaclass(VALUE klass)
     rb_singleton_class_attached(metaclass, klass);
 
     if (META_CLASS_OF_CLASS_CLASS_P(klass)) {
-	METACLASS_OF(klass) = METACLASS_OF(metaclass) = metaclass;
+	SET_METACLASS_OF(klass, metaclass);
+	SET_METACLASS_OF(metaclass, metaclass);
     }
     else {
 	VALUE tmp = METACLASS_OF(klass); /* for a meta^(n)-class klass, tmp is meta^(n)-class of Class class */
-	METACLASS_OF(klass) = metaclass;
-	METACLASS_OF(metaclass) = ENSURE_EIGENCLASS(tmp);
+	SET_METACLASS_OF(klass, metaclass);
+	SET_METACLASS_OF(metaclass, ENSURE_EIGENCLASS(tmp));
     }
 
     super = RCLASS_SUPER(klass);
@@ -376,10 +378,10 @@ make_singleton_class(VALUE obj)
     VALUE klass = rb_class_boot(orig_class);
 
     FL_SET(klass, FL_SINGLETON);
-    RBASIC(obj)->klass = klass;
+    RBASIC_SET_CLASS(obj, klass);
     rb_singleton_class_attached(klass, obj);
 
-    METACLASS_OF(klass) = METACLASS_OF(rb_class_real(orig_class));
+    SET_METACLASS_OF(klass, METACLASS_OF(rb_class_real(orig_class)));
     return klass;
 }
 
@@ -408,11 +410,10 @@ Init_class_hierarchy(void)
     rb_cClass =  boot_defclass("Class",  rb_cModule);
 
     rb_const_set(rb_cObject, rb_intern("BasicObject"), rb_cBasicObject);
-    RBASIC(rb_cClass)->klass
-	= RBASIC(rb_cModule)->klass
-	= RBASIC(rb_cObject)->klass
-	= RBASIC(rb_cBasicObject)->klass
-	= rb_cClass;
+    RBASIC_SET_CLASS(rb_cClass, rb_cClass);
+    RBASIC_SET_CLASS(rb_cModule, rb_cClass);
+    RBASIC_SET_CLASS(rb_cObject, rb_cClass);
+    RBASIC_SET_CLASS(rb_cBasicObject, rb_cClass);
 }
 
 
@@ -678,10 +679,10 @@ rb_include_class_new(VALUE module, VALUE super)
     RCLASS_M_TBL(klass) = RCLASS_M_TBL(RCLASS_ORIGIN(module));
     RCLASS_SET_SUPER(klass, super);
     if (RB_TYPE_P(module, T_ICLASS)) {
-	RBASIC(klass)->klass = RBASIC(module)->klass;
+	RBASIC_SET_CLASS(klass, RBASIC(module)->klass);
     }
     else {
-	RBASIC(klass)->klass = module;
+	RBASIC_SET_CLASS(klass, module);
     }
     OBJ_INFECT(klass, module);
     OBJ_INFECT(klass, super);

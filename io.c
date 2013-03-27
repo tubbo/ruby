@@ -6057,7 +6057,7 @@ rb_io_s_popen(int argc, VALUE *argv, VALUE klass)
 	}
 #endif
 	tmp = rb_ary_dup(tmp);
-	RBASIC(tmp)->klass = 0;
+	RBASIC_CLEAR_CLASS(tmp);
 	execarg_obj = rb_execarg_new((int)len, RARRAY_PTR(tmp), FALSE);
 	rb_ary_clear(tmp);
     }
@@ -6087,7 +6087,7 @@ rb_io_s_popen(int argc, VALUE *argv, VALUE klass)
 	}
 	return Qnil;
     }
-    RBASIC(port)->klass = klass;
+    RBASIC_SET_CLASS(port, klass);
     if (rb_block_given_p()) {
 	return rb_ensure(rb_yield, port, io_close, port);
     }
@@ -6483,7 +6483,7 @@ io_reopen(VALUE io, VALUE nfile)
 	rb_io_binmode(io);
     }
 
-    RBASIC(io)->klass = rb_obj_class(nfile);
+    RBASIC_SET_CLASS(io, rb_obj_class(nfile));
     return io;
 }
 

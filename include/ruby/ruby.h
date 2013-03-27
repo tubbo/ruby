@@ -667,7 +667,7 @@ VALUE rb_newobj_of(VALUE, VALUE);
 #define NEWOBJ_OF(obj,type,klass,flags) type *(obj) = (type*)rb_newobj_of(klass, flags)
 #define OBJSETUP(obj,c,t) do {\
     RBASIC(obj)->flags = (t);\
-    RBASIC(obj)->klass = (c);\
+    RBASIC_SET_CLASS(obj, (c));\
     if (rb_safe_level() >= 3) FL_SET((obj), FL_TAINT | FL_UNTRUSTED);\
 } while (0)
 #define CLONESETUP(clone,obj) do {\
@@ -682,12 +682,25 @@ VALUE rb_newobj_of(VALUE, VALUE);
 
 struct RBasic {
     VALUE flags;
-    VALUE klass;
+    const VALUE klass;
 }
 #ifdef __GNUC__
     __attribute__((aligned(sizeof(VALUE))))
 #endif
 ;
+
+struct RBasicRaw {
+    VALUE flags;
+    VALUE klass;
+};
+
+#define RBASIC_CLEAR_CLASS(obj)    (((struct RBasicRaw *)(obj))->klass = 0)
+#define RBASIC_SET_CLASS_RAW(obj, cls) (((struct RBasicRaw *)(obj))->klass = (cls))
+#define RBASIC_SET_CLASS(obj, cls) do { \
+    VALUE _obj_ = (obj); \
+    VALUE _cls_ = (cls); \
+    OBJ_WB(_obj_, _cls_); RBASIC_SET_CLASS_RAW(_obj_, _cls_); \
+} while (0)
 
 #define ROBJECT_EMBED_LEN_MAX 3
 struct RObject {

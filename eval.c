@@ -1060,7 +1060,7 @@ hidden_identity_hash_new()
     VALUE hash = rb_hash_new();
 
     rb_funcall(hash, rb_intern("compare_by_identity"), 0);
-    RBASIC(hash)->klass = 0;  /* hide from ObjectSpace */
+    RBASIC_CLEAR_CLASS(hash); /* hide from ObjectSpace */
     return hash;
 }
 

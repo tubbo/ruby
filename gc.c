@@ -1352,7 +1352,7 @@ define_final0(VALUE obj, VALUE block)
     }
     else {
 	table = rb_ary_new3(1, block);
-	RBASIC(table)->klass = 0;
+	RBASIC_CLEAR_CLASS(table);
 	st_add_direct(finalizer_table, obj, table);
     }
     return block;
@@ -1427,7 +1427,7 @@ run_final(rb_objspace_t *objspace, VALUE obj)
 
     objspace->heap.final_num--;
 
-    RBASIC(obj)->klass = 0;
+    RBASIC_CLEAR_CLASS(obj);
 
     if (RTYPEDDATA_P(obj)) {
 	free_func = RTYPEDDATA_TYPE(obj)->function.dfree;
@@ -3120,12 +3120,9 @@ gc_marks(rb_objspace_t *objspace)
 	}
 	mark_set(objspace, ruby_gc_suspicious_set);
 	mark_set(objspace, ruby_gc_remember_set);
-	st_clear(ruby_gc_remember_set);
     }
     else {
 	fprintf(stderr, "gc_marks: major gc\n");
-	st_clear(ruby_gc_suspicious_set);
-	st_clear(ruby_gc_remember_set);
     }
 
     mark_tbl(objspace, finalizer_table);
@@ -3152,6 +3149,17 @@ gc_marks(rb_objspace_t *objspace)
 
     /* marking-loop */
     gc_mark_stacked_objects(objspace);
+
+    /* cleanup */
+
+    /* clear sets here for RGENGC_CHECK_MODE */
+    if (objspace->during_minor_gc) {
+	st_clear(ruby_gc_remember_set);
+    }
+    else {
+	st_clear(ruby_gc_suspicious_set);
+	st_clear(ruby_gc_remember_set);
+    }
 
     gc_prof_mark_timer_stop(objspace);
 

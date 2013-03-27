@@ -312,7 +312,7 @@ rb_obj_clone(VALUE obj)
     }
     clone = rb_obj_alloc(rb_obj_class(obj));
     singleton = rb_singleton_class_clone_and_attach(obj, clone);
-    RBASIC(clone)->klass = singleton;
+    RBASIC_SET_CLASS(clone, singleton);
     if (FL_TEST(singleton, FL_SINGLETON)) {
 	rb_singleton_class_attached(singleton, clone);
     }
@@ -1613,7 +1613,7 @@ rb_module_s_alloc(VALUE klass)
 {
     VALUE mod = rb_module_new();
 
-    RBASIC(mod)->klass = klass;
+    RBASIC_SET_CLASS(mod, klass);
     return mod;
 }
 
