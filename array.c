@@ -132,6 +132,7 @@ memfill(register VALUE *mem, register long size, register VALUE val)
     assert(ARY_SHARED_P(ary)); \
     assert(ARY_SHARED_ROOT_P(value)); \
     RARRAY(ary)->as.heap.aux.shared = (value); \
+    OBJ_WB(ary, value); \
 } while (0)
 #define RARRAY_SHARED_ROOT_FLAG FL_USER5
 #define ARY_SHARED_ROOT_P(ary) (FL_TEST((ary), RARRAY_SHARED_ROOT_FLAG))
