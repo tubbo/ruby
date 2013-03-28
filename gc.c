@@ -594,10 +594,11 @@ add_heap_slots(rb_objspace_t *objspace, size_t add)
 static void
 init_heap(rb_objspace_t *objspace)
 {
-    add_heap_slots(objspace, HEAP_MIN_SLOTS / HEAP_OBJ_LIMIT);
-    init_mark_stack(&objspace->mark_stack);
     ruby_gc_remember_set = st_init_numtable();
     ruby_gc_suspicious_set = st_init_numtable();
+
+    add_heap_slots(objspace, HEAP_MIN_SLOTS / HEAP_OBJ_LIMIT);
+    init_mark_stack(&objspace->mark_stack);
 
     atexit(print_wb_counter);
 
@@ -734,7 +735,7 @@ rb_data_object_alloc(VALUE klass, void *datap, RUBY_DATA_FUNC dmark, RUBY_DATA_F
 {
     NEWOBJ(data, struct RData);
     if (klass) Check_Type(klass, T_CLASS);
-    OBJSETUP(data, klass, T_DATA);
+    OBJSETUP((VALUE)data, klass, T_DATA);
     data->data = datap;
     data->dfree = dfree;
     data->dmark = dmark;
@@ -749,7 +750,7 @@ rb_data_typed_object_alloc(VALUE klass, void *datap, const rb_data_type_t *type)
 
     if (klass) Check_Type(klass, T_CLASS);
 
-    OBJSETUP(data, klass, T_DATA);
+    OBJSETUP((VALUE)data, klass, T_DATA);
 
     data->data = datap;
     data->typed_flag = 1;
@@ -1902,7 +1903,7 @@ objspace_live_num(rb_objspace_t *objspace)
 
 static const char *obj_type_name(VALUE obj);
 #define DEBUG_RGENGC 0
-#define RGENGC_SIMPLEBENCH 1
+#define RGENGC_SIMPLEBENCH 0
 
 static int
 living_object(VALUE p, uintptr_t *bits, int during_minor_gc)
@@ -3122,7 +3123,7 @@ gc_marks(rb_objspace_t *objspace)
 	mark_set(objspace, ruby_gc_remember_set);
     }
     else {
-	fprintf(stderr, "gc_marks: major gc\n");
+	if (RGENGC_SIMPLEBENCH) fprintf(stderr, "gc_marks: major gc\n");
     }
 
     mark_tbl(objspace, finalizer_table);
@@ -4845,8 +4846,10 @@ keepwb(VALUE obj)
 static void
 print_wb_counter(void)
 {
-    fprintf(stderr, "WB - have: %d, giveup: %d, diff: %d, susp_entries: %d\n",
-	    keepwb_counter, giveup_wb_counter, keepwb_counter - giveup_wb_counter,
-	    ruby_gc_suspicious_set->num_entries);
+    if (RGENGC_SIMPLEBENCH) {
+	fprintf(stderr, "WB - have: %d, giveup: %d, diff: %d, susp_entries: %d\n",
+		keepwb_counter, giveup_wb_counter, keepwb_counter - giveup_wb_counter,
+		ruby_gc_suspicious_set->num_entries);
+    }
 }
 
