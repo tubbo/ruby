@@ -702,7 +702,7 @@ str_new4(VALUE klass, VALUE str)
 	assert(OBJ_FROZEN(shared));
 	FL_SET(str2, ELTS_SHARED);
 	RSTRING(str2)->as.heap.aux.shared = shared;
-	/* WB is not needed because str2 is *new* object */
+	OBJ_WB(str2, shared); /* TODO: WB is not needed because str2 is *new* object */
     }
     else {
 	FL_SET(str, ELTS_SHARED);
@@ -723,6 +723,9 @@ rb_str_new_frozen(VALUE orig)
     klass = rb_obj_class(orig);
     if (STR_SHARED_P(orig) && (str = RSTRING(orig)->as.heap.aux.shared)) {
 	long ofs;
+	if (!OBJ_FROZEN(str)) {
+	    rb_bug("xyzzy");
+	}
 	assert(OBJ_FROZEN(str));
 	ofs = RSTRING_LEN(str) - RSTRING_LEN(orig);
 	if ((ofs > 0) || (klass != RBASIC(str)->klass) ||
@@ -746,7 +749,7 @@ rb_str_new_frozen(VALUE orig)
 	str = str_new4(klass, orig);
 	FL_SET(str, STR_ASSOC);
 	RSTRING(str)->as.heap.aux.shared = assoc;
-	/* WB is not needed because str is new object */
+	OBJ_WB(str, assoc); /* TODO: WB is not needed because str is new object */
     }
     else {
 	str = str_new4(klass, orig);
@@ -882,8 +885,10 @@ rb_str_shared_replace(VALUE str, VALUE str2)
     RSTRING(str)->as.heap.ptr = RSTRING_PTR(str2);
     RSTRING(str)->as.heap.len = RSTRING_LEN(str2);
     if (STR_NOCAPA_P(str2)) {
+	VALUE shared = RSTRING(str2)->as.heap.aux.shared;
 	FL_SET(str, RBASIC(str2)->flags & STR_NOCAPA);
-	RSTRING(str)->as.heap.aux.shared = RSTRING(str2)->as.heap.aux.shared;
+	RSTRING(str)->as.heap.aux.shared = shared;
+	OBJ_WB(str, shared);
     }
     else {
 	RSTRING(str)->as.heap.aux.capa = RSTRING(str2)->as.heap.aux.capa;

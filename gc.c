@@ -382,6 +382,10 @@ static inline void gc_prof_sweep_timer_start(rb_objspace_t *);
 static inline void gc_prof_sweep_timer_stop(rb_objspace_t *);
 static inline void gc_prof_set_malloc_info(rb_objspace_t *);
 
+static const char *obj_type_name(VALUE obj);
+#define RGENGC_DEBUG       0
+#define RGENGC_SIMPLEBENCH 0
+#define RGENGC_CHECK_MODE  0
 
 /*
   --------------------------- ObjectSpace -----------------------------
@@ -1901,10 +1905,6 @@ objspace_live_num(rb_objspace_t *objspace)
     return objspace->total_allocated_object_num - objspace->total_freed_object_num;
 }
 
-static const char *obj_type_name(VALUE obj);
-#define DEBUG_RGENGC 0
-#define RGENGC_SIMPLEBENCH 0
-
 static int
 living_object(VALUE p, uintptr_t *bits, int during_minor_gc)
 {
@@ -1928,7 +1928,7 @@ living_object(VALUE p, uintptr_t *bits, int during_minor_gc)
 	}
     }
 
-    if (DEBUG_RGENGC && reason > 0) {
+    if (RGENGC_DEBUG && reason > 0) {
 	fprintf(stderr, "slot_sweep: %p (%s) is living (%s)\n", (void *)p, obj_type_name(p),
 		reason == 1 ? "promoted" : "marked");
     }
@@ -2690,8 +2690,6 @@ obj_type_name(VALUE obj)
     return "unknown";
 }
 
-#define RGENGC_CHECK_MODE 1
-
 static int rb_gc_in_suspicious_set(VALUE obj);
 
 static void
@@ -2713,7 +2711,7 @@ gc_check_suspicious(rb_objspace_t *objspace, VALUE obj)
     }
     
     if (objspace->during_minor_gc && objspace->parent_object_is_promoted && !OBJ_WB_PROTECTED(obj)) {
-	if (((DEBUG_RGENGC) && !st_is_member(ruby_gc_suspicious_set, obj)))
+	if (((RGENGC_DEBUG) && !st_is_member(ruby_gc_suspicious_set, obj)))
 	  fprintf(stderr, "gc_check_suspicious: %p (%s)\n", (void *)obj, obj_type_name(obj));
 	st_insert(ruby_gc_suspicious_set, obj, Qtrue);
     }
@@ -2763,7 +2761,7 @@ gc_mark_children(rb_objspace_t *objspace, VALUE ptr)
   marking:
 
     if (objspace->during_minor_gc) {
-	if ((DEBUG_RGENGC) && BUILTIN_TYPE(obj) == T_ARRAY && RARRAY_LEN(obj) >= 100) {
+	if ((RGENGC_DEBUG) && BUILTIN_TYPE(obj) == T_ARRAY && RARRAY_LEN(obj) >= 100) {
 	    if (OBJ_PROMOTED(obj)) {
 		fprintf(stderr, "gc_mark_children: %p (%s > %d) was promoted!\n", obj, obj_type_name((VALUE)obj), RARRAY_LENINT(obj));
 	    }
@@ -2787,14 +2785,14 @@ gc_mark_children(rb_objspace_t *objspace, VALUE ptr)
 		objspace->parent_object = (VALUE)obj;
 	    }
 	    else {
-		if (DEBUG_RGENGC) fprintf(stderr, "gc_mark_children: %p (%s) was promoted.\n", obj, obj_type_name((VALUE)obj));
+		if (RGENGC_DEBUG) fprintf(stderr, "gc_mark_children: %p (%s) was promoted.\n", obj, obj_type_name((VALUE)obj));
 		return; /* old gen */
 	    }
 	}
 
 	if (OBJ_WB_PROTECTED(obj)) {
 	    OBJ_PROMOTE(obj);
-	    if (DEBUG_RGENGC) fprintf(stderr, "gc_mark_children: promote %p (%s).\n", obj, obj_type_name((VALUE)obj));
+	    if (RGENGC_DEBUG) fprintf(stderr, "gc_mark_children: promote %p (%s).\n", obj, obj_type_name((VALUE)obj));
 	    objspace->parent_object_is_promoted = TRUE;
 	}
 	else {
@@ -3115,7 +3113,7 @@ gc_marks(rb_objspace_t *objspace)
     if (objspace->during_minor_gc) {
 	if (RGENGC_SIMPLEBENCH) fprintf(stderr, "gc_marks: minor gc\n");
 
-	if (DEBUG_RGENGC) {
+	if (RGENGC_DEBUG) {
 	    fprintf(stderr, "gc_marks: ruby_gc_suspicious_set has %d entries.\n", ruby_gc_suspicious_set->num_entries);
 	    fprintf(stderr, "gc_marks: ruby_gc_remember_set has %d entries.\n", ruby_gc_remember_set->num_entries);
 	}
@@ -4795,7 +4793,7 @@ rb_gc_wb(VALUE a, VALUE b)
 {
     if (!rb_gc_remembered(a)) {
 	rb_gc_remember(a);
-	if (DEBUG_RGENGC) fprintf(stderr, "rb_gc_wb: %p (%s) = %p (%s)\n",
+	if (RGENGC_DEBUG) fprintf(stderr, "rb_gc_wb: %p (%s) = %p (%s)\n",
 				  (void *)a, obj_type_name(a),
 				  (void *)b, obj_type_name(b));
     }
@@ -4806,14 +4804,14 @@ rb_gc_remember(VALUE obj)
 {
     OBJ_DEMOTE(obj);
     st_insert(ruby_gc_remember_set, obj, Qtrue);
-    if (DEBUG_RGENGC) fprintf(stderr, "rb_gc_remember: %p (%s), total: %d\n", (void *)obj, obj_type_name(obj), ruby_gc_remember_set->num_entries);
+    if (RGENGC_DEBUG) fprintf(stderr, "rb_gc_remember: %p (%s), total: %d\n", (void *)obj, obj_type_name(obj), ruby_gc_remember_set->num_entries);
 }
 
 int
 rb_gc_remembered(VALUE obj)
 {
     int result = st_is_member(ruby_gc_remember_set, obj);
-    if (DEBUG_RGENGC) fprintf(stderr, "rb_gc_remembered: %p (%s) => %d\n", (void *)obj, obj_type_name(obj), result);
+    if (RGENGC_DEBUG) fprintf(stderr, "rb_gc_remembered: %p (%s) => %d\n", (void *)obj, obj_type_name(obj), result);
     return result;
 }
 
@@ -4821,7 +4819,7 @@ static int
 rb_gc_in_suspicious_set(VALUE obj)
 {
     int result = st_is_member(ruby_gc_suspicious_set, obj);
-    if (DEBUG_RGENGC) fprintf(stderr, "rb_gc_is_suspicious: %p (%s) => %d\n", (void *)obj, obj_type_name(obj), result);
+    if (RGENGC_DEBUG) fprintf(stderr, "rb_gc_is_suspicious: %p (%s) => %d\n", (void *)obj, obj_type_name(obj), result);
     return result;
 }
 
@@ -4833,7 +4831,7 @@ rb_gc_giveup_writebarrier(VALUE obj)
 	OBJ_DEMOTE(obj);
 	st_insert(ruby_gc_suspicious_set, obj, Qtrue);
 	giveup_wb_counter++;
-	if (DEBUG_RGENGC) fprintf(stderr, "rb_gc_giveup_writebarrier: %p (%s)\n", (void *)obj, obj_type_name(obj));
+	if (RGENGC_DEBUG) fprintf(stderr, "rb_gc_giveup_writebarrier: %p (%s)\n", (void *)obj, obj_type_name(obj));
     }
 }
 
