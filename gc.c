@@ -671,7 +671,8 @@ newobj(VALUE klass, VALUE flags)
     }
 
     if (UNLIKELY(ruby_gc_stress && !ruby_disable_gc_stress)) {
-	if (!garbage_collect(objspace)) {
+	/* if (!garbage_collect(objspace)) { */
+	if (!gc_prepare_free_objects(objspace)) {
 	    during_gc = 0;
 	    rb_memerror();
 	}
@@ -2625,10 +2626,18 @@ rb_gc_mark_maybe(VALUE obj)
 }
 
 static int
+gc_marked(rb_objspace_t *objspace, VALUE ptr)
+{
+    register uintptr_t *bits = GET_HEAP_BITMAP(ptr);
+    if (MARKED_IN_BITMAP(bits, ptr)) return 1;
+    return 0;
+}
+
+static int
 gc_mark_ptr(rb_objspace_t *objspace, VALUE ptr)
 {
     register uintptr_t *bits = GET_HEAP_BITMAP(ptr);
-    if (MARKED_IN_BITMAP(bits, ptr)) return 0;
+    if (gc_marked(objspace, ptr)) return 0;
     MARK_IN_BITMAP(bits, ptr);
     objspace->heap.marked_num++;
     return 1;
@@ -2696,20 +2705,25 @@ static void
 gc_check_suspicious(rb_objspace_t *objspace, VALUE obj)
 {
     if (RGENGC_CHECK_MODE) {
-	if (objspace->parent_object_was_promoted) {
-	    if (OBJ_PROMOTED(obj) ||
-		rb_gc_remembered(obj) ||
-		rb_gc_in_suspicious_set(obj)) {
-		/* ok */
-	    }
-	    else {
+	if (OBJ_PROMOTED(obj)) {
+	    if (!gc_marked(objspace, obj) && rb_gc_remembered(obj))
+	      rb_bug("gc_check_suspicious: %p (%s) is promoted, but in remember set", (void *)obj, obj_type_name(obj));
+	    if (!gc_marked(objspace, obj) && rb_gc_in_suspicious_set(obj))
+	      rb_bug("gc_check_suspicious: %p (%s) is promoted, but in suspicious set", (void *)obj, obj_type_name(obj));
+	}
+	else {
+	    /* new obj */
+	    if (objspace->parent_object_was_promoted &&
+		!rb_gc_remembered(obj) &&
+		!rb_gc_in_suspicious_set(obj)) {
+
 		rb_bug("gc_check_suspicious: %p (%s) missed WB - child is: %p (%s)",
 		       (void *)objspace->parent_object, obj_type_name(objspace->parent_object),
 		       (void *)obj, obj_type_name(obj));
 	    }
 	}
     }
-    
+
     if (objspace->during_minor_gc && objspace->parent_object_is_promoted && !OBJ_WB_PROTECTED(obj)) {
 	if (((RGENGC_DEBUG) && !st_is_member(ruby_gc_suspicious_set, obj)))
 	  fprintf(stderr, "gc_check_suspicious: %p (%s)\n", (void *)obj, obj_type_name(obj));
