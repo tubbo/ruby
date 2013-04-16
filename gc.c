@@ -407,8 +407,8 @@ static const char *obj_type_name(VALUE obj);
  * 1: enable assertions
  * 2: enable bits check (for debugging)
  */
-#define RGENGC_CHECK_MODE  2
-#define RGENGC_SIMPLEBENCH 1
+#define RGENGC_CHECK_MODE  0
+#define RGENGC_SIMPLEBENCH 0
 
 static int rgengc_remembered(rb_objspace_t *objspace, VALUE obj);
 static int rgengc_remembered_count(rb_objspace_t *objspace);
