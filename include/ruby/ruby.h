@@ -1144,7 +1144,8 @@ struct RBignum {
 #define SPECIAL_CONST_P(x) (IMMEDIATE_P(x) || !RTEST(x))
 
 #define FL_ABLE(x) (!SPECIAL_CONST_P(x) && BUILTIN_TYPE(x) != T_NODE)
-#define FL_TEST(x,f) (FL_ABLE(x)?(RBASIC(x)->flags&(f)):0)
+#define FL_TEST_RAW(x,f) (RBASIC(x)->flags&(f))
+#define FL_TEST(x,f) (FL_ABLE(x)?FL_TEST_RAW((x),(f)):0)
 #define FL_ANY(x,f) FL_TEST((x),(f))
 #define FL_ALL(x,f) (FL_TEST((x),(f)) == (f))
 #define FL_SET(x,f) do {if (FL_ABLE(x)) RBASIC(x)->flags |= (f);} while (0)
@@ -1164,17 +1165,14 @@ struct RBignum {
 #define OBJ_FROZEN(x) (!!(FL_ABLE(x)?(RBASIC(x)->flags&(FL_FREEZE)):(FIXNUM_P(x)||FLONUM_P(x))))
 #define OBJ_FREEZE(x) FL_SET((x), FL_FREEZE)
 
-#define OBJ_WB_PROTECTED(x)   FL_TEST((x), FL_KEEP_WB)
-#define OBJ_WB_GIVEUP(x)      (OBJ_WB_PROTECTED(x) && (rb_gc_giveup_writebarrier((VALUE)x), 0))
+#define OBJ_PROMOTED(x)       (SPECIAL_CONST_P(x) ? 0 : FL_TEST_RAW((x), FL_OLDGEN))
+#define OBJ_WB_PROTECTED(x)   (SPECIAL_CONST_P(x) ? 1 : FL_TEST_RAW((x), FL_KEEP_WB))
+#define OBJ_WB_GIVEUP(x)      (OBJ_WB_PROTECTED(x) && OBJ_PROMOTED(x) && (rb_gc_giveup_writebarrier((VALUE)x), 0))
+#define OBJ_SHADE(x)          OBJ_WB_GIVEUP(x) /* RGENGC terminology */
 
-#define OBJ_PROMOTED(x)       FL_TEST((x), FL_OLDGEN)
-#define OBJ_PROMOTE(x)        FL_SET((x), FL_OLDGEN)
-#define OBJ_DEMOTE(x)         FL_UNSET((x), FL_OLDGEN)
 
 void rb_gc_wb(VALUE a, VALUE b);
 void rb_gc_giveup_writebarrier(VALUE obj);
-void rb_gc_remember(VALUE obj);
-int rb_gc_remembered(VALUE obj);
 
 #define OBJ_WB(a, b) (!SPECIAL_CONST_P(b) && OBJ_PROMOTED(a) && !OBJ_PROMOTED(b) && (rb_gc_wb((a), (b)), 1))
 
