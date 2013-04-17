@@ -47,7 +47,7 @@ VALUE
 rb_obj_hide(VALUE obj)
 {
     if (!SPECIAL_CONST_P(obj)) {
-	RBASIC(obj)->klass = 0;
+	RBASIC_CLEAR_CLASS(obj);
     }
     return obj;
 }
