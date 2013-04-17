@@ -407,7 +407,7 @@ static const char *obj_type_name(VALUE obj);
  * 1: enable assertions
  * 2: enable bits check (for debugging)
  */
-#define RGENGC_CHECK_MODE  0
+#define RGENGC_CHECK_MODE  2
 #define RGENGC_SIMPLEBENCH 0
 
 static int rgengc_remembered(rb_objspace_t *objspace, VALUE obj);
@@ -2002,12 +2002,11 @@ living_object_p(rb_objspace_t *objspace, VALUE p, uintptr_t *bits, int during_mi
 		      reason == 1 ? "promoted" : "marked");
     }
 
-    if (RGENGC_CHECK_MODE) {
-	if (reason == 0 && rgengc_remembered(objspace, p))
-	  rb_bug("living_object_p: %p (%s) is remembered, but not marked.\n", (void *)p, obj_type_name(p));
+    if (RGENGC_CHECK_MODE && reason == 0 && rgengc_remembered(objspace, p)) {
+	rb_bug("living_object_p: %p (%s) is remembered, but not marked.\n", (void *)p, obj_type_name(p));
     }
 
-    return reason > 0;
+    return reason != 0;
 }
 
 static void
@@ -2819,9 +2818,8 @@ gc_mark(rb_objspace_t *objspace, VALUE ptr)
 {
     if (!markable_object_p(objspace, ptr)) return;
 
-    rgengc_check_shady(objspace, ptr);
-
     if (LIKELY(objspace->mark_func_data == 0)) {
+	rgengc_check_shady(objspace, ptr);
 	if (!gc_mark_ptr(objspace, ptr)) return; /* already marked */
 	push_mark_stack(&objspace->mark_stack, ptr);
     }
