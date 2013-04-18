@@ -387,8 +387,10 @@ static inline void gc_prof_timer_start(rb_objspace_t *);
 static inline void gc_prof_timer_stop(rb_objspace_t *, int);
 static inline void gc_prof_mark_timer_start(rb_objspace_t *);
 static inline void gc_prof_mark_timer_stop(rb_objspace_t *);
-static inline void gc_prof_sweep_timer_start(rb_objspace_t *);
-static inline void gc_prof_sweep_timer_stop(rb_objspace_t *);
+static inline void gc_prof_sweep_slot_timer_start(rb_objspace_t *);
+static inline void gc_prof_sweep_slot_timer_stop(rb_objspace_t *);
+static inline void gc_prof_sweep_all_timer_start(rb_objspace_t *);
+static inline void gc_prof_sweep_all_timer_stop(rb_objspace_t *);
 static inline void gc_prof_set_malloc_info(rb_objspace_t *);
 
 static const char *obj_type_name(VALUE obj);
@@ -407,8 +409,8 @@ static const char *obj_type_name(VALUE obj);
  * 1: enable assertions
  * 2: enable bits check (for debugging)
  */
-#define RGENGC_CHECK_MODE  2
-#define RGENGC_SIMPLEBENCH 0
+#define RGENGC_CHECK_MODE  0
+#define RGENGC_SIMPLEBENCH 1
 
 static int rgengc_remembered(rb_objspace_t *objspace, VALUE obj);
 static void rgengc_remember(rb_objspace_t *objspace, VALUE obj);
@@ -420,12 +422,13 @@ static void rgengc_profile_report(rb_objspace_t *objspace);
 #define FL_SET2(x,f)          do {if (RGENGC_CHECK_MODE && SPECIAL_CONST_P(x)) rb_bug("FL_SET2: SPECIAL_CONST");   RBASIC(x)->flags |= (f);} while (0)
 #define FL_UNSET2(x,f)        do {if (RGENGC_CHECK_MODE && SPECIAL_CONST_P(x)) rb_bug("FL_UNSET2: SPECIAL_CONST"); RBASIC(x)->flags &= ~(f);} while (0)
 
-#define OBJ_SUNNY(x)          FL_TEST2((x), FL_KEEP_WB)
-#define OBJ_SHADY(x)          (!OBJ_SUNNY(x))
+#define RVALUE_SUNNY(x)       FL_TEST2((x), FL_KEEP_WB)
+#define RVALUE_SHADY(x)       (!RVALUE_SUNNY(x))
+#define RVALUE_PROMOTED(x)    FL_TEST2((x), FL_OLDGEN)
 
-#define OBJ_PROMOTE(x)        FL_SET2((x), FL_OLDGEN)
-#define OBJ_DEMOTE(x)         FL_UNSET2((x), FL_OLDGEN)
-#define OBJ_GIVEUP_WB(x)      FL_UNSET2((x), FL_KEEP_WB)
+#define RVALUE_PROMOTE(x)        FL_SET2((x), FL_OLDGEN)
+#define RVALUE_DEMOTE(x)         FL_UNSET2((x), FL_OLDGEN)
+#define RVALUE_GIVEUP_WB(x)      FL_UNSET2((x), FL_KEEP_WB)
 
 static void
 rgengc_report_body(int level, rb_objspace_t *objspace, const char *fmt, ...)
@@ -776,7 +779,7 @@ newobj(VALUE klass, VALUE flags)
     rgengc_report(1, objspace, "newobj: %p (%s)\n", (void *)obj, obj_type_name(obj));
 
     if (RGENGC_CHECK_MODE && RBASIC(obj)->flags) rb_bug("newobj: flags of %p (%s) is not zero (%-8lx).\n", (void *)obj, obj_type_name(obj), RBASIC(obj)->flags);
-    if (RGENGC_CHECK_MODE && OBJ_PROMOTED(obj)) rb_bug("newobj: %p (%s) is promoted.\n", (void *)obj, obj_type_name(obj));
+    if (RGENGC_CHECK_MODE && RVALUE_PROMOTED(obj)) rb_bug("newobj: %p (%s) is promoted.\n", (void *)obj, obj_type_name(obj));
     if (RGENGC_CHECK_MODE && rgengc_remembered(objspace, (VALUE)obj)) rb_bug("newobj: %p (%s) is remembered.\n", (void *)obj, obj_type_name(obj));
 
     return obj;
@@ -1993,22 +1996,22 @@ living_object_p(rb_objspace_t *objspace, VALUE p, uintptr_t *bits, int during_mi
     int reason = 0;
 
     if (during_minor_gc) {
-	if (OBJ_PROMOTED(p)) {
+	if (MARKED_IN_BITMAP(bits, p)) {
 	    reason = 1;
 	}
-	else if (MARKED_IN_BITMAP(bits, p)) {
+	else if (RVALUE_PROMOTED(p)) {
 	    reason = 2;
 	}
     }
     else {
 	if (MARKED_IN_BITMAP(bits, p)) {
-	    reason = 2;
+	    reason = 1;
 	}
     }
 
     if (RGENGC_DEBUG && reason > 0) {
 	rgengc_report(5, objspace, "living_object_p: %p (%s) is living (%s).\n", (void *)p, obj_type_name(p),
-		      reason == 1 ? "promoted" : "marked");
+		      reason == 1 ? "marked" : "promoted");
     }
 
     if (RGENGC_CHECK_MODE && reason == 0 && rgengc_remembered(objspace, p)) {
@@ -2037,7 +2040,7 @@ slot_sweep_body(rb_objspace_t *objspace, struct heaps_slot *sweep_slot, int duri
 		rgengc_report(1, objspace, "slot_sweep_body: free %p (%s)\n", p, obj_type_name((VALUE)p));
 
 		if (RGENGC_CHECK_MODE) {
-		    if (objspace->rgengc.during_minor_gc && OBJ_PROMOTED(p)) rb_bug("slot_sweep_body: %p (%s) is promoted.\n", p, obj_type_name((VALUE)p));
+		    if (objspace->rgengc.during_minor_gc && RVALUE_PROMOTED(p)) rb_bug("slot_sweep_body: %p (%s) is promoted.\n", p, obj_type_name((VALUE)p));
 		    if (rgengc_remembered(objspace, (VALUE)p)) rb_bug("slot_sweep_body: %p (%s) is remembered.\n", p, obj_type_name((VALUE)p));
 		}
 
@@ -2116,12 +2119,16 @@ slot_sweep_major(rb_objspace_t *objspace, struct heaps_slot *sweep_slot)
 static void
 slot_sweep(rb_objspace_t *objspace, struct heaps_slot *sweep_slot)
 {
+    gc_prof_sweep_slot_timer_start(objspace);
+
     if (objspace->rgengc.during_minor_gc) {
 	slot_sweep_minor(objspace, sweep_slot);
     }
     else {
 	slot_sweep_major(objspace, sweep_slot);
     }
+
+    gc_prof_sweep_slot_timer_stop(objspace);
 }
 
 static int
@@ -2142,6 +2149,8 @@ ready_to_gc(rb_objspace_t *objspace)
 static void
 before_gc_sweep(rb_objspace_t *objspace)
 {
+    gc_prof_sweep_all_timer_start(objspace);
+
     objspace->heap.do_heap_free = (size_t)((heaps_used * HEAP_OBJ_LIMIT) * 0.65);
     objspace->heap.free_min = (size_t)((heaps_used * HEAP_OBJ_LIMIT)  * 0.2);
     if (objspace->heap.free_min < initial_free_min) {
@@ -2178,6 +2187,8 @@ after_gc_sweep(rb_objspace_t *objspace)
     }
 
     free_unused_heaps(objspace);
+
+    gc_prof_sweep_all_timer_stop(objspace);
 }
 
 static int
@@ -2190,6 +2201,9 @@ lazy_sweep(rb_objspace_t *objspace)
         next = objspace->heap.sweep_slots->next;
 	slot_sweep(objspace, objspace->heap.sweep_slots);
         objspace->heap.sweep_slots = next;
+
+	if (!next) after_gc_sweep(objspace);
+
         if (has_free_object) {
             during_gc = 0;
             return TRUE;
@@ -2201,11 +2215,11 @@ lazy_sweep(rb_objspace_t *objspace)
 static void
 rest_sweep(rb_objspace_t *objspace)
 {
+    fprintf(stderr, "rest sweep\n");
     if (objspace->heap.sweep_slots) {
 	while (objspace->heap.sweep_slots) {
 	    lazy_sweep(objspace);
 	}
-	after_gc_sweep(objspace);
     }
 }
 
@@ -2248,17 +2262,15 @@ gc_prepare_free_objects(rb_objspace_t *objspace)
 
     during_gc++;
     gc_prof_timer_start(objspace);
-    gc_prof_sweep_timer_start(objspace);
 
     if (objspace->heap.sweep_slots) {
         res = lazy_sweep(objspace);
-        if (res) {
-            gc_prof_sweep_timer_stop(objspace);
+
+	if (res) {
             gc_prof_set_malloc_info(objspace);
             gc_prof_timer_stop(objspace, Qfalse);
             return res;
         }
-        after_gc_sweep(objspace);
     }
     else {
         if (heaps_increment(objspace)) {
@@ -2274,21 +2286,16 @@ gc_prepare_free_objects(rb_objspace_t *objspace)
 	set_heaps_increment(objspace);
     }
 
-    gc_prof_sweep_timer_start(objspace);
-    if (RGENGC_SIMPLEBENCH) {
-	gc_sweep(objspace);
-	res = TRUE;
+    if (objspace->heap.free_min > (heaps_used * HEAP_OBJ_LIMIT - objspace->heap.marked_num)) {
+	set_heaps_increment(objspace);
     }
-    else {
-	if (!(res = lazy_sweep(objspace))) {
-	    after_gc_sweep(objspace);
-	    if (has_free_object) {
-		res = TRUE;
-		during_gc = 0;
-	    }
-	}
+
+    if (!(res = lazy_sweep(objspace))) {
+        if (has_free_object) {
+            res = TRUE;
+            during_gc = 0;
+        }
     }
-    gc_prof_sweep_timer_stop(objspace);
 
     gc_prof_timer_stop(objspace, Qtrue);
     return res;
@@ -2699,7 +2706,6 @@ mark_current_machine_context(rb_objspace_t *objspace, rb_thread_t *th)
     /* This assumes that all registers are saved into the jmp_buf (and stack) */
     rb_setjmp(save_regs_gc_mark.j);
 
-    SET_STACK_END;
     GET_STACK_BOUNDS(stack_start, stack_end, 1);
 
     mark_locations_array(objspace, save_regs_gc_mark.v, numberof(save_regs_gc_mark.v));
@@ -2820,16 +2826,21 @@ rgengc_check_shady(rb_objspace_t *objspace, VALUE obj)
 {
     if (RGENGC_CHECK_MODE > 1) {
 	if (objspace->rgengc.interesting_object == obj) {
-	    fprintf(stderr, "rgengc_check_shady: %p (%s) points %p (%s)\n",
-		    (void *)objspace->rgengc.parent_object, obj_type_name(objspace->rgengc.parent_object),
-		    (void *)obj, obj_type_name(obj));
-
+	    if (FIXNUM_P(objspace->rgengc.parent_object)) {
+		fprintf(stderr, "rgengc_check_shady: points %p (%s) is pointed at line %d\n",
+			(void *)obj, obj_type_name(obj), FIX2INT(objspace->rgengc.parent_object));
+	    }
+	    else {
+		fprintf(stderr, "rgengc_check_shady: %p (%s) points %p (%s)\n",
+			(void *)objspace->rgengc.parent_object, obj_type_name(objspace->rgengc.parent_object),
+			(void *)obj, obj_type_name(obj));
+	    }
 	}
     }
 
     if (objspace->rgengc.parent_object_is_promoted &&
-	OBJ_SHADY(obj) && !rgengc_remembered(objspace, obj)) {
-	OBJ_DEMOTE(obj);
+	RVALUE_SHADY(obj) && !rgengc_remembered(objspace, obj)) {
+	RVALUE_DEMOTE(obj);
 	rgengc_remember(objspace, obj);
     }
 }
@@ -2877,27 +2888,27 @@ gc_mark_children(rb_objspace_t *objspace, VALUE ptr)
 	return;
     }
 
-    if (RGENGC_CHECK_MODE && OBJ_SHADY(obj) && OBJ_PROMOTED(obj)) {
+    if (RGENGC_CHECK_MODE && RVALUE_SHADY(obj) && RVALUE_PROMOTED(obj)) {
 	rb_bug("gc_mark_children: (0) %p (%s) is shady and promoted.\n", (void *)obj, obj_type_name((VALUE)obj));
     }
 
   marking:
 
-    if (RGENGC_CHECK_MODE && OBJ_SHADY(obj) && OBJ_PROMOTED(obj)) {
+    if (RGENGC_CHECK_MODE && RVALUE_SHADY(obj) && RVALUE_PROMOTED(obj)) {
 	rb_bug("gc_mark_children: (1) %p (%s) is shady and promoted.\n", (void *)obj, obj_type_name((VALUE)obj));
     }
 
     if (objspace->rgengc.during_minor_gc) {
 	/* only minor gc skip marking promoted objects */
-	if (OBJ_PROMOTED(obj)) {
+	if (RVALUE_PROMOTED(obj)) {
 	    rgengc_report(3, objspace, "gc_mark_children: %p (%s) was promoted.\n", obj, obj_type_name((VALUE)obj));
 	    return; /* old gen */
 	}
     }
 
     /* minor/major common */
-    if (OBJ_SUNNY(obj)) {
-	OBJ_PROMOTE(obj); /* Sunny object can be promoted to OLDGEN object */
+    if (RVALUE_SUNNY(obj)) {
+	RVALUE_PROMOTE(obj); /* Sunny object can be promoted to OLDGEN object */
 	rgengc_report(3, objspace, "gc_mark_children: promote %p (%s).\n", (void *)obj, obj_type_name((VALUE)obj));
 	objspace->rgengc.parent_object_is_promoted = TRUE;
     }
@@ -2906,7 +2917,7 @@ gc_mark_children(rb_objspace_t *objspace, VALUE ptr)
 	objspace->rgengc.parent_object_is_promoted = FALSE;
     }
 
-    if (RGENGC_CHECK_MODE && OBJ_SHADY(obj) && OBJ_PROMOTED(obj)) {
+    if (RGENGC_CHECK_MODE && RVALUE_SHADY(obj) && RVALUE_PROMOTED(obj)) {
 	rb_bug("gc_mark_children: (2) %p (%s) is shady and promoted.\n", (void *)obj, obj_type_name((VALUE)obj));
     }
 
@@ -3219,27 +3230,44 @@ gc_marks_body(rb_objspace_t *objspace, rb_thread_t *th)
 
     th->vm->self ? rb_gc_mark(th->vm->self) : rb_vm_mark(th->vm);
 
+    if (RGENGC_CHECK_MODE > 1) objspace->rgengc.parent_object = INT2FIX(__LINE__);
     mark_tbl(objspace, finalizer_table);
+
+    if (RGENGC_CHECK_MODE > 1) objspace->rgengc.parent_object = INT2FIX(__LINE__);
     mark_current_machine_context(objspace, th);
 
+    if (RGENGC_CHECK_MODE > 1) objspace->rgengc.parent_object = INT2FIX(__LINE__);
     rb_gc_mark_symbols();
+
+    if (RGENGC_CHECK_MODE > 1) objspace->rgengc.parent_object = INT2FIX(__LINE__);
     rb_gc_mark_encodings();
 
     /* mark protected global variables */
+    if (RGENGC_CHECK_MODE > 1) objspace->rgengc.parent_object = INT2FIX(__LINE__);
     for (list = global_List; list; list = list->next) {
 	rb_gc_mark_maybe(*list->varptr);
     }
+
+    if (RGENGC_CHECK_MODE > 1) objspace->rgengc.parent_object = INT2FIX(__LINE__);
     rb_mark_end_proc();
+
+    if (RGENGC_CHECK_MODE > 1) objspace->rgengc.parent_object = INT2FIX(__LINE__);
     rb_gc_mark_global_tbl();
 
+    if (RGENGC_CHECK_MODE > 1) objspace->rgengc.parent_object = INT2FIX(__LINE__);
     mark_tbl(objspace, rb_class_tbl);
 
+    if (RGENGC_CHECK_MODE > 1) objspace->rgengc.parent_object = INT2FIX(__LINE__);
     /* mark generic instance variables for special constants */
     rb_mark_generic_ivar_tbl();
 
+    if (RGENGC_CHECK_MODE > 1) objspace->rgengc.parent_object = INT2FIX(__LINE__);
     rb_gc_mark_parser();
 
+    if (RGENGC_CHECK_MODE > 1) objspace->rgengc.parent_object = INT2FIX(__LINE__);
     rb_gc_mark_unlinked_live_method_entries(th->vm);
+
+    if (RGENGC_CHECK_MODE > 1) objspace->rgengc.parent_object = Qundef;
 
     /* marking-loop */
     gc_mark_stacked_objects(objspace);
@@ -3290,7 +3318,7 @@ gc_marks_test(rb_objspace_t *objspace, rb_thread_t *th)
 	while (p < pend) {
 	    if (MARKED_IN_BITMAP(major_mark_bits, p) && /* should be lived */
 		!MARKED_IN_BITMAP(minor_mark_bits, p) &&
-		!OBJ_PROMOTED(p)) {
+		!RVALUE_PROMOTED(p)) {
 
 		fprintf(stderr, "gc_marks_test: %p (%s) is living, but not marked && not promoted.\n", p, obj_type_name((VALUE)p));
 		objspace->rgengc.interesting_object = (VALUE)p;
@@ -3424,9 +3452,7 @@ garbage_collect(rb_objspace_t *objspace)
 
     gc_marks(objspace, FALSE);
 
-    gc_prof_sweep_timer_start(objspace);
     gc_sweep(objspace);
-    gc_prof_sweep_timer_stop(objspace);
 
     gc_prof_timer_stop(objspace, Qtrue);
     if (GC_NOTIFY) printf("end garbage_collect()\n");
@@ -4358,13 +4384,37 @@ gc_prof_timer_stop(rb_objspace_t *objspace, int marked)
 
 #if !GC_PROFILE_MORE_DETAIL
 
+#if defined(__i386__)
+
+static __inline__ unsigned long long rdtsc(void)
+{
+    unsigned long long int x;
+    __asm__ volatile (".byte 0x0f, 0x31" : "=A" (x));
+    return x;
+}
+
+#elif defined(__x86_64__)
+
+static __inline__ unsigned long long rdtsc(void)
+{
+    unsigned hi, lo;
+    __asm__ __volatile__ ("rdtsc" : "=a"(lo), "=d"(hi));
+    return ( (unsigned long long)lo)|( ((unsigned long long)hi)<<32 );
+}
+
+#endif
+
+#define clock rdtsc
+#define clock_t unsigned long long
+
 static clock_t mark_start_time;
-static clock_t sweep_start_time;
+static clock_t sweep_all_time, sweep_start_time;
 
 static inline void
 gc_prof_mark_timer_start(rb_objspace_t *objspace)
 {
     if (RGENGC_SIMPLEBENCH) mark_start_time = clock();
+
     if (RUBY_DTRACE_GC_MARK_BEGIN_ENABLED()) {
 	RUBY_DTRACE_GC_MARK_BEGIN();
     }
@@ -4373,32 +4423,48 @@ gc_prof_mark_timer_start(rb_objspace_t *objspace)
 static inline void
 gc_prof_mark_timer_stop(rb_objspace_t *objspace)
 {
-    if (RGENGC_SIMPLEBENCH) fprintf(stderr, "%s|mark time : %8ld (clock)\n",
+    if (RGENGC_SIMPLEBENCH) fprintf(stderr, "%s|mark time : %12lld (clock)\n",
 				    objspace->rgengc.during_minor_gc ? "-" : "+",
 				    clock() - mark_start_time);
+
     if (RUBY_DTRACE_GC_MARK_END_ENABLED()) {
 	RUBY_DTRACE_GC_MARK_END();
     }
 }
 
 static inline void
-gc_prof_sweep_timer_start(rb_objspace_t *objspace)
+gc_prof_sweep_slot_timer_start(rb_objspace_t *objspace)
 {
     if (RGENGC_SIMPLEBENCH) sweep_start_time = clock();
+
     if (RUBY_DTRACE_GC_SWEEP_BEGIN_ENABLED()) {
 	RUBY_DTRACE_GC_SWEEP_BEGIN();
     }
 }
 
 static inline void
-gc_prof_sweep_timer_stop(rb_objspace_t *objspace)
+gc_prof_sweep_slot_timer_stop(rb_objspace_t *objspace)
 {
-    if (RGENGC_SIMPLEBENCH) fprintf(stderr, "%s|sweep time: %8ld (clock)\n",
-				    objspace->rgengc.during_minor_gc ? "-" : "+",
-				    clock() - sweep_start_time);
+    if (RGENGC_SIMPLEBENCH) sweep_all_time += clock() - sweep_start_time;
+
     if (RUBY_DTRACE_GC_SWEEP_END_ENABLED()) {
 	RUBY_DTRACE_GC_SWEEP_END();
     }
+}
+
+static inline void
+gc_prof_sweep_all_timer_start(rb_objspace_t *objspace)
+{
+    if (RGENGC_SIMPLEBENCH) sweep_all_time = 0;
+}
+
+static inline void
+gc_prof_sweep_all_timer_stop(rb_objspace_t *objspace)
+{
+    if (RGENGC_SIMPLEBENCH) fprintf(stderr, "%s|sweep time: %12lld (clock)\n",
+				    objspace->rgengc.during_minor_gc ? "-" : "+",
+				    sweep_all_time);
+
 }
 
 static inline void
@@ -4450,7 +4516,25 @@ gc_prof_mark_timer_stop(rb_objspace_t *objspace)
 }
 
 static inline void
-gc_prof_sweep_timer_start(rb_objspace_t *objspace)
+gc_prof_sweep_all_timer_start(rb_objspace_t *objspace)
+{
+    
+}
+
+static inline void
+gc_prof_sweep_all_timer_start(rb_objspace_t *objspace)
+{
+    
+}
+
+static inline void
+gc_prof_sweep_all_timer_stop(rb_objspace_t *objspace)
+{
+
+}
+
+static inline void
+gc_prof_sweep_slot_timer_start(rb_objspace_t *objspace)
 {
     if (RUBY_DTRACE_GC_SWEEP_BEGIN_ENABLED()) {
 	RUBY_DTRACE_GC_SWEEP_BEGIN();
@@ -4463,7 +4547,7 @@ gc_prof_sweep_timer_start(rb_objspace_t *objspace)
 }
 
 static inline void
-gc_prof_sweep_timer_stop(rb_objspace_t *objspace)
+gc_prof_sweep_slot_timer_stop(rb_objspace_t *objspace)
 {
     if (RUBY_DTRACE_GC_SWEEP_END_ENABLED()) {
 	RUBY_DTRACE_GC_SWEEP_END();
@@ -4990,7 +5074,7 @@ rgengc_remembersetbits_set(rb_objspace_t *objspace, VALUE obj)
 static void
 rgengc_remember(rb_objspace_t *objspace, VALUE obj)
 {
-    if (RGENGC_CHECK_MODE && OBJ_PROMOTED(obj)) {
+    if (RGENGC_CHECK_MODE && RVALUE_PROMOTED(obj)) {
 	rb_bug("rgengc_remember: %p (%s) is promoted object",
 	       (void *)obj, obj_type_name(obj));
     }
@@ -5000,8 +5084,8 @@ rgengc_remember(rb_objspace_t *objspace, VALUE obj)
 
     if (RGENGC_SIMPLEBENCH) {
 	if (!rgengc_remembered(objspace, obj)) {
-	    if (OBJ_SUNNY(obj)) objspace->rgengc.remembered_sunny_object_count++;
-	    else                objspace->rgengc.remembered_shady_object_count++;
+	    if (RVALUE_SUNNY(obj)) objspace->rgengc.remembered_sunny_object_count++;
+	    else                   objspace->rgengc.remembered_shady_object_count++;
 	}
     }
 
@@ -5040,7 +5124,7 @@ rgengc_rememberset_mark(rb_objspace_t *objspace)
 
 		if (RGENGC_CHECK_MODE) mark_cnt++;
 
-		if (OBJ_SUNNY(p)) {
+		if (RVALUE_SUNNY(p)) {
 		    rgengc_report(2, objspace, "rgengc_rememberset_mark: clear %p (%s)\n", p, obj_type_name((VALUE)p));
 		    CLEAR_IN_BITMAP(bits, p);
 		    if (RGENGC_CHECK_MODE) clear_cnt++;
@@ -5089,8 +5173,8 @@ rb_gc_wb(VALUE a, VALUE b)
     rb_objspace_t *objspace = &rb_objspace;
 
     if (RGENGC_CHECK_MODE) {
-	if (!OBJ_PROMOTED(a)) rb_bug("rb_gc_wb: referer object %p (%s) is not promoted.\n", (void *)a, obj_type_name(a));
-	if (OBJ_PROMOTED(b)) rb_bug("rb_gc_wb: refered object %p (%s) is promoted.\n", (void *)b, obj_type_name(b));
+	if (!RVALUE_PROMOTED(a)) rb_bug("rb_gc_wb: referer object %p (%s) is not promoted.\n", (void *)a, obj_type_name(a));
+	if (RVALUE_PROMOTED(b)) rb_bug("rb_gc_wb: refered object %p (%s) is promoted.\n", (void *)b, obj_type_name(b));
     }
 
     if (!rgengc_remembered(objspace, a)) {
@@ -5104,7 +5188,7 @@ rb_gc_wb(VALUE a, VALUE b)
 	 */
 	rest_sweep(objspace);
 
-	OBJ_DEMOTE(a);
+	RVALUE_DEMOTE(a);
 	rgengc_remember(objspace, a);
     }
 }
@@ -5115,8 +5199,8 @@ rb_gc_giveup_writebarrier(VALUE obj)
     rb_objspace_t *objspace = &rb_objspace;
 
     if (RGENGC_CHECK_MODE) {
-	if (!OBJ_PROMOTED(obj)) rb_bug("rb_gc_giveup_writebarrier: called on non-promoted object");
-	if (OBJ_SHADY(obj)) rb_bug("rb_gc_giveup_writebarrier: called on shady object");
+	if (!RVALUE_PROMOTED(obj)) rb_bug("rb_gc_giveup_writebarrier: called on non-promoted object");
+	if (RVALUE_SHADY(obj)) rb_bug("rb_gc_giveup_writebarrier: called on shady object");
     }
 
     rgengc_report(2, objspace, "rb_gc_giveup_writebarrier: %p (%s)%s\n", (void *)obj, obj_type_name(obj),
@@ -5129,8 +5213,8 @@ rb_gc_giveup_writebarrier(VALUE obj)
      */
     rest_sweep(objspace);
 
-    OBJ_DEMOTE(obj);
-    OBJ_GIVEUP_WB(obj);
+    RVALUE_DEMOTE(obj);
+    RVALUE_GIVEUP_WB(obj);
     rgengc_remember(objspace, obj);
 
     objspace->rgengc.shade_operation_count++;
