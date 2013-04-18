@@ -2215,7 +2215,6 @@ lazy_sweep(rb_objspace_t *objspace)
 static void
 rest_sweep(rb_objspace_t *objspace)
 {
-    fprintf(stderr, "rest sweep\n");
     if (objspace->heap.sweep_slots) {
 	while (objspace->heap.sweep_slots) {
 	    lazy_sweep(objspace);
