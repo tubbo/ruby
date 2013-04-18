@@ -693,7 +693,7 @@ rb_ary_initialize(int argc, VALUE *argv, VALUE ary)
     }
     else {
 	memfill(RARRAY_RAWPTR(ary), len, val);
-	rb_gc_wb(ary, val);
+	OBJ_WB(ary, val);
 	ARY_SET_LEN(ary, len);
     }
     return ary;
