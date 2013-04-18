@@ -3199,25 +3199,15 @@ gc_mark_stacked_objects(rb_objspace_t *objspace)
 }
 
 static void
-gc_marks_body(rb_objspace_t *objspace)
+gc_marks_body(rb_objspace_t *objspace, rb_thread_t *th)
 {
     struct gc_list *list;
-    rb_thread_t *th = GET_THREAD();
-    struct mark_func_data_struct *prev_mark_func_data;
 
     rgengc_report(1, objspace, "gc_marks_body: start.\n");
 
-    /* setup marking */
-    prev_mark_func_data = objspace->mark_func_data;
-    objspace->mark_func_data = 0;
+    /* start marking */
 
-    gc_prof_mark_timer_start(objspace);
-    objspace->heap.marked_num = 0;
-    objspace->count++;
-
-    SET_STACK_END;
-
-    /* setup RGENGC */
+    /* RGENGC */
     if (objspace->rgengc.during_minor_gc) {
 	rgengc_rememberset_mark(objspace);
 	if (RGENGC_SIMPLEBENCH) objspace->rgengc.minor_gc_count++;
@@ -3227,7 +3217,6 @@ gc_marks_body(rb_objspace_t *objspace)
 	if (RGENGC_SIMPLEBENCH) objspace->rgengc.major_gc_count++;
     }
 
-    /* start marking */
     th->vm->self ? rb_gc_mark(th->vm->self) : rb_vm_mark(th->vm);
 
     mark_tbl(objspace, finalizer_table);
@@ -3257,14 +3246,11 @@ gc_marks_body(rb_objspace_t *objspace)
 
     /* cleanup */
     gc_prof_mark_timer_stop(objspace);
-
-    objspace->mark_func_data = prev_mark_func_data;
-
     rgengc_report(1, objspace, "gc_marks_body: end.\n");
 }
 
 static void
-gc_marks_test(rb_objspace_t *objspace)
+gc_marks_test(rb_objspace_t *objspace, rb_thread_t *th)
 {
 
     size_t i;
@@ -3290,7 +3276,7 @@ gc_marks_test(rb_objspace_t *objspace)
     objspace->rgengc.parent_object_is_promoted = FALSE;
     objspace->rgengc.parent_object = Qundef;
     objspace->rgengc.during_minor_gc = FALSE; /* major/full GC with temporary bitmaps */
-    gc_marks_body(objspace);
+    gc_marks_body(objspace, th);
 
     /* check & restore */
     for (i=0; i<heaps_used; i++) {
@@ -3308,7 +3294,7 @@ gc_marks_test(rb_objspace_t *objspace)
 
 		fprintf(stderr, "gc_marks_test: %p (%s) is living, but not marked && not promoted.\n", p, obj_type_name((VALUE)p));
 		objspace->rgengc.interesting_object = (VALUE)p;
-		gc_marks_test(objspace);
+		gc_marks_test(objspace, th);
 		rb_bug("gc_marks_test (again): %p (%s) is living, but not marked && not promoted.\n", p, obj_type_name((VALUE)p));
 	    }
 	    p++;
@@ -3325,15 +3311,30 @@ gc_marks_test(rb_objspace_t *objspace)
 static void
 gc_marks(rb_objspace_t *objspace, int minor_gc)
 {
-    /* setup */
+    struct mark_func_data_struct *prev_mark_func_data;
+    rb_thread_t *th = GET_THREAD();
+
+    /* setup marking */
+    prev_mark_func_data = objspace->mark_func_data;
+    objspace->mark_func_data = 0;
+
+    gc_prof_mark_timer_start(objspace);
+    objspace->heap.marked_num = 0;
+    objspace->count++;
+
+    SET_STACK_END;
+
+    /* setup rgengc */
     objspace->rgengc.parent_object_is_promoted = FALSE;
     objspace->rgengc.parent_object = Qundef;
     objspace->rgengc.during_minor_gc = minor_gc;
-    gc_marks_body(objspace);
+    gc_marks_body(objspace, th);
 
     if (minor_gc && RGENGC_CHECK_MODE > 1) {
-	gc_marks_test(objspace);
+	gc_marks_test(objspace, th);
     }
+
+    objspace->mark_func_data = prev_mark_func_data;
 }
 
 /* GC */
