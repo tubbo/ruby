@@ -232,7 +232,6 @@ typedef struct rb_objspace {
         struct heaps_free_bitmap *free_bitmap;
 	RVALUE *range[2];
 	struct heaps_header *freed;
-	size_t marked_num;
 	size_t free_num;
 	size_t free_min;
 	size_t final_num;
@@ -410,7 +409,7 @@ static const char *obj_type_name(VALUE obj);
  * 2: enable bits check (for debugging)
  */
 #define RGENGC_CHECK_MODE  0
-#define RGENGC_SIMPLEBENCH 1
+#define RGENGC_SIMPLEBENCH 0
 
 static int rgengc_remembered(rb_objspace_t *objspace, VALUE obj);
 static void rgengc_remember(rb_objspace_t *objspace, VALUE obj);
@@ -714,6 +713,9 @@ set_heaps_increment(rb_objspace_t *objspace)
 
     heaps_inc = next_heaps_length - heaps_used;
 
+    rgengc_report(5, objspace, "set_heaps_increment: heaps_length: %d, next_heaps_length: %d, heaps_inc: %d\n",
+		  heaps_length, next_heaps_length, heaps_inc);
+
     if (next_heaps_length > heaps_length) {
 	allocate_sorted_heaps(objspace, next_heaps_length);
         heaps_length = next_heaps_length;
@@ -723,6 +725,8 @@ set_heaps_increment(rb_objspace_t *objspace)
 static int
 heaps_increment(rb_objspace_t *objspace)
 {
+    rgengc_report(5, objspace, "heaps_increment: heaps_inc: %d\n", heaps_inc);
+
     if (heaps_inc > 0) {
         assign_heap_slot(objspace);
 	heaps_inc--;
@@ -2137,7 +2141,7 @@ ready_to_gc(rb_objspace_t *objspace)
     if (dont_gc || during_gc) {
 	if (!has_free_object) {
             if (!heaps_increment(objspace)) {
-                set_heaps_increment(objspace);
+		set_heaps_increment(objspace);
                 heaps_increment(objspace);
             }
 	}
@@ -2174,6 +2178,8 @@ after_gc_sweep(rb_objspace_t *objspace)
     size_t inc;
 
     gc_prof_set_malloc_info(objspace);
+    rgengc_report(5, objspace, "after_gc_sweep: objspace->heap.free_num: %d, objspace->heap.free_min: %d\n",
+		  objspace->heap.free_num, objspace->heap.free_min);
     if (objspace->heap.free_num < objspace->heap.free_min) {
         set_heaps_increment(objspace);
         heaps_increment(objspace);
@@ -2182,7 +2188,7 @@ after_gc_sweep(rb_objspace_t *objspace)
     inc = ATOMIC_SIZE_EXCHANGE(malloc_increase, 0);
     if (inc > malloc_limit) {
 	malloc_limit +=
-	  (size_t)((inc - malloc_limit) * (double)objspace->heap.marked_num / (heaps_used * HEAP_OBJ_LIMIT));
+	  (size_t)((inc - malloc_limit) * (double)objspace_live_num(objspace) / (heaps_used * HEAP_OBJ_LIMIT));
 	if (malloc_limit < initial_malloc_limit) malloc_limit = initial_malloc_limit;
     }
 
@@ -2281,19 +2287,20 @@ gc_prepare_free_objects(rb_objspace_t *objspace)
     gc_marks(objspace, TRUE);
 
     before_gc_sweep(objspace);
-    if (objspace->heap.free_min > (heaps_used * HEAP_OBJ_LIMIT - objspace->heap.marked_num)) {
-	set_heaps_increment(objspace);
-    }
-
-    if (objspace->heap.free_min > (heaps_used * HEAP_OBJ_LIMIT - objspace->heap.marked_num)) {
-	set_heaps_increment(objspace);
-    }
 
     if (!(res = lazy_sweep(objspace))) {
-        if (has_free_object) {
-            res = TRUE;
-            during_gc = 0;
-        }
+	while (1) {
+	    if (has_free_object) {
+		res = TRUE;
+		during_gc = 0;
+		break;
+	    }
+	    /* There is no empty RVALUE spaces */
+	    /* TODO: [RGENGC] Should do major GC before adding hepas */
+
+	    set_heaps_increment(objspace);
+	    heaps_increment(objspace);
+	}
     }
 
     gc_prof_timer_stop(objspace, Qtrue);
@@ -2760,7 +2767,6 @@ gc_mark_ptr(rb_objspace_t *objspace, VALUE ptr)
     register uintptr_t *bits = GET_HEAP_MARK_BITS(ptr);
     if (gc_marked(objspace, ptr)) return 0;
     MARK_IN_BITMAP(bits, ptr);
-    objspace->heap.marked_num++;
     return 1;
 }
 
@@ -3346,7 +3352,6 @@ gc_marks(rb_objspace_t *objspace, int minor_gc)
     objspace->mark_func_data = 0;
 
     gc_prof_mark_timer_start(objspace);
-    objspace->heap.marked_num = 0;
     objspace->count++;
 
     SET_STACK_END;
