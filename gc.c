@@ -3780,6 +3780,7 @@ static void vm_xfree(rb_objspace_t *objspace, void *ptr);
 static void *
 negative_size_allocation_error_with_gvl(void *ptr)
 {
+    rb_print_backtrace();
     rb_raise(rb_eNoMemError, "%s", (const char *)ptr);
     return 0; /* should not be reached */
 }
@@ -3788,6 +3789,7 @@ static void
 negative_size_allocation_error(const char *msg)
 {
     if (ruby_thread_has_gvl_p()) {
+	rb_print_backtrace();
 	rb_raise(rb_eNoMemError, "%s", msg);
     }
     else {
@@ -3830,6 +3832,9 @@ void
 rb_memerror(void)
 {
     rb_thread_t *th = GET_THREAD();
+
+    rb_print_backtrace();
+
     if (!nomem_error ||
 	(rb_thread_raised_p(th, RAISED_NOMEMORY) && rb_safe_level() < 4)) {
 	fprintf(stderr, "[FATAL] failed to allocate memory\n");

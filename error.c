@@ -1225,6 +1225,10 @@ get_syserr(int n)
 {
     st_data_t error;
 
+    if (n == ENOMEM) {
+	rb_print_backtrace();
+    }
+
     if (!st_lookup(syserr_tbl, n, &error)) {
 	char name[8];	/* some Windows' errno have 5 digits. */
 
