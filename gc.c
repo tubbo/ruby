@@ -425,9 +425,9 @@ static void rgengc_profile_report(rb_objspace_t *objspace);
 #define RVALUE_SHADY(x)       (!RVALUE_SUNNY(x))
 #define RVALUE_PROMOTED(x)    FL_TEST2((x), FL_OLDGEN)
 
-#define RVALUE_PROMOTE(x)        FL_SET2((x), FL_OLDGEN)
-#define RVALUE_DEMOTE(x)         FL_UNSET2((x), FL_OLDGEN)
-#define RVALUE_GIVEUP_WB(x)      FL_UNSET2((x), FL_KEEP_WB)
+#define RVALUE_PROMOTE(x)     FL_SET2((x), FL_OLDGEN)
+#define RVALUE_DEMOTE(x)      FL_UNSET2((x), FL_OLDGEN)
+#define RVALUE_GIVEUP_WB(x)   FL_UNSET2((x), FL_KEEP_WB)
 
 static void
 rgengc_report_body(int level, rb_objspace_t *objspace, const char *fmt, ...)
