@@ -5144,7 +5144,7 @@ rgengc_rememberset_mark(rb_objspace_t *objspace)
     }
 
     if (RGENGC_CHECK_MODE && mark_cnt < clear_cnt) rb_bug("rgengc_rememberset_mark: mark_cnt (%d) < clear_cnt (%d)", mark_cnt, clear_cnt);
-    rgengc_report(2, objspace, "rgengc_rememberset_mark: mark_cnt: %d, clear_cnt: %d, skip_cnt: %d\n", mark_cnt, clear_cnt, skip_cnt);
+    rgengc_report(2, objspace, "rgengc_rememberset_mark: mark_cnt: %"PRIdSIZE", clear_cnt: %"PRIdSIZE", skip_cnt: %"PRIdSIZE"\n", mark_cnt, clear_cnt, skip_cnt);
 
     return mark_cnt - clear_cnt; /* totalc count of objects in remember set */
 }
@@ -5164,13 +5164,13 @@ static void
 rgengc_profile_report(rb_objspace_t *objspace)
 {
     if (RGENGC_SIMPLEBENCH) {
-	fprintf(stderr, "Total minor GC count         : %8d\n", objspace->rgengc.minor_gc_count);
-	fprintf(stderr, "Total major GC count         : %8d\n", objspace->rgengc.major_gc_count);
-	fprintf(stderr, "Generated sunny object count : %8d\n", objspace->rgengc.generated_sunny_object_count);
-	fprintf(stderr, "Generated shady object count : %8d\n", objspace->rgengc.generated_shady_object_count);
-	fprintf(stderr, "Shade operation count        : %8d\n", objspace->rgengc.shade_operation_count);
-	fprintf(stderr, "Remembered sunny object count: %8d\n", objspace->rgengc.remembered_sunny_object_count);
-	fprintf(stderr, "Remembered shady object count: %8d\n", objspace->rgengc.remembered_shady_object_count);
+	fprintf(stderr, "Total minor GC count         : %8"PRIdSIZE"\n", objspace->rgengc.minor_gc_count);
+	fprintf(stderr, "Total major GC count         : %8"PRIdSIZE"\n", objspace->rgengc.major_gc_count);
+	fprintf(stderr, "Generated sunny object count : %8"PRIdSIZE"\n", objspace->rgengc.generated_sunny_object_count);
+	fprintf(stderr, "Generated shady object count : %8"PRIdSIZE"\n", objspace->rgengc.generated_shady_object_count);
+	fprintf(stderr, "Shade operation count        : %8"PRIdSIZE"\n", objspace->rgengc.shade_operation_count);
+	fprintf(stderr, "Remembered sunny object count: %8"PRIdSIZE"\n", objspace->rgengc.remembered_sunny_object_count);
+	fprintf(stderr, "Remembered shady object count: %8"PRIdSIZE"\n", objspace->rgengc.remembered_shady_object_count);
     }
 }
 
