@@ -3233,6 +3233,7 @@ gc_marks_body(rb_objspace_t *objspace, rb_thread_t *th)
 	if (RGENGC_SIMPLEBENCH) objspace->rgengc.major_gc_count++;
     }
 
+    SET_STACK_END;
     th->vm->self ? rb_gc_mark(th->vm->self) : rb_vm_mark(th->vm);
 
     if (RGENGC_CHECK_MODE > 1) objspace->rgengc.parent_object = INT2FIX(__LINE__);
