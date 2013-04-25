@@ -906,8 +906,6 @@ struct RArray {
    RARRAY(a)->as.ary : \
    RARRAY(a)->as.heap.ptr)
 
-#define RARRAY_PTR(a) (OBJ_WB_GIVEUP(a), RARRAY_RAWPTR(a))
-
 struct RRegexp {
     struct RBasic basic;
     struct re_pattern_buffer *ptr;
@@ -1167,12 +1165,19 @@ struct RBignum {
 
 #define OBJ_PROMOTED(x)       (SPECIAL_CONST_P(x) ? 0 : FL_TEST_RAW((x), FL_OLDGEN))
 #define OBJ_WB_PROTECTED(x)   (SPECIAL_CONST_P(x) ? 1 : FL_TEST_RAW((x), FL_KEEP_WB))
-#define OBJ_WB_GIVEUP(x)      (OBJ_WB_PROTECTED(x) && OBJ_PROMOTED(x) && (rb_gc_giveup_writebarrier((VALUE)x), 0))
 #define OBJ_SHADE(x)          OBJ_WB_GIVEUP(x) /* RGENGC terminology */
 
-
 void rb_gc_wb(VALUE a, VALUE b);
-void rb_gc_giveup_writebarrier(VALUE obj);
+VALUE rb_gc_giveup_writebarrier(VALUE obj);
+
+static inline VALUE
+OBJ_WB_GIVEUP(VALUE x)
+{
+    if (OBJ_WB_PROTECTED(x) && OBJ_PROMOTED(x)) {
+	rb_gc_giveup_writebarrier(x);
+    }
+    return x;
+}
 
 #define OBJ_WB(a, b) (!SPECIAL_CONST_P(b) && OBJ_PROMOTED(a) && !OBJ_PROMOTED(b) && (rb_gc_wb((a), (b)), 1))
 
@@ -1182,6 +1187,8 @@ RARRAY_ASET(VALUE a, long index, VALUE v) {
     OBJ_WB(a, v);
     RARRAY_RAWPTR(a)[index] = v;
 }
+
+#define RARRAY_PTR(a) RARRAY_RAWPTR(OBJ_WB_GIVEUP((VALUE)a))
 
 #if SIZEOF_INT < SIZEOF_LONG
 # define INT2NUM(v) INT2FIX((int)(v))

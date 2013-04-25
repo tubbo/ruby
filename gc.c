@@ -5143,7 +5143,7 @@ rgengc_rememberset_mark(rb_objspace_t *objspace)
 	}
     }
 
-    if (RGENGC_CHECK_MODE && mark_cnt < clear_cnt) rb_bug("rgengc_rememberset_mark: mark_cnt (%d) < clear_cnt (%d)", mark_cnt, clear_cnt);
+    if (RGENGC_CHECK_MODE && mark_cnt < clear_cnt) rb_bug("rgengc_rememberset_mark: mark_cnt (%"PRIdSIZE") < clear_cnt (%"PRIdSIZE")", mark_cnt, clear_cnt);
     rgengc_report(2, objspace, "rgengc_rememberset_mark: mark_cnt: %"PRIdSIZE", clear_cnt: %"PRIdSIZE", skip_cnt: %"PRIdSIZE"\n", mark_cnt, clear_cnt, skip_cnt);
 
     return mark_cnt - clear_cnt; /* totalc count of objects in remember set */
@@ -5202,7 +5202,7 @@ rb_gc_wb(VALUE a, VALUE b)
     }
 }
 
-void
+VALUE
 rb_gc_giveup_writebarrier(VALUE obj)
 {
     rb_objspace_t *objspace = &rb_objspace;
@@ -5227,4 +5227,6 @@ rb_gc_giveup_writebarrier(VALUE obj)
     rgengc_remember(objspace, obj);
 
     objspace->rgengc.shade_operation_count++;
+
+    return obj;
 }
