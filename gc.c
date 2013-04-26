@@ -5178,7 +5178,7 @@ rgengc_profile_report(rb_objspace_t *objspace)
 /* RGENGC: APIs */
 
 void
-rb_gc_wb(VALUE a, VALUE b)
+rb_gc_writebarrier(VALUE a, VALUE b)
 {
     rb_objspace_t *objspace = &rb_objspace;
 
@@ -5203,7 +5203,7 @@ rb_gc_wb(VALUE a, VALUE b)
     }
 }
 
-VALUE
+void
 rb_gc_giveup_writebarrier(VALUE obj)
 {
     rb_objspace_t *objspace = &rb_objspace;
@@ -5228,6 +5228,4 @@ rb_gc_giveup_writebarrier(VALUE obj)
     rgengc_remember(objspace, obj);
 
     objspace->rgengc.shade_operation_count++;
-
-    return obj;
 }

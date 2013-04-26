@@ -456,8 +456,9 @@ rb_ary_new4(long n, const VALUE *elts)
 
     ary = rb_ary_new2(n);
     if (n > 0 && elts) {
-	/* new array is not old gen */
-	MEMCPY(RARRAY_RAWPTR(ary), elts, VALUE, n);
+	RARRAY_PTR_USE(ary, ptr, {
+	    MEMCPY(ptr, elts, VALUE, n); /* new array is not old gen */
+	});
 	ARY_SET_LEN(ary, n);
     }
 
@@ -651,7 +652,7 @@ rb_ary_initialize(int argc, VALUE *argv, VALUE ary)
 
     rb_ary_modify(ary);
     if (argc == 0) {
-	if (ARY_OWNS_HEAP_P(ary) && RARRAY_RAWPTR(ary)) {
+	if (ARY_OWNS_HEAP_P(ary) && RARRAY_HAVE_PTR(ary)) {
 	    xfree(RARRAY_RAWPTR(ary));
 	}
         rb_ary_unshare_safe(ary);
@@ -692,7 +693,11 @@ rb_ary_initialize(int argc, VALUE *argv, VALUE ary)
 	}
     }
     else {
-	memfill(RARRAY_RAWPTR(ary), len, val);
+	if (0) memfill(RARRAY_RAWPTR(ary), len, val);
+
+	RARRAY_PTR_USE(ary, ptr, {
+	    memfill(ptr, len, val);
+	});
 	OBJ_WB(ary, val);
 	ARY_SET_LEN(ary, len);
     }

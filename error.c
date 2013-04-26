@@ -310,7 +310,7 @@ rb_bug(const char *fmt, ...)
     _set_abort_behavior( 0, _CALL_REPORTFAULT);
 #endif
 
-    if (0) {
+    if (1) {
 	char buff[100];
 	sprintf(buff, "gdb -p %d -x ../gitruby/.gdbinit", getpid());
 	system(buff);

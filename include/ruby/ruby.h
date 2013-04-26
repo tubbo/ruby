@@ -694,11 +694,11 @@ struct RBasicRaw {
     VALUE klass;
 };
 
-#define RBASIC_CLEAR_CLASS(obj)    (((struct RBasicRaw *)(obj))->klass = 0)
-#define RBASIC_SET_CLASS_RAW(obj, cls) (((struct RBasicRaw *)(obj))->klass = (cls))
+#define RBASIC_CLEAR_CLASS(obj)    (((struct RBasicRaw *)((VALUE)(obj)))->klass = 0)
+#define RBASIC_SET_CLASS_RAW(obj, cls) (((struct RBasicRaw *)((VALUE)(obj)))->klass = (cls))
 #define RBASIC_SET_CLASS(obj, cls) do { \
-    VALUE _obj_ = (obj); \
-    VALUE _cls_ = (cls); \
+    VALUE _obj_ = (VALUE)(obj); \
+    VALUE _cls_ = (VALUE)(cls); \
     OBJ_WB(_obj_, _cls_); RBASIC_SET_CLASS_RAW(_obj_, _cls_); \
 } while (0)
 
@@ -901,10 +901,32 @@ struct RArray {
 
 #define RARRAY_LENINT(ary) rb_long2int(RARRAY_LEN(ary))
 
+/* DO NOT USE THIS MACRO DIRECTLY */
 #define RARRAY_RAWPTR(a) \
   ((RBASIC(a)->flags & RARRAY_EMBED_FLAG) ? \
    RARRAY(a)->as.ary : \
    RARRAY(a)->as.heap.ptr)
+
+#define RARRAY_HAVE_PTR(a) (RARRAY_RAWPTR(a) == 0 ? 0 : 1)
+
+#define RARRAY_PTR_USE_START(a) RARRAY_RAWPTR(a)
+#define RARRAY_PTR_USE_END(a) /* */
+
+#define RARRAY_PTR_USE(ary, ptr_name, expr) do { \
+    const VALUE _ary = (ary); \
+    VALUE *ptr_name = RARRAY_PTR_USE_START(_ary); \
+    expr; \
+    RARRAY_PTR_USE_END(_ary); \
+} while (0)
+
+#define RARRAY_AREF(a, i)    (RARRAY_RAWPTR(a)[i])
+#define RARRAY_ASET(a, i, v) do { \
+    const VALUE _ary = (a); \
+    const VALUE _val = (v); \
+    RARRAY_RAWPTR(OBJ_WB(_ary, _val))[i] = _val; \
+} while (0)
+
+#define RARRAY_PTR(a) RARRAY_RAWPTR(OBJ_WB_GIVEUP((VALUE)a))
 
 struct RRegexp {
     struct RBasic basic;
@@ -1165,13 +1187,15 @@ struct RBignum {
 
 #define OBJ_PROMOTED(x)       (SPECIAL_CONST_P(x) ? 0 : FL_TEST_RAW((x), FL_OLDGEN))
 #define OBJ_WB_PROTECTED(x)   (SPECIAL_CONST_P(x) ? 1 : FL_TEST_RAW((x), FL_KEEP_WB))
+#define OBJ_WB_GIVEUP(x)      rb_obj_wb_giveup(x)
 #define OBJ_SHADE(x)          OBJ_WB_GIVEUP(x) /* RGENGC terminology */
+#define OBJ_WB(a, b)          rb_obj_wb((a), (b))
 
-void rb_gc_wb(VALUE a, VALUE b);
-VALUE rb_gc_giveup_writebarrier(VALUE obj);
+void rb_gc_writebarrier(VALUE a, VALUE b);
+void rb_gc_giveup_writebarrier(VALUE obj);
 
 static inline VALUE
-OBJ_WB_GIVEUP(VALUE x)
+rb_obj_wb_giveup(VALUE x)
 {
     if (OBJ_WB_PROTECTED(x) && OBJ_PROMOTED(x)) {
 	rb_gc_giveup_writebarrier(x);
@@ -1179,16 +1203,14 @@ OBJ_WB_GIVEUP(VALUE x)
     return x;
 }
 
-#define OBJ_WB(a, b) (!SPECIAL_CONST_P(b) && OBJ_PROMOTED(a) && !OBJ_PROMOTED(b) && (rb_gc_wb((a), (b)), 1))
-
-#define RARRAY_AREF(a, i)    (RARRAY_RAWPTR(a)[i])
-static inline void
-RARRAY_ASET(VALUE a, long index, VALUE v) {
-    OBJ_WB(a, v);
-    RARRAY_RAWPTR(a)[index] = v;
+static inline VALUE
+rb_obj_wb(VALUE a, VALUE b)
+{
+    if (!SPECIAL_CONST_P(b) && !OBJ_PROMOTED(b) && OBJ_PROMOTED(a)) {
+	rb_gc_writebarrier(a, b);
+    }
+    return a;
 }
-
-#define RARRAY_PTR(a) RARRAY_RAWPTR(OBJ_WB_GIVEUP((VALUE)a))
 
 #if SIZEOF_INT < SIZEOF_LONG
 # define INT2NUM(v) INT2FIX((int)(v))
