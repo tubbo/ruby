@@ -1192,13 +1192,17 @@ struct RBignum {
 #define OBJ_WB(a, b)          rb_obj_wb((a), (b))
 
 void rb_gc_writebarrier(VALUE a, VALUE b);
-void rb_gc_giveup_writebarrier(VALUE obj);
+void rb_gc_giveup_promoted_writebarrier(VALUE obj);
 
 static inline VALUE
 rb_obj_wb_giveup(VALUE x)
 {
-    if (OBJ_WB_PROTECTED(x) && OBJ_PROMOTED(x)) {
-	rb_gc_giveup_writebarrier(x);
+    if (OBJ_WB_PROTECTED(x)) {
+	RBASIC(x)->flags &= ~FL_KEEP_WB;
+
+	if (OBJ_PROMOTED(x)) {
+	    rb_gc_giveup_promoted_writebarrier(x);
+	}
     }
     return x;
 }

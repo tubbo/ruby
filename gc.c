@@ -408,7 +408,7 @@ static const char *obj_type_name(VALUE obj);
  * 1: enable assertions
  * 2: enable bits check (for debugging)
  */
-#define RGENGC_CHECK_MODE  2
+#define RGENGC_CHECK_MODE  1
 #define RGENGC_SIMPLEBENCH 0
 
 static int rgengc_remembered(rb_objspace_t *objspace, VALUE obj);
@@ -427,7 +427,6 @@ static void rgengc_profile_report(rb_objspace_t *objspace);
 
 #define RVALUE_PROMOTE(x)     FL_SET2((x), FL_OLDGEN)
 #define RVALUE_DEMOTE(x)      FL_UNSET2((x), FL_OLDGEN)
-#define RVALUE_GIVEUP_WB(x)   FL_UNSET2((x), FL_KEEP_WB)
 
 static void
 rgengc_report_body(int level, rb_objspace_t *objspace, const char *fmt, ...)
@@ -3348,6 +3347,8 @@ gc_marks(rb_objspace_t *objspace, int minor_gc)
     struct mark_func_data_struct *prev_mark_func_data;
     rb_thread_t *th = GET_THREAD();
 
+    minor_gc = TRUE;
+
     /* setup marking */
     prev_mark_func_data = objspace->mark_func_data;
     objspace->mark_func_data = 0;
@@ -5204,13 +5205,13 @@ rb_gc_writebarrier(VALUE a, VALUE b)
 }
 
 void
-rb_gc_giveup_writebarrier(VALUE obj)
+rb_gc_giveup_promoted_writebarrier(VALUE obj)
 {
     rb_objspace_t *objspace = &rb_objspace;
 
     if (RGENGC_CHECK_MODE) {
-	if (!RVALUE_PROMOTED(obj)) rb_bug("rb_gc_giveup_writebarrier: called on non-promoted object");
-	if (RVALUE_SHADY(obj)) rb_bug("rb_gc_giveup_writebarrier: called on shady object");
+	if (!RVALUE_PROMOTED(obj)) rb_bug("rb_gc_giveup_promoted_writebarrier: called on non-promoted object");
+	if (RVALUE_SUNNY(obj)) rb_bug("rb_gc_giveup_promoted_writebarrier: called on sunny object");
     }
 
     rgengc_report(2, objspace, "rb_gc_giveup_writebarrier: %p (%s)%s\n", (void *)obj, obj_type_name(obj),
@@ -5224,7 +5225,6 @@ rb_gc_giveup_writebarrier(VALUE obj)
     rest_sweep(objspace);
 
     RVALUE_DEMOTE(obj);
-    RVALUE_GIVEUP_WB(obj);
     rgengc_remember(objspace, obj);
 
     objspace->rgengc.shade_operation_count++;
