@@ -3347,8 +3347,6 @@ gc_marks(rb_objspace_t *objspace, int minor_gc)
     struct mark_func_data_struct *prev_mark_func_data;
     rb_thread_t *th = GET_THREAD();
 
-    minor_gc = TRUE;
-
     /* setup marking */
     prev_mark_func_data = objspace->mark_func_data;
     objspace->mark_func_data = 0;
