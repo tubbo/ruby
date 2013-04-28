@@ -410,6 +410,14 @@ ary_new(VALUE klass, long capa)
         ARY_SET_PTR(ary, ALLOC_N(VALUE, capa));
         ARY_SET_CAPA(ary, capa);
         ARY_SET_HEAP_LEN(ary, 0);
+
+	/* NOTE: `ary' can be old because the following suquence is possible.
+	 *   (1) ary = ary_alloc();
+	 *   (2) GC (for (3))          -> promote ary
+	 *   (3) ALLOC_N(VALUE, capa)
+	 * So that force ary as young object.
+	 */
+	RBASIC(ary)->flags &= ~FL_OLDGEN;
     }
 
     return ary;
@@ -693,8 +701,6 @@ rb_ary_initialize(int argc, VALUE *argv, VALUE ary)
 	}
     }
     else {
-	if (0) memfill(RARRAY_RAWPTR(ary), len, val);
-
 	RARRAY_PTR_USE(ary, ptr, {
 	    memfill(ptr, len, val);
 	});
