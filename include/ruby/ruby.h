@@ -694,12 +694,11 @@ struct RBasicRaw {
     VALUE klass;
 };
 
-#define RBASIC_CLEAR_CLASS(obj)    (((struct RBasicRaw *)((VALUE)(obj)))->klass = 0)
+#define RBASIC_CLEAR_CLASS(obj)        (((struct RBasicRaw *)((VALUE)(obj)))->klass = 0)
 #define RBASIC_SET_CLASS_RAW(obj, cls) (((struct RBasicRaw *)((VALUE)(obj)))->klass = (cls))
-#define RBASIC_SET_CLASS(obj, cls) do { \
-    VALUE _obj_ = (VALUE)(obj); \
-    VALUE _cls_ = (VALUE)(cls); \
-    OBJ_WB(_obj_, _cls_); RBASIC_SET_CLASS_RAW(_obj_, _cls_); \
+#define RBASIC_SET_CLASS(obj, cls)     do { \
+    VALUE _obj_ = (obj); \
+    OBJ_WRITE(_obj_, &((struct RBasicRaw *)(_obj_))->klass, cls); \
 } while (0)
 
 #define ROBJECT_EMBED_LEN_MAX 3
@@ -921,9 +920,8 @@ struct RArray {
 
 #define RARRAY_AREF(a, i)    (RARRAY_RAWPTR(a)[i])
 #define RARRAY_ASET(a, i, v) do { \
-    const VALUE _ary = (a); \
-    const VALUE _val = (v); \
-    RARRAY_RAWPTR(OBJ_WB(_ary, _val))[i] = _val; \
+    const VALUE _ary_ = (a); \
+    OBJ_WRITE(_ary_, &RARRAY_RAWPTR(_ary_)[i], (v)); \
 } while (0)
 
 #define RARRAY_PTR(a) RARRAY_RAWPTR(OBJ_WB_GIVEUP((VALUE)a))
@@ -1190,22 +1188,23 @@ struct RBignum {
 #endif
 
 #if USE_RGENGC
-#define OBJ_PROMOTED(x)       (SPECIAL_CONST_P(x) ? 0 : FL_TEST_RAW((x), FL_OLDGEN))
-#define OBJ_WB_PROTECTED(x)   (SPECIAL_CONST_P(x) ? 1 : FL_TEST_RAW((x), FL_KEEP_WB))
-#define OBJ_WB_GIVEUP(x)      rb_obj_wb_giveup(x, __FILE__, __LINE__)
-#define OBJ_SHADE(x)          OBJ_WB_GIVEUP(x) /* RGENGC terminology */
-#define OBJ_WB(a, b)          rb_obj_wb((a), (b), __FILE__, __LINE__)
+#define OBJ_PROMOTED(x)             (SPECIAL_CONST_P(x) ? 0 : FL_TEST_RAW((x), FL_OLDGEN))
+#define OBJ_WB_PROTECTED(x)         (SPECIAL_CONST_P(x) ? 1 : FL_TEST_RAW((x), FL_KEEP_WB))
+#define OBJ_WB_GIVEUP(x)            rb_obj_wb_giveup(x, __FILE__, __LINE__)
+#define OBJ_SHADE(x)                OBJ_WB_GIVEUP(x) /* RGENGC terminology */
 
 void rb_gc_writebarrier(VALUE a, VALUE b);
 void rb_gc_giveup_promoted_writebarrier(VALUE obj);
 
 #else /* USE_RGENGC */
-#define OBJ_PROMOTED(x)       0
-#define OBJ_WB_PROTECTED(x)   0
-#define OBJ_WB_GIVEUP(x)      rb_obj_wb_giveup(x, __FILE__, __LINE__)
-#define OBJ_SHADE(x)          OBJ_WB_GIVEUP(x) /* RGENGC terminology */
-#define OBJ_WB(a, b)          rb_obj_wb((a), (b), __FILE__, __LINE__)
+#define OBJ_PROMOTED(x)             0
+#define OBJ_WB_PROTECTED(x)         0
+#define OBJ_WB_GIVEUP(x)            rb_obj_wb_giveup(x, __FILE__, __LINE__)
+#define OBJ_SHADE(x)                OBJ_WB_GIVEUP(x) /* RGENGC terminology */
 #endif
+
+#define OBJ_WRITE(a, slot, b)       rb_obj_write((a), (slot), (b), __FILE__, __LINE__)
+#define OBJ_CONNECT(a, oldv, b)     rb_obj_connect((a), (oldv), (b), __FILE__, __LINE__)
 
 static inline VALUE
 rb_obj_wb_giveup(VALUE x, const char *filename, int line)
@@ -1228,10 +1227,10 @@ rb_obj_wb_giveup(VALUE x, const char *filename, int line)
 }
 
 static inline VALUE
-rb_obj_wb(VALUE a, VALUE b, const char *filename, int line)
+rb_obj_connect(VALUE a, VALUE oldv, VALUE b, const char *filename, int line)
 {
-#ifdef LOG_WB
-    LOG_WB(a, b, filename, line);
+#ifdef LOG_WB_RELATION
+    LOG_OBJ_CONNECT(a, oldv, b, filename, line);
 #endif
 
 #if USE_RGENGC
@@ -1240,6 +1239,22 @@ rb_obj_wb(VALUE a, VALUE b, const char *filename, int line)
 	!SPECIAL_CONST_P(b) && !FL_TEST_RAW((b), FL_OLDGEN)) {
 	rb_gc_writebarrier(a, b);
     }
+#endif
+
+    return a;
+}
+
+static inline VALUE
+rb_obj_write(VALUE a, VALUE *slot, VALUE b, const char *filename, int line)
+{
+#ifdef LOG_WB
+    LOG_OBJ_WRITE(a, slot, b, filename, line);
+#endif
+
+    *slot = b;
+
+#if USE_RGENGC
+    rb_obj_connect(a, Qundef /* ignore `oldv' now */, b, filename, line);
 #endif
     return a;
 }

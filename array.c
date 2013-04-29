@@ -128,11 +128,12 @@ memfill(register VALUE *mem, register long size, register VALUE val)
 
 #define ARY_SHARED(ary) (assert(ARY_SHARED_P(ary)), RARRAY(ary)->as.heap.aux.shared)
 #define ARY_SET_SHARED(ary, value) do { \
-    assert(!ARY_EMBED_P(ary)); \
-    assert(ARY_SHARED_P(ary)); \
-    assert(ARY_SHARED_ROOT_P(value)); \
-    RARRAY(ary)->as.heap.aux.shared = (value); \
-    OBJ_WB(ary, value); \
+    const VALUE _ary_ = (ary); \
+    const VALUE _value_ = (value); \
+    assert(!ARY_EMBED_P(_ary_)); \
+    assert(ARY_SHARED_P(_ary_)); \
+    assert(ARY_SHARED_ROOT_P(_value_)); \
+    OBJ_WRITE(_ary_, &RARRAY(_ary_)->as.heap.aux.shared, _value_); \
 } while (0)
 #define RARRAY_SHARED_ROOT_FLAG FL_USER5
 #define ARY_SHARED_ROOT_P(ary) (FL_TEST((ary), RARRAY_SHARED_ROOT_FLAG))
@@ -704,7 +705,7 @@ rb_ary_initialize(int argc, VALUE *argv, VALUE ary)
 	RARRAY_PTR_USE(ary, ptr, {
 	    memfill(ptr, len, val);
 	});
-	OBJ_WB(ary, val);
+	OBJ_CONNECT(ary, Qundef, val);
 	ARY_SET_LEN(ary, len);
     }
     return ary;
