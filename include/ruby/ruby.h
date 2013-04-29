@@ -1187,17 +1187,20 @@ struct RBignum {
 
 #define OBJ_PROMOTED(x)       (SPECIAL_CONST_P(x) ? 0 : FL_TEST_RAW((x), FL_OLDGEN))
 #define OBJ_WB_PROTECTED(x)   (SPECIAL_CONST_P(x) ? 1 : FL_TEST_RAW((x), FL_KEEP_WB))
-#define OBJ_WB_GIVEUP(x)      rb_obj_wb_giveup(x)
+#define OBJ_WB_GIVEUP(x)      rb_obj_wb_giveup(x, __FILE__, __LINE__)
 #define OBJ_SHADE(x)          OBJ_WB_GIVEUP(x) /* RGENGC terminology */
-#define OBJ_WB(a, b)          rb_obj_wb((a), (b))
+#define OBJ_WB(a, b)          rb_obj_wb((a), (b), __FILE__, __LINE__)
 
 void rb_gc_writebarrier(VALUE a, VALUE b);
 void rb_gc_giveup_promoted_writebarrier(VALUE obj);
 
 static inline VALUE
-rb_obj_wb_giveup(VALUE x)
+rb_obj_wb_giveup(VALUE x, const char *filename, int line)
 {
     if (OBJ_WB_PROTECTED(x)) {
+#ifdef LOG_WB_GIVEUP
+	LOG_WB_GIVEUP(x, filename, line);
+#endif
 	RBASIC(x)->flags &= ~FL_KEEP_WB;
 
 	if (OBJ_PROMOTED(x)) {
@@ -1208,9 +1211,12 @@ rb_obj_wb_giveup(VALUE x)
 }
 
 static inline VALUE
-rb_obj_wb(VALUE a, VALUE b)
+rb_obj_wb(VALUE a, VALUE b, const char *filename, int line)
 {
     if (!SPECIAL_CONST_P(b) && !OBJ_PROMOTED(b) && OBJ_PROMOTED(a)) {
+#ifdef LOG_WB
+	LOG_WB(a, b, filename, line);
+#endif
 	rb_gc_writebarrier(a, b);
     }
     return a;
