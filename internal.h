@@ -81,8 +81,7 @@ RCLASS_SUPER(VALUE c)
 
 static inline VALUE
 RCLASS_SET_SUPER(VALUE a, VALUE b) {
-  OBJ_WB(a, b);
-  RCLASS_EXT(a)->super = b;
+  RCLASS_EXT(OBJ_WB(a, b))->super = b;
   return b;
 }
 
