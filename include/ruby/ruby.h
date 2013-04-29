@@ -1197,13 +1197,14 @@ void rb_gc_giveup_promoted_writebarrier(VALUE obj);
 static inline VALUE
 rb_obj_wb_giveup(VALUE x, const char *filename, int line)
 {
-    if (OBJ_WB_PROTECTED(x)) {
 #ifdef LOG_WB_GIVEUP
-	LOG_WB_GIVEUP(x, filename, line);
+    LOG_WB_GIVEUP(x, filename, line);
 #endif
+    /* `x' should be an RVALUE object */
+    if (FL_TEST_RAW((x), FL_KEEP_WB)) {
 	RBASIC(x)->flags &= ~FL_KEEP_WB;
 
-	if (OBJ_PROMOTED(x)) {
+	if (FL_TEST_RAW((x), FL_OLDGEN)) {
 	    rb_gc_giveup_promoted_writebarrier(x);
 	}
     }
@@ -1213,10 +1214,12 @@ rb_obj_wb_giveup(VALUE x, const char *filename, int line)
 static inline VALUE
 rb_obj_wb(VALUE a, VALUE b, const char *filename, int line)
 {
-    if (!SPECIAL_CONST_P(b) && !OBJ_PROMOTED(b) && OBJ_PROMOTED(a)) {
 #ifdef LOG_WB
-	LOG_WB(a, b, filename, line);
+    LOG_WB(a, b, filename, line);
 #endif
+    /* `a' should be an RVALUE object */
+    if (FL_TEST_RAW((a), FL_OLDGEN) &&
+	!SPECIAL_CONST_P(b) && !FL_TEST_RAW((b), FL_OLDGEN)) {
 	rb_gc_writebarrier(a, b);
     }
     return a;

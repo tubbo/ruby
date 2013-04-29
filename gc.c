@@ -3224,14 +3224,14 @@ gc_marks_body(rb_objspace_t *objspace, rb_thread_t *th)
 
     /* RGENGC */
     if (objspace->rgengc.during_minor_gc) {
-	size_t rset_size = rgengc_rememberset_mark(objspace);
-	fprintf(stderr, "rset_size: %"PRIdSIZE", heap_size: %"PRIdSIZE"\n",
-		rset_size, heaps_used * HEAP_OBJ_LIMIT);
 	if (RGENGC_SIMPLEBENCH) objspace->rgengc.minor_gc_count++;
+
+	rgengc_rememberset_mark(objspace);
     }
     else {
-	rgengc_rememberset_clear(objspace);
 	if (RGENGC_SIMPLEBENCH) objspace->rgengc.major_gc_count++;
+
+	rgengc_rememberset_clear(objspace);
     }
 
     SET_STACK_END;
