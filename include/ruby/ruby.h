@@ -1186,7 +1186,7 @@ struct RBignum {
 #define OBJ_FREEZE(x) FL_SET((x), FL_FREEZE)
 
 #ifndef USE_RGENGC
-#define USE_RGENGC 0
+#define USE_RGENGC 1
 #endif
 
 #if USE_RGENGC
