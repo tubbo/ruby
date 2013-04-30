@@ -591,6 +591,13 @@ alloc_bitmap(rb_objspace_t *objspace)
 }
 
 static void
+free_bitmap(rb_objspace_t *objspace, uintptr_t *bits)
+{
+    ((struct heaps_free_bitmap *)(bits))->next = objspace->heap.free_bitmap;
+    objspace->heap.free_bitmap = (struct heaps_free_bitmap *)bits;
+}
+
+static void
 assign_heap_slot(rb_objspace_t *objspace)
 {
     RVALUE *p, *pend, *membase;
@@ -990,9 +997,10 @@ free_unused_heaps(rb_objspace_t *objspace)
     for (i = j = 1; j < heaps_used; i++) {
 	if (objspace->heap.sorted[i]->limit == 0) {
             struct heaps_header* h = objspace->heap.sorted[i];
-            ((struct heaps_free_bitmap *)(h->mark_bits))->next =
-                objspace->heap.free_bitmap;
-            objspace->heap.free_bitmap = (struct heaps_free_bitmap *)h->mark_bits;
+	    free_bitmap(objspace, h->mark_bits);
+#if USE_RGENGC
+	    free_bitmap(objspace, h->rememberset_bits);
+#endif
 	    if (!last) {
                 last = objspace->heap.sorted[i];
 	    }
