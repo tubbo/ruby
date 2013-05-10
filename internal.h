@@ -230,7 +230,18 @@ VALUE rb_int_pred(VALUE num);
 
 /* object.c */
 VALUE rb_obj_equal(VALUE obj1, VALUE obj2);
-VALUE rb_obj_hide(VALUE obj);
+
+struct RBasicRaw {
+    VALUE flags;
+    VALUE klass;
+};
+
+#define RBASIC_CLEAR_CLASS(obj)        (((struct RBasicRaw *)((VALUE)(obj)))->klass = 0)
+#define RBASIC_SET_CLASS_RAW(obj, cls) (((struct RBasicRaw *)((VALUE)(obj)))->klass = (cls))
+#define RBASIC_SET_CLASS(obj, cls)     do { \
+    VALUE _obj_ = (obj); \
+    OBJ_WRITE(_obj_, &((struct RBasicRaw *)(_obj_))->klass, cls); \
+} while (0)
 
 /* parse.y */
 VALUE rb_parser_get_yydebug(VALUE);
