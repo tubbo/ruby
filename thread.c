@@ -80,6 +80,7 @@ VALUE rb_cThreadShield;
 static VALUE sym_immediate;
 static VALUE sym_on_blocking;
 static VALUE sym_never;
+static ID id_locals;
 
 static void sleep_timeval(rb_thread_t *th, struct timeval time, int spurious_check);
 static void sleep_wait_for_interrupt(rb_thread_t *th, double sleepsec, int spurious_check);
@@ -919,6 +920,10 @@ thread_value(VALUE self)
  * OpenBSD 5.2 (amd64):
  *   time_t: int (signed 32bit integer)
  *   tv_sec: long (signed 64bit integer)
+ *
+ * MinGW-w64 (x64):
+ *   time_t: long long (signed 64bit integer)
+ *   tv_sec: long (signed 32bit integer)
  */
 
 #if SIGNEDNESS_OF_TIME_T < 0	/* signed */
@@ -2894,7 +2899,7 @@ rb_thread_variable_get(VALUE thread, VALUE key)
     }
 
     if (!id) return Qnil;
-    locals = rb_iv_get(thread, "locals");
+    locals = rb_ivar_get(thread, id_locals);
     return rb_hash_aref(locals, ID2SYM(id));
 }
 
@@ -2922,7 +2927,7 @@ rb_thread_variable_set(VALUE thread, VALUE id, VALUE val)
 	rb_error_frozen("thread locals");
     }
 
-    locals = rb_iv_get(thread, "locals");
+    locals = rb_ivar_get(thread, id_locals);
     return rb_hash_aset(locals, ID2SYM(rb_to_id(id)), val);
 }
 
@@ -3037,7 +3042,7 @@ rb_thread_variables(VALUE thread)
     VALUE locals;
     VALUE ary;
 
-    locals = rb_iv_get(thread, "locals");
+    locals = rb_ivar_get(thread, id_locals);
     ary = rb_ary_new();
     rb_hash_foreach(locals, keys_i, ary);
 
@@ -3068,7 +3073,7 @@ rb_thread_variable_p(VALUE thread, VALUE key)
 
     if (!id) return Qfalse;
 
-    locals = rb_iv_get(thread, "locals");
+    locals = rb_ivar_get(thread, id_locals);
 
     if (!RHASH(locals)->ntbl)
         return Qfalse;
@@ -5009,6 +5014,7 @@ Init_Thread(void)
     sym_never = ID2SYM(rb_intern("never"));
     sym_immediate = ID2SYM(rb_intern("immediate"));
     sym_on_blocking = ID2SYM(rb_intern("on_blocking"));
+    id_locals = rb_intern("locals");
 
     rb_define_singleton_method(rb_cThread, "new", thread_s_new, -1);
     rb_define_singleton_method(rb_cThread, "start", thread_start, -2);

@@ -253,6 +253,10 @@ def test_recvmsg_with_msg_peek_creates_fds(headers)
     # [ruby-dev:44189]
     # http://bugs.ruby-lang.org/issues/5075
     close_fds = false
+  when /cygwin/
+    # Cygwin doesn't support fd passing.
+    # http://cygwin.com/ml/cygwin/2003-09/msg01808.html
+    close_fds = false
   else
     close_fds = nil
   end
@@ -427,7 +431,7 @@ EOF
   end
 
   ipv6 = false
-  default_ipv6 = /cygwin|beos|haiku/ !~ RUBY_PLATFORM
+  default_ipv6 = /beos|haiku/ !~ RUBY_PLATFORM
   if enable_config("ipv6", default_ipv6)
     if checking_for("ipv6") {try_link(AF_INET6_SOCKET_CREATION_TEST)}
       $defs << "-DENABLE_IPV6" << "-DINET6"

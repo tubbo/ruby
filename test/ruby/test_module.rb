@@ -1408,6 +1408,13 @@ class TestModule < Test::Unit::TestCase
     c = labeled_class("c") {prepend b}
     assert_operator(c, :<, b, bug6654)
     assert_operator(c, :<, a, bug6654)
+    bug8357 = '[ruby-core:54736] [Bug #8357]'
+    b = labeled_module("b") {prepend a}
+    c = labeled_class("c") {include b}
+    assert_operator(c, :<, b, bug8357)
+    assert_operator(c, :<, a, bug8357)
+    bug8357 = '[ruby-core:54742] [Bug #8357]'
+    assert_kind_of(b, c.new, bug8357)
   end
 
   def test_prepend_instance_methods
@@ -1487,14 +1494,14 @@ class TestModule < Test::Unit::TestCase
 
   def labeled_module(name, &block)
     Module.new do
-      singleton_class.class_eval {define_method(:to_s) {name}}
+      singleton_class.class_eval {define_method(:to_s) {name}; alias inspect to_s}
       class_eval(&block) if block
     end
   end
 
   def labeled_class(name, superclass = Object, &block)
     Class.new(superclass) do
-      singleton_class.class_eval {define_method(:to_s) {name}}
+      singleton_class.class_eval {define_method(:to_s) {name}; alias inspect to_s}
       class_eval(&block) if block
     end
   end
@@ -1539,6 +1546,21 @@ class TestModule < Test::Unit::TestCase
     a = c.new
     assert_respond_to a, [:foo, true], bug8005
     assert_nothing_raised(NoMethodError, bug8005) {a.send :foo}
+  end
+
+  def test_prepend_included_modules
+    bug8025 = '[ruby-core:53158] [Bug #8025]'
+    mixin = labeled_module("mixin")
+    c = labeled_module("c") {prepend mixin}
+    im = c.included_modules
+    assert_not_include(im, c, bug8025)
+    assert_include(im, mixin, bug8025)
+    c1 = labeled_class("c1") {prepend mixin}
+    c2 = labeled_class("c2", c1)
+    im = c2.included_modules
+    assert_not_include(im, c1, bug8025)
+    assert_not_include(im, c2, bug8025)
+    assert_include(im, mixin, bug8025)
   end
 
   def test_class_variables
