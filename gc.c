@@ -3417,6 +3417,167 @@ gc_marks(rb_objspace_t *objspace, int minor_gc)
     objspace->mark_func_data = prev_mark_func_data;
 }
 
+/* RGENGC */
+
+#if USE_RGENGC
+
+/* bit operations */
+
+static int
+rgengc_remembersetbits_get(rb_objspace_t *objspace, VALUE obj)
+{
+    uintptr_t *bits = GET_HEAP_REMEMBERSET_BITS(obj);
+    return MARKED_IN_BITMAP(bits, obj) ? 1 : 0;
+}
+
+static void
+rgengc_remembersetbits_set(rb_objspace_t *objspace, VALUE obj)
+{
+    uintptr_t *bits = GET_HEAP_REMEMBERSET_BITS(obj);
+    MARK_IN_BITMAP(bits, obj);
+}
+
+/* wb, etc */
+
+static void
+rgengc_remember(rb_objspace_t *objspace, VALUE obj)
+{
+    if (RGENGC_CHECK_MODE && RVALUE_PROMOTED(obj)) {
+	rb_bug("rgengc_remember: %p (%s) is promoted object",
+	       (void *)obj, obj_type_name(obj));
+    }
+
+    rgengc_report(0, objspace, "rgengc_remember: %p (%s, %s) %s\n", (void *)obj, obj_type_name(obj),
+		  RVALUE_SUNNY(obj) ? "sunny" : "shady",
+		  rgengc_remembersetbits_get(objspace, obj) ? "was already remembered" : "is remembered now");
+
+    if (RGENGC_PROFILE) {
+	if (!rgengc_remembered(objspace, obj)) {
+	    if (RVALUE_SUNNY(obj)) objspace->profile.remembered_sunny_object_count++;
+	    else                   objspace->profile.remembered_shady_object_count++;
+	}
+    }
+
+    rgengc_remembersetbits_set(objspace, obj);
+}
+
+static int
+rgengc_remembered(rb_objspace_t *objspace, VALUE obj)
+{
+    int result = rgengc_remembersetbits_get(objspace, obj);
+    rgengc_report(6, objspace, "gc_remembered: %p (%s) => %d\n", (void *)obj, obj_type_name(obj), result);
+    return result;
+}
+
+static size_t
+rgengc_rememberset_mark(rb_objspace_t *objspace)
+{
+    size_t i;
+    size_t mark_cnt = 0, clear_cnt = 0, skip_cnt = 0;
+    RVALUE *p, *pend;
+    uintptr_t *bits;
+
+    for (i=0; i<heaps_used; i++) {
+	if (0 /* TODO: optimization - skip it if there are no remembered objects */) {
+	    skip_cnt++;
+	    continue;
+	}
+
+	p = objspace->heap.sorted[i]->start; pend = p + objspace->heap.sorted[i]->limit;
+	bits = GET_HEAP_REMEMBERSET_BITS(p);
+
+	while (p < pend) {
+	    if (MARKED_IN_BITMAP(bits, p)) {
+		gc_mark(objspace, (VALUE)p);
+		rgengc_report(2, objspace, "rgengc_rememberset_mark: mark %p (%s)\n", p, obj_type_name((VALUE)p));
+
+		if (RGENGC_CHECK_MODE) mark_cnt++;
+
+		if (RVALUE_SUNNY(p)) {
+		    rgengc_report(2, objspace, "rgengc_rememberset_mark: clear %p (%s)\n", p, obj_type_name((VALUE)p));
+		    CLEAR_IN_BITMAP(bits, p);
+		    if (RGENGC_CHECK_MODE) clear_cnt++;
+		}
+	    }
+	    p++;
+	}
+    }
+
+    if (RGENGC_CHECK_MODE && mark_cnt < clear_cnt) rb_bug("rgengc_rememberset_mark: mark_cnt (%"PRIdSIZE") < clear_cnt (%"PRIdSIZE")", mark_cnt, clear_cnt);
+    rgengc_report(2, objspace, "rgengc_rememberset_mark: mark_cnt: %"PRIdSIZE", clear_cnt: %"PRIdSIZE", skip_cnt: %"PRIdSIZE"\n", mark_cnt, clear_cnt, skip_cnt);
+
+    return mark_cnt - clear_cnt; /* totalc count of objects in remember set */
+}
+
+static void
+rgengc_rememberset_clear(rb_objspace_t *objspace)
+{
+    size_t i;
+
+    for (i=0; i<heaps_used; i++) {
+	uintptr_t *bits = objspace->heap.sorted[i]->rememberset_bits;
+	memset(bits, 0, HEAP_BITMAP_LIMIT * sizeof(uintptr_t));
+    }
+}
+
+/* RGENGC: APIs */
+
+void
+rb_gc_writebarrier(VALUE a, VALUE b)
+{
+    rb_objspace_t *objspace = &rb_objspace;
+
+    if (RGENGC_CHECK_MODE) {
+	if (!RVALUE_PROMOTED(a)) rb_bug("rb_gc_wb: referer object %p (%s) is not promoted.\n", (void *)a, obj_type_name(a));
+	if (RVALUE_PROMOTED(b)) rb_bug("rb_gc_wb: refered object %p (%s) is promoted.\n", (void *)b, obj_type_name(b));
+    }
+
+    if (!rgengc_remembered(objspace, a)) {
+	rgengc_report(2, objspace, "rb_gc_wb: %p (%s) -> %p (%s)\n",
+		      (void *)a, obj_type_name(a), (void *)b, obj_type_name(b));
+
+	/* need to sweep all slots before demote */
+	/* TODO: check delayed sweeping slot or not
+	 *       if delayed sweepling slot, then mark it
+	 *       else demote simple
+	 */
+	rest_sweep(objspace);
+
+	RVALUE_DEMOTE(a);
+	rgengc_remember(objspace, a);
+    }
+}
+
+void
+rb_gc_giveup_promoted_writebarrier(VALUE obj)
+{
+    rb_objspace_t *objspace = &rb_objspace;
+
+    if (RGENGC_CHECK_MODE) {
+	if (!RVALUE_PROMOTED(obj)) rb_bug("rb_gc_giveup_promoted_writebarrier: called on non-promoted object");
+	if (RVALUE_SUNNY(obj)) rb_bug("rb_gc_giveup_promoted_writebarrier: called on sunny object");
+    }
+
+    rgengc_report(2, objspace, "rb_gc_giveup_writebarrier: %p (%s)%s\n", (void *)obj, obj_type_name(obj),
+		  rgengc_remembered(objspace, obj) ? " (already remembered)" : "");
+
+    /* need to sweep all slots before demote */
+    /* TODO: check delayed sweeping slot or not
+     *       if delayed sweepling slot, then mark it
+     *       else demote simple
+     */
+    rest_sweep(objspace);
+
+    RVALUE_DEMOTE(obj);
+    rgengc_remember(objspace, obj);
+
+#if RGENGC_PROFILE
+    objspace->profile.shade_operation_count++;
+#endif
+}
+
+#endif
+
 /* GC */
 
 void
@@ -5076,164 +5237,3 @@ Init_GC(void)
     rb_define_method(rb_cObject, "shady?", obj_shady_p, 0);
     rb_define_method(rb_cObject, "promoted?", obj_promoted_p, 0);
 }
-
-/* RGENGC */
-
-#if USE_RGENGC
-
-/* bit operations */
-
-static int
-rgengc_remembersetbits_get(rb_objspace_t *objspace, VALUE obj)
-{
-    uintptr_t *bits = GET_HEAP_REMEMBERSET_BITS(obj);
-    return MARKED_IN_BITMAP(bits, obj) ? 1 : 0;
-}
-
-static void
-rgengc_remembersetbits_set(rb_objspace_t *objspace, VALUE obj)
-{
-    uintptr_t *bits = GET_HEAP_REMEMBERSET_BITS(obj);
-    MARK_IN_BITMAP(bits, obj);
-}
-
-/* wb, etc */
-
-static void
-rgengc_remember(rb_objspace_t *objspace, VALUE obj)
-{
-    if (RGENGC_CHECK_MODE && RVALUE_PROMOTED(obj)) {
-	rb_bug("rgengc_remember: %p (%s) is promoted object",
-	       (void *)obj, obj_type_name(obj));
-    }
-
-    rgengc_report(0, objspace, "rgengc_remember: %p (%s, %s) %s\n", (void *)obj, obj_type_name(obj),
-		  RVALUE_SUNNY(obj) ? "sunny" : "shady",
-		  rgengc_remembersetbits_get(objspace, obj) ? "was already remembered" : "is remembered now");
-
-    if (RGENGC_PROFILE) {
-	if (!rgengc_remembered(objspace, obj)) {
-	    if (RVALUE_SUNNY(obj)) objspace->profile.remembered_sunny_object_count++;
-	    else                   objspace->profile.remembered_shady_object_count++;
-	}
-    }
-
-    rgengc_remembersetbits_set(objspace, obj);
-}
-
-static int
-rgengc_remembered(rb_objspace_t *objspace, VALUE obj)
-{
-    int result = rgengc_remembersetbits_get(objspace, obj);
-    rgengc_report(6, objspace, "gc_remembered: %p (%s) => %d\n", (void *)obj, obj_type_name(obj), result);
-    return result;
-}
-
-static size_t
-rgengc_rememberset_mark(rb_objspace_t *objspace)
-{
-    size_t i;
-    size_t mark_cnt = 0, clear_cnt = 0, skip_cnt = 0;
-    RVALUE *p, *pend;
-    uintptr_t *bits;
-
-    for (i=0; i<heaps_used; i++) {
-	if (0 /* TODO: optimization - skip it if there are no remembered objects */) {
-	    skip_cnt++;
-	    continue;
-	}
-
-	p = objspace->heap.sorted[i]->start; pend = p + objspace->heap.sorted[i]->limit;
-	bits = GET_HEAP_REMEMBERSET_BITS(p);
-
-	while (p < pend) {
-	    if (MARKED_IN_BITMAP(bits, p)) {
-		gc_mark(objspace, (VALUE)p);
-		rgengc_report(2, objspace, "rgengc_rememberset_mark: mark %p (%s)\n", p, obj_type_name((VALUE)p));
-
-		if (RGENGC_CHECK_MODE) mark_cnt++;
-
-		if (RVALUE_SUNNY(p)) {
-		    rgengc_report(2, objspace, "rgengc_rememberset_mark: clear %p (%s)\n", p, obj_type_name((VALUE)p));
-		    CLEAR_IN_BITMAP(bits, p);
-		    if (RGENGC_CHECK_MODE) clear_cnt++;
-		}
-	    }
-	    p++;
-	}
-    }
-
-    if (RGENGC_CHECK_MODE && mark_cnt < clear_cnt) rb_bug("rgengc_rememberset_mark: mark_cnt (%"PRIdSIZE") < clear_cnt (%"PRIdSIZE")", mark_cnt, clear_cnt);
-    rgengc_report(2, objspace, "rgengc_rememberset_mark: mark_cnt: %"PRIdSIZE", clear_cnt: %"PRIdSIZE", skip_cnt: %"PRIdSIZE"\n", mark_cnt, clear_cnt, skip_cnt);
-
-    return mark_cnt - clear_cnt; /* totalc count of objects in remember set */
-}
-
-static void
-rgengc_rememberset_clear(rb_objspace_t *objspace)
-{
-    size_t i;
-
-    for (i=0; i<heaps_used; i++) {
-	uintptr_t *bits = objspace->heap.sorted[i]->rememberset_bits;
-	memset(bits, 0, HEAP_BITMAP_LIMIT * sizeof(uintptr_t));
-    }
-}
-
-/* RGENGC: APIs */
-
-void
-rb_gc_writebarrier(VALUE a, VALUE b)
-{
-    rb_objspace_t *objspace = &rb_objspace;
-
-    if (RGENGC_CHECK_MODE) {
-	if (!RVALUE_PROMOTED(a)) rb_bug("rb_gc_wb: referer object %p (%s) is not promoted.\n", (void *)a, obj_type_name(a));
-	if (RVALUE_PROMOTED(b)) rb_bug("rb_gc_wb: refered object %p (%s) is promoted.\n", (void *)b, obj_type_name(b));
-    }
-
-    if (!rgengc_remembered(objspace, a)) {
-	rgengc_report(2, objspace, "rb_gc_wb: %p (%s) -> %p (%s)\n",
-		      (void *)a, obj_type_name(a), (void *)b, obj_type_name(b));
-
-	/* need to sweep all slots before demote */
-	/* TODO: check delayed sweeping slot or not
-	 *       if delayed sweepling slot, then mark it
-	 *       else demote simple
-	 */
-	rest_sweep(objspace);
-
-	RVALUE_DEMOTE(a);
-	rgengc_remember(objspace, a);
-    }
-}
-
-void
-rb_gc_giveup_promoted_writebarrier(VALUE obj)
-{
-    rb_objspace_t *objspace = &rb_objspace;
-
-    if (RGENGC_CHECK_MODE) {
-	if (!RVALUE_PROMOTED(obj)) rb_bug("rb_gc_giveup_promoted_writebarrier: called on non-promoted object");
-	if (RVALUE_SUNNY(obj)) rb_bug("rb_gc_giveup_promoted_writebarrier: called on sunny object");
-    }
-
-    rgengc_report(2, objspace, "rb_gc_giveup_writebarrier: %p (%s)%s\n", (void *)obj, obj_type_name(obj),
-		  rgengc_remembered(objspace, obj) ? " (already remembered)" : "");
-
-    /* need to sweep all slots before demote */
-    /* TODO: check delayed sweeping slot or not
-     *       if delayed sweepling slot, then mark it
-     *       else demote simple
-     */
-    rest_sweep(objspace);
-
-    RVALUE_DEMOTE(obj);
-    rgengc_remember(objspace, obj);
-
-#if RGENGC_PROFILE
-    objspace->profile.shade_operation_count++;
-#endif
-}
-
-#endif
