@@ -284,7 +284,7 @@ typedef struct rb_objspace {
     struct {
 	int run;
 	gc_profile_record *record;
-	size_t count;
+	size_t next_index;
 	size_t size;
 	double invoke_time;
 
@@ -4437,22 +4437,24 @@ getrusage_time(void)
 static inline gc_profile_record *
 gc_prof_record(rb_objspace_t *objspace)
 {
-    size_t count = objspace->profile.count;
-    return &objspace->profile.record[count];
+    size_t index = objspace->profile.next_index - 1;
+    return &objspace->profile.record[index];
 }
 
 static inline void
 gc_prof_timer_start(rb_objspace_t *objspace)
 {
     if (objspace->profile.run) {
-	size_t count = objspace->profile.count;
+	size_t index = objspace->profile.next_index;
 	gc_profile_record *record;
+
+	objspace->profile.next_index++;
 
 	if (!objspace->profile.record) {
 	    objspace->profile.size = GC_PROFILE_RECORD_DEFAULT_SIZE;
 	    objspace->profile.record = malloc(sizeof(gc_profile_record) * objspace->profile.size);
 	}
-	if (count >= objspace->profile.size) {
+	if (index >= objspace->profile.size) {
 	    objspace->profile.size += 1000;
 	    objspace->profile.record = realloc(objspace->profile.record, sizeof(gc_profile_record) * objspace->profile.size);
 	}
@@ -4479,7 +4481,6 @@ gc_prof_timer_stop(rb_objspace_t *objspace, int marked)
         record->gc_time = gc_time;
         record->is_marked = !!(marked);
         gc_prof_set_heap_info(objspace, record);
-        objspace->profile.count++;
     }
 }
 
@@ -4638,7 +4639,7 @@ gc_profile_clear(void)
         }
     }
     MEMZERO(objspace->profile.record, gc_profile_record, objspace->profile.size);
-    objspace->profile.count = 0;
+    objspace->profile.next_index = 0;
     return Qnil;
 }
 
@@ -4704,7 +4705,7 @@ gc_profile_record_get(void)
 	return Qnil;
     }
 
-    for (i =0; i < objspace->profile.count; i++) {
+    for (i =0; i < objspace->profile.next_index - 1; i++) {
 	prof = rb_hash_new();
         rb_hash_aset(prof, ID2SYM(rb_intern("GC_TIME")), DBL2NUM(objspace->profile.record[i].gc_time));
         rb_hash_aset(prof, ID2SYM(rb_intern("GC_INVOKE_TIME")), DBL2NUM(objspace->profile.record[i].gc_invoke_time));
@@ -4732,7 +4733,7 @@ static void
 gc_profile_dump_on(VALUE out, VALUE (*append)(VALUE, VALUE))
 {
     rb_objspace_t *objspace = &rb_objspace;
-    size_t count = objspace->profile.count;
+    size_t count = objspace->profile.next_index - 1;
 
     if (objspace->profile.run && count) {
 	int index = 1;
@@ -4825,9 +4826,10 @@ gc_profile_total_time(VALUE self)
     double time = 0;
     rb_objspace_t *objspace = &rb_objspace;
     size_t i;
+    size_t count = objspace->profile.next_index - 1;
 
-    if (objspace->profile.run && objspace->profile.count) {
-	for (i = 0; i < objspace->profile.count; i++) {
+    if (objspace->profile.run && count > 0) {
+	for (i = 0; i < count; i++) {
 	    time += objspace->profile.record[i].gc_time;
 	}
     }
