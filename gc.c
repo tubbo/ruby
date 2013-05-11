@@ -118,7 +118,7 @@ static ruby_gc_params_t initial_params = {
 #endif
 
 #ifndef RGENGC_PROFILE
-#define RGENGC_PROFILE     1
+#define RGENGC_PROFILE     0
 #endif
 
 #else /* USE_RGENGC */
@@ -128,7 +128,7 @@ static ruby_gc_params_t initial_params = {
 #endif
 
 #ifndef GC_PROFILE_MORE_DETAIL
-#define GC_PROFILE_MORE_DETAIL 1
+#define GC_PROFILE_MORE_DETAIL 0
 #endif
 #ifndef GC_ENABLE_LAZY_SWEEP
 #define GC_ENABLE_LAZY_SWEEP 1
