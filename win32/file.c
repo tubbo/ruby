@@ -1,5 +1,6 @@
 #include "ruby/ruby.h"
 #include "ruby/encoding.h"
+#include "internal.h"
 #include <winbase.h>
 #include <wchar.h>
 #include <shlwapi.h>
