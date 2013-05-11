@@ -96,8 +96,39 @@ static ruby_gc_params_t initial_params = {
 
 #define nomem_error GET_VM()->special_exceptions[ruby_error_nomemory]
 
+#if USE_RGENGC
+/* RGENGC_DEBUG:
+ * 1: 
+ * 2: remember set operation
+ * 3: mark
+ * 4: 
+ * 5: sweep
+ */
+#ifndef RGENGC_DEBUG
+#define RGENGC_DEBUG       0
+#endif
+
+/* RGENGC_CHECK_MODE
+ * 0:
+ * 1: enable assertions
+ * 2: enable bits check (for debugging)
+ */
+#ifndef RGENGC_CHECK_MODE
+#define RGENGC_CHECK_MODE  1
+#endif
+
+#ifndef RGENGC_PROFILE
+#define RGENGC_PROFILE     1
+#endif
+
+#else /* USE_RGENGC */
+#define RGENGC_DEBUG       0
+#define RGENGC_CHECK_MODE  0
+#define RGENGC_PROFILE     0
+#endif
+
 #ifndef GC_PROFILE_MORE_DETAIL
-#define GC_PROFILE_MORE_DETAIL 0
+#define GC_PROFILE_MORE_DETAIL 1
 #endif
 #ifndef GC_ENABLE_LAZY_SWEEP
 #define GC_ENABLE_LAZY_SWEEP 1
@@ -256,6 +287,23 @@ typedef struct rb_objspace {
 	size_t count;
 	size_t size;
 	double invoke_time;
+
+#if USE_RGENGC
+	size_t minor_gc_count;
+	size_t major_gc_count;
+#ifdef RGENGC_PROFILE
+	size_t generated_sunny_object_count;
+	size_t generated_shady_object_count;
+	size_t shade_operation_count;
+	size_t remembered_sunny_object_count;
+	size_t remembered_shady_object_count;
+#endif /* RGENGC_PROFILE */
+#endif /* USE_RGENGC */
+
+#if GC_PROFILE_MORE_DETAIL
+	double gc_sweep_start_time; /* temporary profiling space */
+#endif
+
     } profile;
     struct gc_list *global_list;
     size_t count;
@@ -275,16 +323,8 @@ typedef struct rb_objspace {
 	/* for check mode */
 	VALUE parent_object;
 	VALUE interesting_object;
-
-	/* profiling */
-	size_t generated_sunny_object_count;
-	size_t generated_shady_object_count;
-	size_t shade_operation_count;
-	size_t remembered_sunny_object_count;
-	size_t remembered_shady_object_count;
-	size_t minor_gc_count;
-	size_t major_gc_count;
     } rgengc;
+
 } rb_objspace_t;
 
 #if defined(ENABLE_VM_OBJSPACE) && ENABLE_VM_OBJSPACE
@@ -390,41 +430,15 @@ static inline void gc_prof_mark_timer_start(rb_objspace_t *);
 static inline void gc_prof_mark_timer_stop(rb_objspace_t *);
 static inline void gc_prof_sweep_slot_timer_start(rb_objspace_t *);
 static inline void gc_prof_sweep_slot_timer_stop(rb_objspace_t *);
-static inline void gc_prof_sweep_all_timer_start(rb_objspace_t *);
-static inline void gc_prof_sweep_all_timer_stop(rb_objspace_t *);
 static inline void gc_prof_set_malloc_info(rb_objspace_t *);
 
 static const char *obj_type_name(VALUE obj);
 
 #if USE_RGENGC
-/* RGENGC_DEBUG:
- * 1: 
- * 2: remember set operation
- * 3: mark
- * 4: 
- * 5: sweep
- */
-#define RGENGC_DEBUG       0
-
-/* RGENGC_CHECK_MODE
- * 0:
- * 1: enable assertions
- * 2: enable bits check (for debugging)
- */
-#define RGENGC_CHECK_MODE  1
-#define RGENGC_SIMPLEBENCH 0
-
 static int rgengc_remembered(rb_objspace_t *objspace, VALUE obj);
 static void rgengc_remember(rb_objspace_t *objspace, VALUE obj);
 static void rgengc_rememberset_clear(rb_objspace_t *objspace);
 static size_t rgengc_rememberset_mark(rb_objspace_t *objspace);
-static void rgengc_profile_report(rb_objspace_t *objspace);
-
-#else /* USE_RGENGC */
-#define RGENGC_DEBUG       0
-#define RGENGC_CHECK_MODE  0
-#define RGENGC_SIMPLEBENCH 0
-#endif
 
 #define FL_TEST2(x,f)         ((RGENGC_CHECK_MODE && SPECIAL_CONST_P(x)) ? (rb_bug("FL_TEST2: SPECIAL_CONST"), 0) : FL_TEST_RAW((x),(f)))
 #define FL_SET2(x,f)          do {if (RGENGC_CHECK_MODE && SPECIAL_CONST_P(x)) rb_bug("FL_SET2: SPECIAL_CONST");   RBASIC(x)->flags |= (f);} while (0)
@@ -436,6 +450,7 @@ static void rgengc_profile_report(rb_objspace_t *objspace);
 
 #define RVALUE_PROMOTE(x)     FL_SET2((x), FL_OLDGEN)
 #define RVALUE_DEMOTE(x)      FL_UNSET2((x), FL_OLDGEN)
+#endif
 
 static void
 rgengc_report_body(int level, rb_objspace_t *objspace, const char *fmt, ...)
@@ -484,10 +499,6 @@ static void free_stack_chunks(mark_stack_t *);
 void
 rb_objspace_free(rb_objspace_t *objspace)
 {
-#if USE_RGENGC
-    rgengc_profile_report(objspace);
-#endif
-
     rest_sweep(objspace);
     if (objspace->profile.record) {
 	free(objspace->profile.record);
@@ -789,9 +800,9 @@ newobj(VALUE klass, VALUE flags)
 	unlink_free_heap_slot(objspace, objspace->heap.free_slots);
     }
 
-#if RGENGC_SIMPLEBENCH
-    if (flags & FL_KEEP_WB) objspace->rgengc.generated_sunny_object_count++;
-    else                    objspace->rgengc.generated_shady_object_count++;
+#if RGENGC_PROFILE
+    if (flags & FL_KEEP_WB) objspace->profile.generated_sunny_object_count++;
+    else                    objspace->profile.generated_shady_object_count++;
 #endif
 
     MEMZERO((void*)obj, RVALUE, 1);
@@ -2185,8 +2196,6 @@ ready_to_gc(rb_objspace_t *objspace)
 static void
 before_gc_sweep(rb_objspace_t *objspace)
 {
-    gc_prof_sweep_all_timer_start(objspace);
-
     objspace->heap.do_heap_free = (size_t)((heaps_used * HEAP_OBJ_LIMIT) * 0.65);
     objspace->heap.free_min = (size_t)((heaps_used * HEAP_OBJ_LIMIT)  * 0.2);
     if (objspace->heap.free_min < initial_free_min) {
@@ -2225,8 +2234,6 @@ after_gc_sweep(rb_objspace_t *objspace)
     }
 
     free_unused_heaps(objspace);
-
-    gc_prof_sweep_all_timer_stop(objspace);
 }
 
 static int
@@ -3261,11 +3268,11 @@ gc_marks_body(rb_objspace_t *objspace, rb_thread_t *th)
 
 #if USE_RGENGC
     if (objspace->rgengc.during_minor_gc) {
-	if (RGENGC_SIMPLEBENCH) objspace->rgengc.minor_gc_count++;
+	objspace->profile.minor_gc_count++;
 	rgengc_rememberset_mark(objspace);
     }
     else {
-	if (RGENGC_SIMPLEBENCH) objspace->rgengc.major_gc_count++;
+	objspace->profile.major_gc_count++;
 	rgengc_rememberset_clear(objspace);
     }
 #endif
@@ -3630,21 +3637,44 @@ gc_stat(int argc, VALUE *argv, VALUE self)
     static VALUE sym_heap_used, sym_heap_length, sym_heap_increment;
     static VALUE sym_heap_live_num, sym_heap_free_num, sym_heap_final_num;
     static VALUE sym_total_allocated_object, sym_total_freed_object;
+#if USE_RGENGC
+    static VALUE sym_minor_gc_count, sym_major_gc_count;
+#if RGENGC_PROFILE
+    static VALUE sym_generated_sunny_object_count, sym_generated_shady_object_count;
+    static VALUE sym_shade_operation_count;
+    static VALUE sym_remembered_sunny_object_count, sym_remembered_shady_object_count;
+#endif /* RGENGC_PROFILE */
+#endif /* USE_RGENGC */
+
     if (sym_count == 0) {
-	sym_count = ID2SYM(rb_intern_const("count"));
-	sym_heap_used = ID2SYM(rb_intern_const("heap_used"));
-	sym_heap_length = ID2SYM(rb_intern_const("heap_length"));
-	sym_heap_increment = ID2SYM(rb_intern_const("heap_increment"));
-	sym_heap_live_num = ID2SYM(rb_intern_const("heap_live_num"));
-	sym_heap_free_num = ID2SYM(rb_intern_const("heap_free_num"));
-	sym_heap_final_num = ID2SYM(rb_intern_const("heap_final_num"));
-	sym_total_allocated_object = ID2SYM(rb_intern_const("total_allocated_object"));
-	sym_total_freed_object = ID2SYM(rb_intern_const("total_freed_object"));
+#define S(s) sym_##s = ID2SYM(rb_intern_const(#s))
+	S(count);
+	S(heap_used);
+	S(heap_length);
+	S(heap_increment);
+	S(heap_live_num);
+	S(heap_free_num);
+	S(heap_final_num);
+	S(total_allocated_object);
+	S(total_freed_object);
+#if USE_RGENGC
+	S(minor_gc_count);
+	S(major_gc_count);
+#if RGENGC_PROFILE
+	S(generated_sunny_object_count);
+	S(generated_shady_object_count);
+	S(shade_operation_count);
+	S(remembered_sunny_object_count);
+	S(remembered_shady_object_count);
+#endif /* USE_RGENGC */
+#endif /* RGENGC_PROFILE */
+#undef S
     }
 
     if (rb_scan_args(argc, argv, "01", &hash) == 1) {
-        if (!RB_TYPE_P(hash, T_HASH))
-            rb_raise(rb_eTypeError, "non-hash given");
+	if (!RB_TYPE_P(hash, T_HASH)) {
+	    rb_raise(rb_eTypeError, "non-hash given");
+	}
     }
 
     if (hash == Qnil) {
@@ -3663,6 +3693,17 @@ gc_stat(int argc, VALUE *argv, VALUE self)
     rb_hash_aset(hash, sym_heap_final_num, SIZET2NUM(objspace->heap.final_num));
     rb_hash_aset(hash, sym_total_allocated_object, SIZET2NUM(objspace->total_allocated_object_num));
     rb_hash_aset(hash, sym_total_freed_object, SIZET2NUM(objspace->total_freed_object_num));
+#if USE_RGENGC
+    rb_hash_aset(hash, sym_minor_gc_count, SIZET2NUM(objspace->profile.minor_gc_count));
+    rb_hash_aset(hash, sym_major_gc_count, SIZET2NUM(objspace->profile.major_gc_count));
+#if RGENGC_PROFILE
+    rb_hash_aset(hash, sym_generated_sunny_object_count, SIZET2NUM(objspace->profile.generated_sunny_object_count));
+    rb_hash_aset(hash, sym_generated_shady_object_count, SIZET2NUM(objspace->profile.generated_shady_object_count));
+    rb_hash_aset(hash, sym_shade_operation_count, SIZET2NUM(objspace->profile.shade_operation_count));
+    rb_hash_aset(hash, sym_remembered_sunny_object_count, SIZET2NUM(objspace->profile.remembered_sunny_object_count));
+    rb_hash_aset(hash, sym_remembered_shady_object_count, SIZET2NUM(objspace->profile.remembered_shady_object_count));
+#endif /* RGENGC_PROFILE */
+#endif /* USE_RGENGC */
 
     return hash;
 }
@@ -4393,27 +4434,36 @@ getrusage_time(void)
 #endif
 }
 
+static inline gc_profile_record *
+gc_prof_record(rb_objspace_t *objspace)
+{
+    size_t count = objspace->profile.count;
+    return &objspace->profile.record[count];
+}
+
 static inline void
 gc_prof_timer_start(rb_objspace_t *objspace)
 {
     if (objspace->profile.run) {
-        size_t count = objspace->profile.count;
+	size_t count = objspace->profile.count;
+	gc_profile_record *record;
 
-        if (!objspace->profile.record) {
-            objspace->profile.size = GC_PROFILE_RECORD_DEFAULT_SIZE;
-            objspace->profile.record = malloc(sizeof(gc_profile_record) * objspace->profile.size);
-        }
-        if (count >= objspace->profile.size) {
-            objspace->profile.size += 1000;
-            objspace->profile.record = realloc(objspace->profile.record, sizeof(gc_profile_record) * objspace->profile.size);
-        }
-        if (!objspace->profile.record) {
-            rb_bug("gc_profile malloc or realloc miss");
-        }
-        MEMZERO(&objspace->profile.record[count], gc_profile_record, 1);
-        objspace->profile.record[count].gc_time = getrusage_time();
-        objspace->profile.record[objspace->profile.count].gc_invoke_time =
-            objspace->profile.record[count].gc_time - objspace->profile.invoke_time;
+	if (!objspace->profile.record) {
+	    objspace->profile.size = GC_PROFILE_RECORD_DEFAULT_SIZE;
+	    objspace->profile.record = malloc(sizeof(gc_profile_record) * objspace->profile.size);
+	}
+	if (count >= objspace->profile.size) {
+	    objspace->profile.size += 1000;
+	    objspace->profile.record = realloc(objspace->profile.record, sizeof(gc_profile_record) * objspace->profile.size);
+	}
+	if (!objspace->profile.record) {
+	    rb_bug("gc_profile malloc or realloc miss");
+	}
+	record = gc_prof_record(objspace);
+	MEMZERO(record, gc_profile_record, 1);
+
+	record->gc_time = getrusage_time();
+	record->gc_invoke_time = record->gc_time - objspace->profile.invoke_time;
     }
 }
 
@@ -4422,8 +4472,7 @@ gc_prof_timer_stop(rb_objspace_t *objspace, int marked)
 {
     if (objspace->profile.run) {
         double gc_time = 0;
-        size_t count = objspace->profile.count;
-        gc_profile_record *record = &objspace->profile.record[count];
+	gc_profile_record *record = gc_prof_record(objspace);
 
         gc_time = getrusage_time() - record->gc_time;
         if (gc_time < 0) gc_time = 0;
@@ -4436,37 +4485,9 @@ gc_prof_timer_stop(rb_objspace_t *objspace, int marked)
 
 #if !GC_PROFILE_MORE_DETAIL
 
-#if defined(__i386__)
-
-static __inline__ unsigned long long rdtsc(void)
-{
-    unsigned long long int x;
-    __asm__ volatile (".byte 0x0f, 0x31" : "=A" (x));
-    return x;
-}
-
-#elif defined(__x86_64__)
-
-static __inline__ unsigned long long rdtsc(void)
-{
-    unsigned hi, lo;
-    __asm__ __volatile__ ("rdtsc" : "=a"(lo), "=d"(hi));
-    return ( (unsigned long long)lo)|( ((unsigned long long)hi)<<32 );
-}
-
-#endif
-
-#define clock rdtsc
-#define clock_t unsigned long long
-
-static clock_t mark_start_time;
-static clock_t sweep_all_time, sweep_start_time;
-
 static inline void
 gc_prof_mark_timer_start(rb_objspace_t *objspace)
 {
-    if (RGENGC_SIMPLEBENCH) mark_start_time = clock();
-
     if (RUBY_DTRACE_GC_MARK_BEGIN_ENABLED()) {
 	RUBY_DTRACE_GC_MARK_BEGIN();
     }
@@ -4475,10 +4496,6 @@ gc_prof_mark_timer_start(rb_objspace_t *objspace)
 static inline void
 gc_prof_mark_timer_stop(rb_objspace_t *objspace)
 {
-    if (RGENGC_SIMPLEBENCH) fprintf(stderr, "%s|mark time : %12lld (clock)\n",
-				    objspace->rgengc.during_minor_gc ? "-" : "+",
-				    clock() - mark_start_time);
-
     if (RUBY_DTRACE_GC_MARK_END_ENABLED()) {
 	RUBY_DTRACE_GC_MARK_END();
     }
@@ -4487,8 +4504,6 @@ gc_prof_mark_timer_stop(rb_objspace_t *objspace)
 static inline void
 gc_prof_sweep_slot_timer_start(rb_objspace_t *objspace)
 {
-    if (RGENGC_SIMPLEBENCH) sweep_start_time = clock();
-
     if (RUBY_DTRACE_GC_SWEEP_BEGIN_ENABLED()) {
 	RUBY_DTRACE_GC_SWEEP_BEGIN();
     }
@@ -4497,26 +4512,9 @@ gc_prof_sweep_slot_timer_start(rb_objspace_t *objspace)
 static inline void
 gc_prof_sweep_slot_timer_stop(rb_objspace_t *objspace)
 {
-    if (RGENGC_SIMPLEBENCH) sweep_all_time += clock() - sweep_start_time;
-
     if (RUBY_DTRACE_GC_SWEEP_END_ENABLED()) {
 	RUBY_DTRACE_GC_SWEEP_END();
     }
-}
-
-static inline void
-gc_prof_sweep_all_timer_start(rb_objspace_t *objspace)
-{
-    if (RGENGC_SIMPLEBENCH) sweep_all_time = 0;
-}
-
-static inline void
-gc_prof_sweep_all_timer_stop(rb_objspace_t *objspace)
-{
-    if (RGENGC_SIMPLEBENCH) fprintf(stderr, "%s|sweep time: %12lld (clock)\n",
-				    objspace->rgengc.during_minor_gc ? "-" : "+",
-				    sweep_all_time);
-
 }
 
 static inline void
@@ -4535,7 +4533,7 @@ gc_prof_set_heap_info(rb_objspace_t *objspace, gc_profile_record *record)
     record->heap_total_size = total * sizeof(RVALUE);
 }
 
-#else
+#else /* !GC_PROFILE_MORE_DETAIL */
 
 static inline void
 gc_prof_mark_timer_start(rb_objspace_t *objspace)
@@ -4544,9 +4542,7 @@ gc_prof_mark_timer_start(rb_objspace_t *objspace)
 	RUBY_DTRACE_GC_MARK_BEGIN();
     }
     if (objspace->profile.run) {
-        size_t count = objspace->profile.count;
-
-        objspace->profile.record[count].gc_mark_time = getrusage_time();
+	gc_prof_record(objspace)->gc_mark_time = getrusage_time();
     }
 }
 
@@ -4558,31 +4554,12 @@ gc_prof_mark_timer_stop(rb_objspace_t *objspace)
     }
     if (objspace->profile.run) {
         double mark_time = 0;
-        size_t count = objspace->profile.count;
-        gc_profile_record *record = &objspace->profile.record[count];
+        gc_profile_record *record = gc_prof_record(objspace);
 
-        mark_time = getrusage_time() - record->gc_mark_time;
+	mark_time = getrusage_time() - record->gc_mark_time;
         if (mark_time < 0) mark_time = 0;
-        record->gc_mark_time = mark_time;
+	record->gc_mark_time = mark_time;
     }
-}
-
-static inline void
-gc_prof_sweep_all_timer_start(rb_objspace_t *objspace)
-{
-    
-}
-
-static inline void
-gc_prof_sweep_all_timer_start(rb_objspace_t *objspace)
-{
-    
-}
-
-static inline void
-gc_prof_sweep_all_timer_stop(rb_objspace_t *objspace)
-{
-
 }
 
 static inline void
@@ -4592,9 +4569,7 @@ gc_prof_sweep_slot_timer_start(rb_objspace_t *objspace)
 	RUBY_DTRACE_GC_SWEEP_BEGIN();
     }
     if (objspace->profile.run) {
-        size_t count = objspace->profile.count;
-
-        objspace->profile.record[count].gc_sweep_time = getrusage_time();
+	objspace->profile.gc_sweep_start_time = getrusage_time();
     }
 }
 
@@ -4606,12 +4581,11 @@ gc_prof_sweep_slot_timer_stop(rb_objspace_t *objspace)
     }
     if (objspace->profile.run) {
         double sweep_time = 0;
-        size_t count = objspace->profile.count;
-        gc_profile_record *record = &objspace->profile.record[count];
+        gc_profile_record *record = gc_prof_record(objspace);
 
-        sweep_time = getrusage_time() - record->gc_sweep_time;\
-        if (sweep_time < 0) sweep_time = 0;\
-        record->gc_sweep_time = sweep_time;
+        sweep_time = getrusage_time() - objspace->profile.gc_sweep_start_time;
+	if (sweep_time < 0) sweep_time = 0;
+	record->gc_sweep_time = sweep_time;
     }
 }
 
@@ -4619,18 +4593,16 @@ static inline void
 gc_prof_set_malloc_info(rb_objspace_t *objspace)
 {
     if (objspace->profile.run) {
-        gc_profile_record *record = &objspace->profile.record[objspace->profile.count];
-        if (record) {
-            record->allocate_increase = malloc_increase;
-            record->allocate_limit = malloc_limit;
-        }
+        gc_profile_record *record = gc_prof_record(objspace);
+	record->allocate_increase = malloc_increase;
+	record->allocate_limit = malloc_limit;
     }
 }
 
 static inline void
 gc_prof_set_heap_info(rb_objspace_t *objspace, gc_profile_record *record)
 {
-    size_t live = objspace->heap.live_num;
+    size_t live = objspace_live_num(objspace);
     size_t total = heaps_used * HEAP_OBJ_LIMIT;
 
     record->heap_use_slots = heaps_used;
@@ -5137,10 +5109,10 @@ rgengc_remember(rb_objspace_t *objspace, VALUE obj)
 		  RVALUE_SUNNY(obj) ? "sunny" : "shady",
 		  rgengc_remembersetbits_get(objspace, obj) ? "was already remembered" : "is remembered now");
 
-    if (RGENGC_SIMPLEBENCH) {
+    if (RGENGC_PROFILE) {
 	if (!rgengc_remembered(objspace, obj)) {
-	    if (RVALUE_SUNNY(obj)) objspace->rgengc.remembered_sunny_object_count++;
-	    else                   objspace->rgengc.remembered_shady_object_count++;
+	    if (RVALUE_SUNNY(obj)) objspace->profile.remembered_sunny_object_count++;
+	    else                   objspace->profile.remembered_shady_object_count++;
 	}
     }
 
@@ -5206,20 +5178,6 @@ rgengc_rememberset_clear(rb_objspace_t *objspace)
     }
 }
 
-static void
-rgengc_profile_report(rb_objspace_t *objspace)
-{
-    if (RGENGC_SIMPLEBENCH) {
-	fprintf(stderr, "Total minor GC count         : %8"PRIdSIZE"\n", objspace->rgengc.minor_gc_count);
-	fprintf(stderr, "Total major GC count         : %8"PRIdSIZE"\n", objspace->rgengc.major_gc_count);
-	fprintf(stderr, "Generated sunny object count : %8"PRIdSIZE"\n", objspace->rgengc.generated_sunny_object_count);
-	fprintf(stderr, "Generated shady object count : %8"PRIdSIZE"\n", objspace->rgengc.generated_shady_object_count);
-	fprintf(stderr, "Shade operation count        : %8"PRIdSIZE"\n", objspace->rgengc.shade_operation_count);
-	fprintf(stderr, "Remembered sunny object count: %8"PRIdSIZE"\n", objspace->rgengc.remembered_sunny_object_count);
-	fprintf(stderr, "Remembered shady object count: %8"PRIdSIZE"\n", objspace->rgengc.remembered_shady_object_count);
-    }
-}
-
 /* RGENGC: APIs */
 
 void
@@ -5271,7 +5229,9 @@ rb_gc_giveup_promoted_writebarrier(VALUE obj)
     RVALUE_DEMOTE(obj);
     rgengc_remember(objspace, obj);
 
-    objspace->rgengc.shade_operation_count++;
+#if RGENGC_PROFILE
+    objspace->profile.shade_operation_count++;
+#endif
 }
 
 #endif
