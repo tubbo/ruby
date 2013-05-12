@@ -118,7 +118,7 @@ static ruby_gc_params_t initial_params = {
 #endif
 
 #ifndef RGENGC_PROFILE
-#define RGENGC_PROFILE     0
+#define RGENGC_PROFILE     1
 #endif
 
 #else /* USE_RGENGC */

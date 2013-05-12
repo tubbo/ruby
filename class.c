@@ -49,7 +49,7 @@ extern st_table *rb_class_tbl;
 static VALUE
 class_alloc(VALUE flags, VALUE klass)
 {
-    NEWOBJ_OF(obj, struct RClass, klass, flags /* | FL_KEEP_WB TODO: WB */);
+    NEWOBJ_OF(obj, struct RClass, klass, flags);
     obj->ptr = ALLOC(rb_classext_t);
     RCLASS_IV_TBL(obj) = 0;
     RCLASS_CONST_TBL(obj) = 0;
