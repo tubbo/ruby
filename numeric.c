@@ -637,7 +637,7 @@ num_to_int(VALUE num)
 VALUE
 rb_float_new_in_heap(double d)
 {
-    NEWOBJ_OF(flt, struct RFloat, rb_cFloat, T_FLOAT);
+    NEWOBJ_OF(flt, struct RFloat, rb_cFloat, T_FLOAT | (RGENGC_SUNNY_FLOAT ? FL_KEEP_WB : 0));
 
     flt->float_value = d;
     OBJ_FREEZE(flt);

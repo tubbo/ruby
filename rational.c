@@ -368,10 +368,10 @@ f_lcm(VALUE x, VALUE y)
 inline static VALUE
 nurat_s_new_internal(VALUE klass, VALUE num, VALUE den)
 {
-    NEWOBJ_OF(obj, struct RRational, klass, T_RATIONAL);
+    NEWOBJ_OF(obj, struct RRational, klass, T_RATIONAL | (RGENGC_SUNNY_RATIONAL ? FL_KEEP_WB : 0));
 
-    obj->num = num;
-    obj->den = den;
+    RRATIONAL_SET_NUM(obj, num);
+    RRATIONAL_SET_DEN(obj, den);
 
     return (VALUE)obj;
 }
@@ -1638,8 +1638,8 @@ nurat_loader(VALUE self, VALUE a)
 {
     get_dat1(self);
 
-    dat->num = rb_ivar_get(a, id_i_num);
-    dat->den = rb_ivar_get(a, id_i_den);
+    RRATIONAL_SET_NUM(dat, rb_ivar_get(a, id_i_num));
+    RRATIONAL_SET_DEN(dat, rb_ivar_get(a, id_i_den));
 
     return self;
 }

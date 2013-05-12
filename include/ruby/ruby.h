@@ -951,15 +951,21 @@ struct RFile {
 
 struct RRational {
     struct RBasic basic;
-    VALUE num;
-    VALUE den;
+    const VALUE num;
+    const VALUE den;
 };
+
+#define RRATIONAL_SET_NUM(rat, n) OBJ_WRITE((rat), ((VALUE *)(&((struct RRational *)(rat))->num)),(n))
+#define RRATIONAL_SET_DEN(rat, d) OBJ_WRITE((rat), ((VALUE *)(&((struct RRational *)(rat))->den)),(d))
 
 struct RComplex {
     struct RBasic basic;
-    VALUE real;
-    VALUE imag;
+    const VALUE real;
+    const VALUE imag;
 };
+
+#define RCOMPLEX_SET_REAL(cmp, r) OBJ_WRITE((cmp), ((VALUE *)(&((struct RComplex *)(cmp))->real)),(r))
+#define RCOMPLEX_SET_IMAG(cmp, i) OBJ_WRITE((cmp), ((VALUE *)(&((struct RComplex *)(cmp))->imag)),(i))
 
 struct RData {
     struct RBasic basic;
@@ -1190,6 +1196,15 @@ struct RBignum {
 #ifndef RGENGC_SUNNY_OBJECT
 #define RGENGC_SUNNY_OBJECT 1
 #endif
+#ifndef RGENGC_SUNNY_FLOAT
+#define RGENGC_SUNNY_FLOAT 1
+#endif
+#ifndef RGENGC_SUNNY_COMPLEX
+#define RGENGC_SUNNY_COMPLEX 1
+#endif
+#ifndef RGENGC_SUNNY_RATIONAL
+#define RGENGC_SUNNY_RATIONAL 1
+#endif
 
 #if USE_RGENGC
 #define OBJ_PROMOTED(x)             (SPECIAL_CONST_P(x) ? 0 : FL_TEST_RAW((x), FL_OLDGEN))
@@ -1207,8 +1222,8 @@ void rb_gc_giveup_promoted_writebarrier(VALUE obj);
 #define OBJ_SHADE(x)                OBJ_WB_GIVEUP(x) /* RGENGC terminology */
 #endif
 
-#define OBJ_WRITE(a, slot, b)       rb_obj_write((a), (slot), (b), __FILE__, __LINE__)
-#define OBJ_CONNECT(a, oldv, b)     rb_obj_connect((a), (oldv), (b), __FILE__, __LINE__)
+#define OBJ_WRITE(a, slot, b)       rb_obj_write((VALUE)(a), (slot), (VALUE)(b), __FILE__, __LINE__)
+#define OBJ_CONNECT(a, oldv, b)     rb_obj_connect((VALUE)(a), (VALUE)(oldv), (VALUE)(b), __FILE__, __LINE__)
 
 static inline VALUE
 rb_obj_wb_giveup(VALUE x, const char *filename, int line)
