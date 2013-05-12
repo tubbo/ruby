@@ -313,7 +313,7 @@ k_complex_p(VALUE x)
 inline static VALUE
 nucomp_s_new_internal(VALUE klass, VALUE real, VALUE imag)
 {
-    NEWOBJ_OF(obj, struct RComplex, klass, T_COMPLEX);
+    NEWOBJ_OF(obj, struct RComplex, klass, T_COMPLEX | (RGENGC_SUNNY_COMPLEX ? FL_KEEP_WB : 0));
 
     RCOMPLEX_SET_REAL(obj, real);
     RCOMPLEX_SET_IMAG(obj, imag);

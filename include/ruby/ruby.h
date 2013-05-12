@@ -1205,6 +1205,9 @@ struct RBignum {
 #ifndef RGENGC_SUNNY_RATIONAL
 #define RGENGC_SUNNY_RATIONAL 1
 #endif
+#ifndef RGENGC_SUNNY_BIGNUM
+#define RGENGC_SUNNY_BIGNUM 1
+#endif
 
 #if USE_RGENGC
 #define OBJ_PROMOTED(x)             (SPECIAL_CONST_P(x) ? 0 : FL_TEST_RAW((x), FL_OLDGEN))
