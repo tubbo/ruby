@@ -2032,6 +2032,7 @@ objspace_live_num(rb_objspace_t *objspace)
 static inline int
 living_object_p(rb_objspace_t *objspace, VALUE p, uintptr_t *bits, int during_minor_gc)
 {
+#if USE_RGENGC
     int reason = 0;
 
     if (during_minor_gc) {
@@ -2049,17 +2050,18 @@ living_object_p(rb_objspace_t *objspace, VALUE p, uintptr_t *bits, int during_mi
     }
 
     if (RGENGC_DEBUG && reason > 0) {
-	rgengc_report(5, objspace, "living_object_p: %p (%s) is living (%s).\n", (void *)p, obj_type_name(p),
-		      reason == 1 ? "marked" : "promoted");
+	rgengc_report(5, objspace, "living_object_p: %p (%s) is living (%s).\n",
+		      (void *)p, obj_type_name(p), reason == 1 ? "marked" : "promoted");
     }
 
-#if USE_RGENGC
     if (RGENGC_CHECK_MODE && reason == 0 && rgengc_remembered(objspace, p)) {
 	rb_bug("living_object_p: %p (%s) is remembered, but not marked.\n", (void *)p, obj_type_name(p));
     }
-#endif
 
     return reason != 0;
+#else /* USE_RGENGC */
+    return MARKED_IN_BITMAP(bits, p) != 0;
+#endif
 }
 
 static void
@@ -2934,40 +2936,42 @@ gc_mark_children(rb_objspace_t *objspace, VALUE ptr)
 	return;
     }
 
-    if (USE_RGENGC && RGENGC_CHECK_MODE && RVALUE_SHADY(obj) && RVALUE_PROMOTED(obj)) {
+#if USE_RGENGC
+    if (RGENGC_CHECK_MODE && RVALUE_SHADY(obj) && RVALUE_PROMOTED(obj)) {
 	rb_bug("gc_mark_children: (0) %p (%s) is shady and promoted.\n", (void *)obj, obj_type_name((VALUE)obj));
     }
+#endif /* USE_RGENGC */
 
   marking:
 
-    if (USE_RGENGC) {
-	if (RGENGC_CHECK_MODE && RVALUE_SHADY(obj) && RVALUE_PROMOTED(obj)) {
-	    rb_bug("gc_mark_children: (1) %p (%s) is shady and promoted.\n", (void *)obj, obj_type_name((VALUE)obj));
-	}
+#if USE_RGENGC
+    if (RGENGC_CHECK_MODE && RVALUE_SHADY(obj) && RVALUE_PROMOTED(obj)) {
+	rb_bug("gc_mark_children: (1) %p (%s) is shady and promoted.\n", (void *)obj, obj_type_name((VALUE)obj));
+    }
 
-	if (objspace->rgengc.during_minor_gc) {
-	    /* only minor gc skip marking promoted objects */
-	    if (RVALUE_PROMOTED(obj)) {
-		rgengc_report(3, objspace, "gc_mark_children: %p (%s) was promoted.\n", obj, obj_type_name((VALUE)obj));
-		return; /* old gen */
-	    }
-	}
-
-	/* minor/major common */
-	if (RVALUE_SUNNY(obj)) {
-	    RVALUE_PROMOTE(obj); /* Sunny object can be promoted to OLDGEN object */
-	    rgengc_report(3, objspace, "gc_mark_children: promote %p (%s).\n", (void *)obj, obj_type_name((VALUE)obj));
-	    objspace->rgengc.parent_object_is_promoted = TRUE;
-	}
-	else {
-	    rgengc_report(3, objspace, "gc_mark_children: do not promote shady %p (%s).\n", (void *)obj, obj_type_name((VALUE)obj));
-	    objspace->rgengc.parent_object_is_promoted = FALSE;
-	}
-
-	if (RGENGC_CHECK_MODE && RVALUE_SHADY(obj) && RVALUE_PROMOTED(obj)) {
-	    rb_bug("gc_mark_children: (2) %p (%s) is shady and promoted.\n", (void *)obj, obj_type_name((VALUE)obj));
+    if (objspace->rgengc.during_minor_gc) {
+	/* only minor gc skip marking promoted objects */
+	if (RVALUE_PROMOTED(obj)) {
+	    rgengc_report(3, objspace, "gc_mark_children: %p (%s) was promoted.\n", obj, obj_type_name((VALUE)obj));
+	    return; /* old gen */
 	}
     }
+
+    /* minor/major common */
+    if (RVALUE_SUNNY(obj)) {
+	RVALUE_PROMOTE(obj); /* Sunny object can be promoted to OLDGEN object */
+	rgengc_report(3, objspace, "gc_mark_children: promote %p (%s).\n", (void *)obj, obj_type_name((VALUE)obj));
+	objspace->rgengc.parent_object_is_promoted = TRUE;
+    }
+    else {
+	rgengc_report(3, objspace, "gc_mark_children: do not promote shady %p (%s).\n", (void *)obj, obj_type_name((VALUE)obj));
+	objspace->rgengc.parent_object_is_promoted = FALSE;
+    }
+
+    if (RGENGC_CHECK_MODE && RVALUE_SHADY(obj) && RVALUE_PROMOTED(obj)) {
+	rb_bug("gc_mark_children: (2) %p (%s) is shady and promoted.\n", (void *)obj, obj_type_name((VALUE)obj));
+    }
+#endif /* USE_RGENGC */
 
     if (FL_TEST(obj, FL_EXIVAR)) {
 	rb_mark_generic_ivar(ptr);
