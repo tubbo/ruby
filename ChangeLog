@@ -1,3 +1,153 @@
+Sun May 12 21:12:42 2013  Nobuyoshi Nakada  <nobu@ruby-lang.org>
+
+	* include/ruby/ruby.h (OFFT2NUM): RUBY_REPLACE_TYPE also defines macro
+	  to convert int type to VALUE if found.
+
+Wed May  8 13:46:52 2013  KOSAKI Motohiro  <kosaki.motohiro@gmail.com>
+
+	* include/ruby/intern.h (rb_iv_set, rb_iv_get): removed. Because
+	  ruby.h has a declaration for that.
+
+Wed May  8 13:49:06 2013  KOSAKI Motohiro  <kosaki.motohiro@gmail.com>
+
+	* include/ruby/intern.h (rb_uint2big, rb_int2big, rb_uint2inum)
+	(rb_int2inum, rb_ll2inum, rb_ull2inum): removed because ruby.h
+	  has a declaration for these.
+
+Sun May 12 17:52:23 2013  KOSAKI Motohiro  <kosaki.motohiro@gmail.com>
+
+	* configure.in: removes 'ac_cv_func_fseeko=yes' form MinGW
+	  specific definitions.
+
+Sun May 12 17:25:46 2013  KOSAKI Motohiro  <kosaki.motohiro@gmail.com>
+
+	* configure.in: removes AC_CHECK_FUNCS(truncate64) because it's
+	  unused.
+	* file.c (rb_file_s_truncate): use correct type. chsize takes
+	  a long.
+
+Sun May 12 17:18:46 2013  KOSAKI Motohiro  <kosaki.motohiro@gmail.com>
+
+	* process.c: move '#define HAVE_SPAWNV 1' to win32/Makefile.sub.
+	* win32/Makefile.sub: see above.
+
+Sun May 12 17:13:32 2013  KOSAKI Motohiro  <kosaki.motohiro@gmail.com>
+
+	* configure.in: removes AC_CHECK_FUNCS(setitimer) because it's
+	  unused.
+
+Sun May 12 17:08:16 2013  KOSAKI Motohiro  <kosaki.motohiro@gmail.com>
+
+	* configure.in: removes AC_CHECK_FUNCS(pause) because it's unused.
+
+Sun May 12 17:05:18 2013  KOSAKI Motohiro  <kosaki.motohiro@gmail.com>
+
+	* signal.c (rb_f_kill): fixes typo. s/HAS_KILLPG/HAVE_KILLPG/.
+
+Sun May 12 17:03:27 2013  KOSAKI Motohiro  <kosaki.motohiro@gmail.com>
+
+	* configure.in: abort if gettimeofday doesn't exist.
+
+Sun May 12 16:31:27 2013  KOSAKI Motohiro  <kosaki.motohiro@gmail.com>
+
+	* configure.in: adds RUBY_REPLACE_TYPE(off_t) for creating
+	  NUM2OFFT.
+	* file.c (rb_file_truncate): use correct type. chsize() take
+	  a long.
+	* include/ruby/ruby.h (NUM2OFFT): use a definition created by
+	  a configure script by default.
+
+Sun May 12 16:03:41 2013  KOSAKI Motohiro  <kosaki.motohiro@gmail.com>
+
+	* configure.in: removes AC_CHECK_FUNC(fseeko, fseeko64, ftello,
+	  ftello64). They are not used from anywhere.
+
+	* win32/win32.c (fseeko): removes.
+	* win32/win32.c (rb_w32_ftello): removes.
+	* include/ruby/win32.h: removes declarations of rb_w32_ftello and
+	  rb_w32_fseeko.
+	* win32/Makefile.sub: removes '#define HAVE_FTELLO 1'.
+
+Sun May 12 15:51:47 2013  KOSAKI Motohiro  <kosaki.motohiro@gmail.com>
+
+	* configure.in: remove AC_CHECK_FUNC(close). It is not used from
+	  anywhere.
+
+Sun May 12 15:50:45 2013  KOSAKI Motohiro  <kosaki.motohiro@gmail.com>
+
+	* configure.in: adds comments for setjmp check.
+
+Sun May 12 15:38:09 2013  KOSAKI Motohiro  <kosaki.motohiro@gmail.com>
+
+	* configure.in: move clock_gettime() check into regular place.
+
+Wed May  8 13:45:53 2013  KOSAKI Motohiro  <kosaki.motohiro@gmail.com>
+
+	* configure.in: add getenv() declaration check.
+	* dln_find.c: add HAVE_DECL_GETENV test.
+
+Sun May 12 15:33:18 2013  KOSAKI Motohiro  <kosaki.motohiro@gmail.com>
+
+	* configure.in: sorts AC_CHECK_FUNCS()s as alphabetical order.
+
+Wed May  8 13:41:57 2013  KOSAKI Motohiro  <kosaki.motohiro@gmail.com>
+
+	* bignum.c: remove redundant decl for big_lshift() big_rshift().
+
+Sun May 12 16:06:43 2013  NARUSE, Yui  <naruse@ruby-lang.org>
+
+	* ext/socket/rubysocket.h (rsock_inspect_sockaddr): as r40646
+	  check HAVE_TYPE_STRUCT_SOCKADDR_DL.
+
+Sat May 11 23:01:58 2013  NARUSE, Yui  <naruse@ruby-lang.org>
+
+	* ext/socket/rubysocket.h (HAVE_TYPE_STRUCT_SOCKADDR_DL):
+	  MSVC has struct sockaddr_dl, but its content is broken.
+	  http://ruby-mswin.cloudapp.net/vc10-x64/ruby-trunk/log/20130511T103938Z.log.html.gz
+
+Sat May 11 22:07:42 2013  Tanaka Akira  <akr@fsij.org>
+
+	* test/rinda/test_rinda.rb: Socket.getifaddrs may returns an interface
+	  which #addr method returns nil for venet0 in OpenVZ.
+
+Sat May 11 21:56:34 2013  Tanaka Akira  <akr@fsij.org>
+
+	* ext/socket/raddrinfo.c (rsock_inspect_sockaddr): Add casts to
+	  suppress warnings.
+
+Sat May 11 17:28:51 2013  Tanaka Akira  <akr@fsij.org>
+
+	* ext/socket: New method, Socket.getifaddrs, implemented.
+	  [ruby-core:54777] [Feature #8368]
+
+Sat May 11 00:47:22 2013  Tanaka Akira  <akr@fsij.org>
+
+	* gc.h (SET_MACHINE_STACK_END): Add !defined(_ILP32) to a defining
+	  condition to avoid compilation error on x32.
+	  https://sites.google.com/site/x32abi/
+
+Fri May 10 23:56:34 2013  Nobuyoshi Nakada  <nobu@ruby-lang.org>
+
+	* parse.y (parser_peek_variable_name): treat invalid global, class,
+	  and instance variable names as mere strings rather than errors.
+	  [ruby-core:54885] [Bug #8375]
+
+Fri May 10 20:22:40 2013  Tanaka Akira  <akr@fsij.org>
+
+	* configure.in: Move library checks into "Checks for libraries." part.
+
+Fri May 10 19:32:01 2013  Tanaka Akira  <akr@fsij.org>
+
+	* configure.in: Reformat arguments of AC_CHECK_HEADERS and
+	  AC_CHECK_FUNCS to track modifications easily.
+
+Fri May 10 12:01:36 2013  Tanaka Akira  <akr@fsij.org>
+
+	* configure.in: Don't link librt if clock_gettime is available in
+	  the main C library.
+	  glibc 2.17 moves clock_* from librt to the main C library.
+	  http://sourceware.org/ml/libc-announce/2012/msg00001.html
+
 Thu May  9 22:00:35 2013  Tanaka Akira  <akr@fsij.org>
 
 	* ext/socket/ancdata.c (bsock_sendmsg_internal): controls_num should
