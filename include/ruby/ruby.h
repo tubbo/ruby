@@ -1203,8 +1203,8 @@ void rb_gc_giveup_promoted_writebarrier(VALUE obj);
 static inline VALUE
 rb_obj_wb_giveup(VALUE x, const char *filename, int line)
 {
-#ifdef LOG_WB_GIVEUP
-    LOG_WB_GIVEUP(x, filename, line);
+#ifdef RGENGC_LOGGING_WB_GIVEUP
+    RGENGC_LOGGING_WB_GIVEUP(x, filename, line);
 #endif
 
 #if USE_RGENGC
@@ -1223,8 +1223,8 @@ rb_obj_wb_giveup(VALUE x, const char *filename, int line)
 static inline VALUE
 rb_obj_connect(VALUE a, VALUE oldv, VALUE b, const char *filename, int line)
 {
-#ifdef LOG_WB_RELATION
-    LOG_OBJ_CONNECT(a, oldv, b, filename, line);
+#ifdef RGENGC_LOGGING_OBJ_CONNECT
+    RGENGC_LOGGING_OBJ_CONNECT(a, oldv, b, filename, line);
 #endif
 
 #if USE_RGENGC
@@ -1241,8 +1241,8 @@ rb_obj_connect(VALUE a, VALUE oldv, VALUE b, const char *filename, int line)
 static inline VALUE
 rb_obj_write(VALUE a, VALUE *slot, VALUE b, const char *filename, int line)
 {
-#ifdef LOG_WB
-    LOG_OBJ_WRITE(a, slot, b, filename, line);
+#ifdef RGENGC_LOGGING_WRIET
+    RGENGC_LOGGING_WRIET(a, slot, b, filename, line);
 #endif
 
     *slot = b;
