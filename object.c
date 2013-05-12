@@ -1800,7 +1800,7 @@ rb_obj_alloc(VALUE klass)
 static VALUE
 rb_class_allocate_instance(VALUE klass)
 {
-    NEWOBJ_OF(obj, struct RObject, klass, T_OBJECT);
+    NEWOBJ_OF(obj, struct RObject, klass, T_OBJECT | (RGENGC_SUNNY_OBJECT ? FL_KEEP_WB : 0));
     return (VALUE)obj;
 }
 

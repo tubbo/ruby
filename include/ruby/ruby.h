@@ -918,7 +918,7 @@ struct RArray {
     OBJ_WRITE(_ary_, &RARRAY_RAWPTR(_ary_)[i], (v)); \
 } while (0)
 
-#define RARRAY_PTR(a) RARRAY_RAWPTR(RGENGC_SUNNY_ARRAY ? OBJ_WB_GIVEUP((VALUE)a) : (a))
+#define RARRAY_PTR(a) RARRAY_RAWPTR(RGENGC_SUNNY_ARRAY ? OBJ_WB_GIVEUP((VALUE)a) : ((VALUE)a))
 
 struct RRegexp {
     struct RBasic basic;
@@ -1182,10 +1182,13 @@ struct RBignum {
 #endif
 
 #ifndef RGENGC_SUNNY_ARRAY
-#define RGENGC_SUNNY_ARRAY 0
+#define RGENGC_SUNNY_ARRAY 1
 #endif
 #ifndef RGENGC_SUNNY_STRING
-#define RGENGC_SUNNY_STRING 0
+#define RGENGC_SUNNY_STRING 1
+#endif
+#ifndef RGENGC_SUNNY_OBJECT
+#define RGENGC_SUNNY_OBJECT 1
 #endif
 
 #if USE_RGENGC
