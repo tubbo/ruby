@@ -4870,7 +4870,7 @@ gc_profile_record_get(void)
 	return Qnil;
     }
 
-    for (i =0; i < objspace->profile.next_index - 1; i++) {
+    for (i =0; i < objspace->profile.next_index; i++) {
 	prof = rb_hash_new();
         rb_hash_aset(prof, ID2SYM(rb_intern("GC_TIME")), DBL2NUM(objspace->profile.record[i].gc_time));
         rb_hash_aset(prof, ID2SYM(rb_intern("GC_INVOKE_TIME")), DBL2NUM(objspace->profile.record[i].gc_invoke_time));
