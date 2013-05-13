@@ -916,7 +916,7 @@ struct RArray {
     OBJ_WRITE(_ary_, &RARRAY_RAWPTR(_ary_)[i], (v)); \
 } while (0)
 
-#define RARRAY_PTR(a) RARRAY_RAWPTR(RGENGC_SUNNY_ARRAY ? OBJ_WB_GIVEUP((VALUE)a) : ((VALUE)a))
+#define RARRAY_PTR(a) RARRAY_RAWPTR(RGENGC_WB_PROTECTED_ARRAY ? OBJ_WB_GIVEUP((VALUE)a) : ((VALUE)a))
 
 struct RRegexp {
     struct RBasic basic;
@@ -1126,7 +1126,7 @@ struct RBignum {
 #define RCOMPLEX(obj) (R_CAST(RComplex)(obj))
 
 #define FL_SINGLETON FL_USER0
-#define FL_KEEP_WB   (((VALUE)1)<<5)
+#define FL_WB_PROTECTED (((VALUE)1)<<5)
 #define FL_OLDGEN    (((VALUE)1)<<6)
 #define FL_FINALIZE  (((VALUE)1)<<7)
 #define FL_TAINT     (((VALUE)1)<<8)
@@ -1185,33 +1185,32 @@ struct RBignum {
 #define USE_RGENGC 1
 #endif
 
-#ifndef RGENGC_SUNNY_ARRAY
-#define RGENGC_SUNNY_ARRAY 1
+#ifndef RGENGC_WB_PROTECTED_ARRAY
+#define RGENGC_WB_PROTECTED_ARRAY 1
 #endif
-#ifndef RGENGC_SUNNY_STRING
-#define RGENGC_SUNNY_STRING 1
+#ifndef RGENGC_WB_PROTECTED_STRING
+#define RGENGC_WB_PROTECTED_STRING 1
 #endif
-#ifndef RGENGC_SUNNY_OBJECT
-#define RGENGC_SUNNY_OBJECT 1
+#ifndef RGENGC_WB_PROTECTED_OBJECT
+#define RGENGC_WB_PROTECTED_OBJECT 1
 #endif
-#ifndef RGENGC_SUNNY_FLOAT
-#define RGENGC_SUNNY_FLOAT 1
+#ifndef RGENGC_WB_PROTECTED_FLOAT
+#define RGENGC_WB_PROTECTED_FLOAT 1
 #endif
-#ifndef RGENGC_SUNNY_COMPLEX
-#define RGENGC_SUNNY_COMPLEX 1
+#ifndef RGENGC_WB_PROTECTED_COMPLEX
+#define RGENGC_WB_PROTECTED_COMPLEX 1
 #endif
-#ifndef RGENGC_SUNNY_RATIONAL
-#define RGENGC_SUNNY_RATIONAL 1
+#ifndef RGENGC_WB_PROTECTED_RATIONAL
+#define RGENGC_WB_PROTECTED_RATIONAL 1
 #endif
-#ifndef RGENGC_SUNNY_BIGNUM
-#define RGENGC_SUNNY_BIGNUM 1
+#ifndef RGENGC_WB_PROTECTED_BIGNUM
+#define RGENGC_WB_PROTECTED_BIGNUM 1
 #endif
 
 #if USE_RGENGC
 #define OBJ_PROMOTED(x)             (SPECIAL_CONST_P(x) ? 0 : FL_TEST_RAW((x), FL_OLDGEN))
-#define OBJ_WB_PROTECTED(x)         (SPECIAL_CONST_P(x) ? 1 : FL_TEST_RAW((x), FL_KEEP_WB))
+#define OBJ_WB_PROTECTED(x)         (SPECIAL_CONST_P(x) ? 1 : FL_TEST_RAW((x), FL_WB_PROTECTED))
 #define OBJ_WB_GIVEUP(x)            rb_obj_wb_giveup(x, __FILE__, __LINE__)
-#define OBJ_SHADE(x)                OBJ_WB_GIVEUP(x) /* RGENGC terminology */
 
 void rb_gc_writebarrier(VALUE a, VALUE b);
 void rb_gc_giveup_promoted_writebarrier(VALUE obj);
@@ -1235,8 +1234,8 @@ rb_obj_wb_giveup(VALUE x, const char *filename, int line)
 
 #if USE_RGENGC
     /* `x' should be an RVALUE object */
-    if (FL_TEST_RAW((x), FL_KEEP_WB)) {
-	RBASIC(x)->flags &= ~FL_KEEP_WB;
+    if (FL_TEST_RAW((x), FL_WB_PROTECTED)) {
+	RBASIC(x)->flags &= ~FL_WB_PROTECTED;
 
 	if (FL_TEST_RAW((x), FL_OLDGEN)) {
 	    rb_gc_giveup_promoted_writebarrier(x);

@@ -444,7 +444,7 @@ static size_t rgengc_rememberset_mark(rb_objspace_t *objspace);
 #define FL_SET2(x,f)          do {if (RGENGC_CHECK_MODE && SPECIAL_CONST_P(x)) rb_bug("FL_SET2: SPECIAL_CONST");   RBASIC(x)->flags |= (f);} while (0)
 #define FL_UNSET2(x,f)        do {if (RGENGC_CHECK_MODE && SPECIAL_CONST_P(x)) rb_bug("FL_UNSET2: SPECIAL_CONST"); RBASIC(x)->flags &= ~(f);} while (0)
 
-#define RVALUE_SUNNY(x)       FL_TEST2((x), FL_KEEP_WB)
+#define RVALUE_SUNNY(x)       FL_TEST2((x), FL_WB_PROTECTED)
 #define RVALUE_SHADY(x)       (!RVALUE_SUNNY(x))
 #define RVALUE_PROMOTED(x)    FL_TEST2((x), FL_OLDGEN)
 
@@ -801,7 +801,7 @@ newobj(VALUE klass, VALUE flags)
     }
 
 #if RGENGC_PROFILE
-    if (flags & FL_KEEP_WB) objspace->profile.generated_sunny_object_count++;
+    if (flags & FL_WB_PROTECTED) objspace->profile.generated_sunny_object_count++;
     else                    objspace->profile.generated_shady_object_count++;
 #endif
 

@@ -372,7 +372,7 @@ rb_ary_shared_with_p(VALUE ary1, VALUE ary2)
 static VALUE
 ary_alloc(VALUE klass)
 {
-    NEWOBJ_OF(ary, struct RArray, klass, T_ARRAY | (RGENGC_SUNNY_ARRAY ? FL_KEEP_WB : 0));
+    NEWOBJ_OF(ary, struct RArray, klass, T_ARRAY | (RGENGC_WB_PROTECTED_ARRAY ? FL_WB_PROTECTED : 0));
     FL_SET_EMBED((VALUE)ary);
     ARY_SET_EMBED_LEN((VALUE)ary, 0);
 
@@ -524,7 +524,7 @@ ary_make_shared(VALUE ary)
 	return ary;
     }
     else {
-	NEWOBJ_OF(shared, struct RArray, 0, T_ARRAY | (RGENGC_SUNNY_ARRAY ? FL_KEEP_WB : 0));
+	NEWOBJ_OF(shared, struct RArray, 0, T_ARRAY | (RGENGC_WB_PROTECTED_ARRAY ? FL_WB_PROTECTED : 0));
         FL_UNSET_EMBED(shared);
 
         ARY_SET_LEN((VALUE)shared, ARY_CAPA(ary));

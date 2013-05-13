@@ -1211,7 +1211,7 @@ static VALUE
 range_dumper(VALUE range)
 {
     VALUE v;
-    NEWOBJ_OF(m, struct RObject, rb_cObject, T_OBJECT | (RGENGC_SUNNY_OBJECT ? FL_KEEP_WB : 1));
+    NEWOBJ_OF(m, struct RObject, rb_cObject, T_OBJECT | (RGENGC_WB_PROTECTED_OBJECT ? FL_WB_PROTECTED : 1));
 
     v = (VALUE)m;
 
