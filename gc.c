@@ -5102,6 +5102,7 @@ rb_gcdebug_sentinel(VALUE obj, const char *name)
 }
 #endif /* GC_DEBUG */
 
+
 /*
  * Document-class: ObjectSpace
  *
