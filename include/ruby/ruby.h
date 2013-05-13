@@ -900,8 +900,6 @@ struct RArray {
    RARRAY(a)->as.ary : \
    RARRAY(a)->as.heap.ptr)
 
-#define RARRAY_HAVE_PTR(a) (RARRAY_RAWPTR(a) == 0 ? 0 : 1)
-
 #define RARRAY_PTR_USE_START(a) RARRAY_RAWPTR(a)
 #define RARRAY_PTR_USE_END(a) /* */
 

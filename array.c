@@ -661,7 +661,7 @@ rb_ary_initialize(int argc, VALUE *argv, VALUE ary)
 
     rb_ary_modify(ary);
     if (argc == 0) {
-	if (ARY_OWNS_HEAP_P(ary) && RARRAY_HAVE_PTR(ary)) {
+	if (ARY_OWNS_HEAP_P(ary) && RARRAY_RAWPTR(ary) != 0) {
 	    xfree(RARRAY_RAWPTR(ary));
 	}
         rb_ary_unshare_safe(ary);
