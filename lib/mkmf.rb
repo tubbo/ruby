@@ -2471,7 +2471,7 @@ MESSAGE
   $ignore_error = $nmake ? '' : ' 2> /dev/null || true'
 
   RbConfig::CONFIG["srcdir"] = CONFIG["srcdir"] =
-  $srcdir = arg_config("--srcdir", File.dirname($0))
+    $srcdir = arg_config("--srcdir", File.dirname($0))
   $configure_args["--topsrcdir"] ||= $srcdir
   if $curdir = arg_config("--curdir")
     RbConfig.expand(curdir = $curdir.dup)
