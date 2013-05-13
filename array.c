@@ -705,7 +705,7 @@ rb_ary_initialize(int argc, VALUE *argv, VALUE ary)
 	RARRAY_PTR_USE(ary, ptr, {
 	    memfill(ptr, len, val);
 	});
-	OBJ_CONNECT(ary, Qundef, val);
+	OBJ_WRITTEN(ary, Qundef, val);
 	ARY_SET_LEN(ary, len);
     }
     return ary;

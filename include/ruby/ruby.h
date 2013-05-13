@@ -1226,7 +1226,7 @@ void rb_gc_giveup_promoted_writebarrier(VALUE obj);
 #endif
 
 #define OBJ_WRITE(a, slot, b)       rb_obj_write((VALUE)(a), (slot), (VALUE)(b), __FILE__, __LINE__)
-#define OBJ_CONNECT(a, oldv, b)     rb_obj_connect((VALUE)(a), (VALUE)(oldv), (VALUE)(b), __FILE__, __LINE__)
+#define OBJ_WRITTEN(a, oldv, b)     rb_obj_written((VALUE)(a), (VALUE)(oldv), (VALUE)(b), __FILE__, __LINE__)
 
 static inline VALUE
 rb_obj_wb_giveup(VALUE x, const char *filename, int line)
@@ -1249,10 +1249,10 @@ rb_obj_wb_giveup(VALUE x, const char *filename, int line)
 }
 
 static inline VALUE
-rb_obj_connect(VALUE a, VALUE oldv, VALUE b, const char *filename, int line)
+rb_obj_written(VALUE a, VALUE oldv, VALUE b, const char *filename, int line)
 {
-#ifdef RGENGC_LOGGING_OBJ_CONNECT
-    RGENGC_LOGGING_OBJ_CONNECT(a, oldv, b, filename, line);
+#ifdef RGENGC_LOGGING_OBJ_WRITTEN
+    RGENGC_LOGGING_OBJ_WRITTEN(a, oldv, b, filename, line);
 #endif
 
 #if USE_RGENGC
@@ -1276,7 +1276,7 @@ rb_obj_write(VALUE a, VALUE *slot, VALUE b, const char *filename, int line)
     *slot = b;
 
 #if USE_RGENGC
-    rb_obj_connect(a, Qundef /* ignore `oldv' now */, b, filename, line);
+    rb_obj_written(a, Qundef /* ignore `oldv' now */, b, filename, line);
 #endif
     return a;
 }

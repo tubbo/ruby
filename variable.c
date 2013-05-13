@@ -940,11 +940,11 @@ generic_ivar_set(VALUE obj, ID id, VALUE val)
 	tbl = st_init_numtable();
 	st_add_direct(generic_iv_tbl, (st_data_t)obj, (st_data_t)tbl);
 	st_add_direct(tbl, (st_data_t)id, (st_data_t)val);
-	if (FL_ABLE(obj)) OBJ_CONNECT(obj, Qundef, val);
+	if (FL_ABLE(obj)) OBJ_WRITTEN(obj, Qundef, val);
 	return;
     }
     st_insert((st_table *)data, (st_data_t)id, (st_data_t)val);
-    if (FL_ABLE(obj)) OBJ_CONNECT(obj, data, val);
+    if (FL_ABLE(obj)) OBJ_WRITTEN(obj, data, val);
 }
 
 static VALUE
@@ -1189,7 +1189,7 @@ rb_ivar_set(VALUE obj, ID id, VALUE val)
       case T_MODULE:
 	if (!RCLASS_IV_TBL(obj)) RCLASS_IV_TBL(obj) = st_init_numtable();
 	st_insert(RCLASS_IV_TBL(obj), (st_data_t)id, val);
-	OBJ_CONNECT(obj, Qundef, val);
+	OBJ_WRITTEN(obj, Qundef, val);
         break;
       default:
       generic:
