@@ -1,3 +1,20 @@
+Mon May 13 10:20:59 2013  Yuki Yugui Sonoda  <yugui@google.com>
+
+	* ext/openssl/ossl_ssl.c: Disabled OpenSSL::SSL::SSLSocket if
+	  defined(OPENSSL_NO_SOCK).
+
+	  This fixes a linkage error on platforms which do not have socket.
+	  OpenSSL itself is still useful as a set of cryptographic functions
+	  even on such platforms.
+
+Mon May 13 10:30:04 2013  Zachary Scott  <zachary@zacharyscott.net>
+
+	* hash.c: Hash[] and {} are not equivalent by @eam [Fixes GH-301]
+
+Mon May 13 10:04:22 2013  Zachary Scott  <zachary@zacharyscott.net>
+
+	* random.c: Document Random::DEFAULT by @eLobato [Fixes GH-304]
+
 Sun May 12 21:12:42 2013  Nobuyoshi Nakada  <nobu@ruby-lang.org>
 
 	* include/ruby/ruby.h (OFFT2NUM): RUBY_REPLACE_TYPE also defines macro
