@@ -3575,7 +3575,21 @@ rb_gc_giveup_promoted_writebarrier(VALUE obj)
 #endif
 }
 
-#endif
+#endif /* USE_RGENGC */
+
+/* RGENGC analysis information */
+
+VALUE
+rb_obj_rgengc_writebarrier_protected_p(VALUE obj)
+{
+    return OBJ_WB_PROTECTED(obj) ? Qtrue : Qfalse;
+}
+
+VALUE
+rb_obj_rgengc_promoted_p(VALUE obj)
+{
+    return OBJ_PROMOTED(obj) ? Qtrue : Qfalse;
+}
 
 /* GC */
 
@@ -5088,24 +5102,6 @@ rb_gcdebug_sentinel(VALUE obj, const char *name)
 }
 #endif /* GC_DEBUG */
 
-static VALUE
-obj_sunny_p(VALUE obj)
-{
-    return OBJ_WB_PROTECTED(obj) ? Qtrue : Qfalse;
-}
-
-static VALUE
-obj_shady_p(VALUE obj)
-{
-    return OBJ_WB_PROTECTED(obj) ? Qfalse : Qtrue;
-}
-
-static VALUE
-obj_promoted_p(VALUE obj)
-{
-    return OBJ_PROMOTED(obj) ? Qtrue : Qfalse;
-}
-
 /*
  * Document-class: ObjectSpace
  *
@@ -5231,8 +5227,4 @@ Init_GC(void)
     rb_define_singleton_method(rb_mGC, "malloc_allocated_size", gc_malloc_allocated_size, 0);
     rb_define_singleton_method(rb_mGC, "malloc_allocations", gc_malloc_allocations, 0);
 #endif
-
-    rb_define_method(rb_cObject, "sunny?", obj_sunny_p, 0);
-    rb_define_method(rb_cObject, "shady?", obj_shady_p, 0);
-    rb_define_method(rb_cObject, "promoted?", obj_promoted_p, 0);
 }
