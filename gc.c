@@ -114,7 +114,7 @@ static ruby_gc_params_t initial_params = {
  * 2: enable bits check (for debugging)
  */
 #ifndef RGENGC_CHECK_MODE
-#define RGENGC_CHECK_MODE  1
+#define RGENGC_CHECK_MODE  0
 #endif
 
 #ifndef RGENGC_PROFILE
