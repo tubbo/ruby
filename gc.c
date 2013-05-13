@@ -303,7 +303,6 @@ typedef struct rb_objspace {
 #if GC_PROFILE_MORE_DETAIL
 	double gc_sweep_start_time; /* temporary profiling space */
 #endif
-
     } profile;
     struct gc_list *global_list;
     size_t count;
@@ -2306,7 +2305,6 @@ gc_prepare_free_objects(rb_objspace_t *objspace)
 
     if (objspace->heap.sweep_slots) {
         res = lazy_sweep(objspace);
-
 	if (res) {
             gc_prof_set_malloc_info(objspace);
             gc_prof_timer_stop(objspace, Qfalse);
@@ -3677,7 +3675,6 @@ garbage_collect(rb_objspace_t *objspace)
     rest_sweep(objspace);
 
     during_gc++;
-
     gc_marks(objspace, FALSE);
 
     gc_sweep(objspace);
