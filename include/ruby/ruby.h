@@ -1123,15 +1123,13 @@ struct RStruct {
 
 #if USE_RGENGC
 #define OBJ_PROMOTED(x)             (SPECIAL_CONST_P(x) ? 0 : FL_TEST_RAW((x), FL_PROMOTED))
-#define OBJ_WB_PROTECTED(x)         (SPECIAL_CONST_P(x) ? 1 : FL_TEST_RAW((x), FL_WB_PROTECTED))
 #define OBJ_WB_UNPROTECT(x)         rb_obj_wb_unprotect(x, __FILE__, __LINE__)
 
 void rb_gc_writebarrier(VALUE a, VALUE b);
-void rb_gc_writebarrier_unprotect_promoted(VALUE obj);
+void rb_gc_writebarrier_unprotect(VALUE obj);
 
 #else /* USE_RGENGC */
 #define OBJ_PROMOTED(x)             0
-#define OBJ_WB_PROTECTED(x)         0
 #define OBJ_WB_UNPROTECT(x)         rb_obj_wb_unprotect(x, __FILE__, __LINE__)
 #endif
 
@@ -1164,15 +1162,8 @@ rb_obj_wb_unprotect(VALUE x, RB_UNUSED_VAR(const char *filename), RB_UNUSED_VAR(
 #ifdef RGENGC_LOGGING_WB_UNPROTECT
     RGENGC_LOGGING_WB_UNPROTECT((void *)x, filename, line);
 #endif
-
 #if USE_RGENGC
-    /* `x' should be an RVALUE object */
-    if (FL_TEST_RAW((x), FL_WB_PROTECTED)) {
-	if (FL_TEST_RAW((x), FL_PROMOTED)) {
-	    rb_gc_writebarrier_unprotect_promoted(x);
-	}
-	RBASIC(x)->flags &= ~FL_WB_PROTECTED;
-    }
+    rb_gc_writebarrier_unprotect(x);
 #endif
     return x;
 }
