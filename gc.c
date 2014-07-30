@@ -748,6 +748,8 @@ check_gen_consistency(VALUE obj)
 	int promoted_flag = FL_TEST2(obj, FL_PROMOTED);
 	rb_objspace_t *objspace = &rb_objspace;
 
+	assert((RBASIC(obj)->flags & FL_WB_PROTECTED) == 0);
+
 	obj_memsize_of((VALUE)obj, FALSE);
 
 	if (!is_pointer_to_heap(objspace, (void *)obj)) {
@@ -782,13 +784,8 @@ check_gen_consistency(VALUE obj)
 static inline int
 RVALUE_WB_UNPROTECTED(VALUE obj)
 {
+    check_gen_consistency(obj);
     return RVALUE_WB_UNPROTECTED_BITMAP(obj) != 0;
-}
-
-static inline int
-RVALUE_WB_PROTECTED(VALUE obj)
-{
-    return RVALUE_WB_UNPROTECTED(obj) == 0;
 }
 
 static inline int
@@ -1375,6 +1372,11 @@ newobj_of(VALUE klass, VALUE flags, VALUE v1, VALUE v2, VALUE v3)
     RANY(obj)->as.values.v2 = v2;
     RANY(obj)->as.values.v3 = v3;
 
+    assert(MARKED_IN_BITMAP(GET_HEAP_MARK_BITS(obj), obj) == 0);
+    assert(MARKED_IN_BITMAP(GET_HEAP_OLDGEN_BITS(obj), obj) == 0);
+    assert(MARKED_IN_BITMAP(GET_HEAP_REMEMBERSET_BITS(obj), obj) == 0);
+    assert(MARKED_IN_BITMAP(GET_HEAP_WB_UNPROTECTED_BITS(obj), obj) == 0);
+
     if ((flags & FL_WB_PROTECTED) == 0) {
 	MARK_IN_BITMAP(GET_HEAP_WB_UNPROTECTED_BITS(obj), obj);
     }
@@ -1581,9 +1583,12 @@ obj_free(rb_objspace_t *objspace, VALUE obj)
     if (RVALUE_OLD_P(obj)) {
 	CLEAR_IN_BITMAP(GET_HEAP_OLDGEN_BITS(obj), obj);
     }
-    if (!RVALUE_WB_PROTECTED(obj)) {
+    if (RVALUE_WB_UNPROTECTED(obj)) {
 	CLEAR_IN_BITMAP(GET_HEAP_WB_UNPROTECTED_BITS(obj), obj);
     }
+
+    assert(MARKED_IN_BITMAP(GET_HEAP_WB_UNPROTECTED_BITS(obj), obj) == 0);
+    assert(RVALUE_WB_UNPROTECTED(obj) == 0);
 #endif
 
     switch (BUILTIN_TYPE(obj)) {
@@ -3685,7 +3690,7 @@ rgengc_check_relation(rb_objspace_t *objspace, VALUE obj)
 {
 #if USE_RGENGC
     if (objspace->rgengc.parent_object) {
-	if (!RVALUE_WB_PROTECTED(obj)) {
+	if (RVALUE_WB_UNPROTECTED(obj)) {
 	    if (rgengc_remember(objspace, obj)) {
 		objspace->rgengc.remembered_shady_object_count++;
 	    }
@@ -3796,7 +3801,7 @@ gc_mark_children(rb_objspace_t *objspace, VALUE ptr)
 
     if (LIKELY(objspace->mark_func_data == 0)) {
 	/* minor/major common */
-	if (RVALUE_WB_PROTECTED((VALUE)obj)) {
+	if (RVALUE_WB_UNPROTECTED((VALUE)obj) == 0) {
 	    if (RVALUE_INFANT_P((VALUE)obj)) {
 		/* infant -> young */
 		RVALUE_PROMOTE_INFANT(objspace, (VALUE)obj, TRUE);
@@ -4480,8 +4485,8 @@ allrefs_dump_i(st_data_t k, st_data_t v, st_data_t ptr)
     struct reflist *refs = (struct reflist *)v;
     fprintf(stderr, "[allrefs_dump_i] %p (%s%s%s%s) <- ",
 	    (void *)obj, obj_type_name(obj),
-	    RVALUE_OLD_P(obj)        ? "[O]" : "[Y]",
-	    RVALUE_WB_PROTECTED(obj) ? "[W]" : "",
+	    RVALUE_OLD_P(obj)               ? "[O]" : "[Y]",
+	    RVALUE_WB_UNPROTECTED(obj) == 0 ? "[W]" : "",
 	    MARKED_IN_BITMAP(GET_HEAP_REMEMBERSET_BITS(obj), obj) ? "[R]" : "");
     reflist_dump(refs);
     fprintf(stderr, "\n");
@@ -4815,7 +4820,7 @@ static int
 rgengc_remember(rb_objspace_t *objspace, VALUE obj)
 {
     rgengc_report(2, objspace, "rgengc_remember: %p (%s, %s) %s\n", (void *)obj, obj_type_name(obj),
-		  RVALUE_WB_PROTECTED(obj) ? "WB-protected" : "non-WB-protected",
+		  RVALUE_WB_UNPROTECTED(obj) ? "WB-un-protected" : "WB-protected",
 		  rgengc_remembersetbits_get(objspace, obj) ? "was already remembered" : "is remembered now");
 
 #if RGENGC_CHECK_MODE > 0
@@ -4834,7 +4839,7 @@ rgengc_remember(rb_objspace_t *objspace, VALUE obj)
     if (RGENGC_PROFILE) {
 	if (!rgengc_remembered(objspace, obj)) {
 #if RGENGC_PROFILE > 0
-	    if (RVALUE_WB_PROTECTED(obj)) {
+	    if (RVALUE_WB_UNPROTECTED(obj) == 0) {
 		objspace->profile.remembered_normal_object_count++;
 #if RGENGC_PROFILE >= 2
 		objspace->profile.remembered_normal_object_count_types[BUILTIN_TYPE(obj)]++;
@@ -4888,7 +4893,7 @@ rgengc_rememberset_mark(rb_objspace_t *objspace, rb_heap_t *heap)
 			/* mark before RVALUE_PROMOTE_... */
 			gc_mark_ptr(objspace, (VALUE)p);
 
-			if (RVALUE_WB_PROTECTED((VALUE)p)) {
+			if (RVALUE_WB_UNPROTECTED((VALUE)p) == 0) {
 			    rgengc_report(2, objspace, "rgengc_rememberset_mark: clear %p (%s)\n", p, obj_type_name((VALUE)p));
 #if RGENGC_AGE2_PROMOTION
 			    if (RVALUE_INFANT_P((VALUE)p)) {
@@ -4969,7 +4974,7 @@ void
 rb_gc_writebarrier_unprotect(VALUE obj)
 {
 
-    if (!RVALUE_WB_PROTECTED(obj)) {
+    if (RVALUE_WB_UNPROTECTED(obj)) {
 	return;
     }
     else {
@@ -5041,7 +5046,7 @@ rb_gc_unprotect_logging(void *objptr, const char *filename, int line)
 	atexit(rgengc_unprotect_logging_exit_func);
     }
 
-    if (RVALUE_WB_PROTECTED(obj)) {
+    if (RVALUE_WB_UNPROTECTED(obj) == 0) {
 	char buff[0x100];
 	st_data_t cnt = 1;
 	char *ptr = buff;
@@ -5066,7 +5071,7 @@ rb_gc_unprotect_logging(void *objptr, const char *filename, int line)
 VALUE
 rb_obj_rgengc_writebarrier_protected_p(VALUE obj)
 {
-    return RVALUE_WB_PROTECTED(obj) ? Qtrue : Qfalse;
+    return RVALUE_WB_UNPROTECTED(obj) ? Qfalse : Qtrue;
 }
 
 VALUE
@@ -5103,7 +5108,7 @@ rb_obj_gc_flags(VALUE obj, ID* flags, size_t max)
     }
 
 #if USE_RGENGC
-    if (RVALUE_WB_PROTECTED(obj) && n<max)
+    if (RVALUE_WB_UNPROTECTED(obj) == 0 && n<max)
 	flags[n++] = ID_wb_protected;
     if (RVALUE_OLD_P(obj) && n<max)
 	flags[n++] = ID_old;
@@ -5143,6 +5148,8 @@ rb_gc_force_recycle(VALUE p)
 
     CLEAR_IN_BITMAP(GET_HEAP_REMEMBERSET_BITS(p), p);
     CLEAR_IN_BITMAP(GET_HEAP_OLDGEN_BITS(p), p);
+    CLEAR_IN_BITMAP(GET_HEAP_WB_UNPROTECTED_BITS(p), p);
+
     if (is_old || !GET_HEAP_PAGE(p)->before_sweep) {
 	CLEAR_IN_BITMAP(GET_HEAP_MARK_BITS(p), p);
     }
@@ -7710,7 +7717,7 @@ rb_gcdebug_print_obj_condition(VALUE obj)
     fprintf(stderr, "young?       : %s\n", RVALUE_YOUNG_P(obj) ? "true" : "false");
 #endif
     fprintf(stderr, "old?         : %s\n", RVALUE_OLD_P(obj) ? "true" : "false");
-    fprintf(stderr, "WB-protected?: %s\n", RVALUE_WB_PROTECTED(obj) ? "true" : "false");
+    fprintf(stderr, "WB-protected?: %s\n", RVALUE_WB_UNPROTECTED(obj) ? "false" : "true");
     fprintf(stderr, "remembered?  : %s\n", MARKED_IN_BITMAP(GET_HEAP_REMEMBERSET_BITS(obj), obj) ? "true" : "false");
 #endif
 
