@@ -206,7 +206,7 @@ static ruby_gc_params_t gc_params = {
  * 4: show all references
  */
 #ifndef RGENGC_CHECK_MODE
-#define RGENGC_CHECK_MODE  0
+#define RGENGC_CHECK_MODE  2
 #endif
 
 /* RGENGC_PROFILE
@@ -760,7 +760,7 @@ static inline int is_pointer_to_heap(rb_objspace_t *objspace, void *ptr);
 static inline int gc_marked(rb_objspace_t *objspace, VALUE ptr);
 
 static inline VALUE
-check_gen_consistency(VALUE obj)
+check_rvalue_consistency(VALUE obj)
 {
     if (RGENGC_CHECK_MODE > 0) {
 	int old_flag = RVALUE_OLDGEN_BITMAP(obj) != 0;
@@ -772,28 +772,28 @@ check_gen_consistency(VALUE obj)
 	obj_memsize_of((VALUE)obj, FALSE);
 
 	if (!is_pointer_to_heap(objspace, (void *)obj)) {
-	    rb_bug("check_gen_consistency: %p (%s) is not Ruby object.", (void *)obj, obj_type_name(obj));
+	    rb_bug("check_rvalue_consistency: %p (%s) is not Ruby object.", (void *)obj, obj_type_name(obj));
 	}
 
 	if (promoted_flag) {
 	    if (RVALUE_WB_UNPROTECTED_BITMAP(obj)) {
 		const char *type = old_flag ? "old" : "young";
-		rb_bug("check_gen_consistency: %p (%s) is not WB protected, but %s object.", (void *)obj, obj_type_name(obj), type);
+		rb_bug("check_rvalue_consistency: %p (%s) is not WB protected, but %s object.", (void *)obj, obj_type_name(obj), type);
 	    }
 
 #if !RGENGC_AGE2_PROMOTION
 	    if (!old_flag) {
-		rb_bug("check_gen_consistency: %p (%s) is promoted, but is not old.", (void *)obj, obj_type_name(obj));
+		rb_bug("check_rvalue_consistency: %p (%s) is promoted, but is not old.", (void *)obj, obj_type_name(obj));
 	    }
 #endif
 
 	    if (old_flag && objspace->rgengc.during_minor_gc && !gc_marked(objspace, obj)) {
-		rb_bug("check_gen_consistency: %p (%s) is old, but is not marked while minor marking.", (void *)obj, obj_type_name(obj));
+		rb_bug("check_rvalue_consistency: %p (%s) is old, but is not marked while minor marking.", (void *)obj, obj_type_name(obj));
 	    }
 	}
 	else {
 	    if (old_flag) {
-		rb_bug("check_gen_consistency: %p (%s) is not promoted, but is old by bitmap.", (void *)obj, obj_type_name(obj));
+		rb_bug("check_rvalue_consistency: %p (%s) is not promoted, but is old by bitmap.", (void *)obj, obj_type_name(obj));
 	    }
 	}
 
@@ -803,8 +803,8 @@ check_gen_consistency(VALUE obj)
 	 * marked:true   black         grey
 	 */
 	if (RVALUE_MARKING_BITMAP(obj)) {
-	    if (!RVALUE_MARK_BITMAP(obj))          rb_bug("check_gen_consistency: %s is marking, but not marked.", obj_info(obj));
-	    if (!is_incremental_marking(objspace)) rb_bug("check_gen_consistency: %s is marking, but not on incremental marking.", obj_info(obj));
+	    if (!RVALUE_MARK_BITMAP(obj))          rb_bug("check_rvalue_consistency: %s is marking, but not marked.", obj_info(obj));
+	    if (!is_incremental_marking(objspace)) rb_bug("check_rvalue_consistency: %s is marking, but not on incremental marking.", obj_info(obj));
 	}
     }
     return obj;
@@ -813,49 +813,49 @@ check_gen_consistency(VALUE obj)
 static inline int
 RVALUE_WB_UNPROTECTED(VALUE obj)
 {
-    check_gen_consistency(obj);
+    check_rvalue_consistency(obj);
     return RVALUE_WB_UNPROTECTED_BITMAP(obj) != 0;
 }
 
 static inline int
 RVALUE_MARKING(VALUE obj)
 {
-    check_gen_consistency(obj);
+    check_rvalue_consistency(obj);
     return RVALUE_MARKING_BITMAP(obj) != 0;
 }
 
 static inline int
 RVALUE_REMEMBERED(VALUE obj)
 {
-    check_gen_consistency(obj);
+    check_rvalue_consistency(obj);
     return RVALUE_REMEMBERED_BITMAP(obj) != 0;
 }
 
 static inline int
 RVALUE_MARKED(VALUE obj)
 {
-    check_gen_consistency(obj);
+    check_rvalue_consistency(obj);
     return RVALUE_MARK_BITMAP(obj) != 0;
 }
 
 static inline int
 RVALUE_INFANT_P(VALUE obj)
 {
-    check_gen_consistency(obj);
+    check_rvalue_consistency(obj);
     return !FL_TEST2(obj, FL_PROMOTED);
 }
 
 static inline int
 RVALUE_OLD_BITMAP_P(VALUE obj)
 {
-    check_gen_consistency(obj);
+    check_rvalue_consistency(obj);
     return (RVALUE_OLDGEN_BITMAP(obj) != 0);
 }
 
 static inline int
 RVALUE_OLD_P(VALUE obj)
 {
-    check_gen_consistency(obj);
+    check_rvalue_consistency(obj);
 #if RGENGC_AGE2_PROMOTION
     return FL_TEST2(obj, FL_PROMOTED) && RVALUE_OLD_BITMAP_P(obj);
 #else
@@ -866,14 +866,14 @@ RVALUE_OLD_P(VALUE obj)
 static inline int
 RVALUE_PROMOTED_P(VALUE obj)
 {
-    check_gen_consistency(obj);
+    check_rvalue_consistency(obj);
     return FL_TEST2(obj, FL_PROMOTED);
 }
 
 static inline void
 RVALUE_PROMOTE_INFANT(rb_objspace_t *objspace, VALUE obj, int add)
 {
-    check_gen_consistency(obj);
+    check_rvalue_consistency(obj);
 
     if (RGENGC_CHECK_MODE && !RVALUE_INFANT_P(obj)) rb_bug("RVALUE_PROMOTE_INFANT: %p (%s) is not infant object.", (void *)obj, obj_type_name(obj));
     FL_SET2(obj, FL_PROMOTED);
@@ -892,7 +892,7 @@ RVALUE_PROMOTE_INFANT(rb_objspace_t *objspace, VALUE obj, int add)
     MARK_IN_BITMAP(GET_HEAP_OLDGEN_BITS(obj), obj);
 #endif
 
-    check_gen_consistency(obj);
+    check_rvalue_consistency(obj);
 
 #if RGENGC_PROFILE >= 1
     {
@@ -914,14 +914,14 @@ RVALUE_PROMOTE_INFANT(rb_objspace_t *objspace, VALUE obj, int add)
 static inline int
 RVALUE_YOUNG_P(VALUE obj)
 {
-    check_gen_consistency(obj);
+    check_rvalue_consistency(obj);
     return FL_TEST2(obj, FL_PROMOTED) && (RVALUE_OLDGEN_BITMAP(obj) == 0);
 }
 
 static inline void
 RVALUE_PROMOTE_YOUNG(rb_objspace_t *objspace, VALUE obj)
 {
-    check_gen_consistency(obj);
+    check_rvalue_consistency(obj);
 
     if (RGENGC_CHECK_MODE && !RVALUE_YOUNG_P(obj)) {
 	rb_bug("RVALUE_PROMOTE_YOUNG: %p (%s) is not young object.", (void *)obj, obj_type_name(obj));
@@ -931,7 +931,7 @@ RVALUE_PROMOTE_YOUNG(rb_objspace_t *objspace, VALUE obj)
 
     objspace->rgengc.old_object_count++;
 
-    check_gen_consistency(obj);
+    check_rvalue_consistency(obj);
 
 #if RGENGC_PROFILE >= 1
     {
@@ -951,10 +951,10 @@ RVALUE_DEMOTE_FROM_YOUNG(rb_objspace_t *objspace, VALUE obj)
 	rb_bug("RVALUE_DEMOTE_FROM_YOUNG: %p (%s) is not young object.", (void *)obj, obj_type_name(obj));
     }
 
-    check_gen_consistency(obj);
+    check_rvalue_consistency(obj);
     FL_UNSET2(obj, FL_PROMOTED);
     objspace->rgengc.young_object_count--;
-    check_gen_consistency(obj);
+    check_rvalue_consistency(obj);
 }
 #endif
 
@@ -965,11 +965,11 @@ RVALUE_DEMOTE_FROM_OLD(rb_objspace_t *objspace, VALUE obj)
 	rb_bug("RVALUE_DEMOTE_FROM_OLD: %p (%s) is not old object.", (void *)obj, obj_type_name(obj));
     }
 
-    check_gen_consistency(obj);
+    check_rvalue_consistency(obj);
     FL_UNSET2(obj, FL_PROMOTED);
     CLEAR_IN_BITMAP(GET_HEAP_OLDGEN_BITS(obj), obj);
     objspace->rgengc.old_object_count--;
-    check_gen_consistency(obj);
+    check_rvalue_consistency(obj);
 }
 
 static inline int
@@ -3957,7 +3957,7 @@ gc_mark_children(rb_objspace_t *objspace, VALUE ptr)
   marking:
 
 #if USE_RGENGC
-    check_gen_consistency((VALUE)obj);
+    check_rvalue_consistency((VALUE)obj);
 
     if (LIKELY(objspace->mark_func_data == 0)) {
 	/* minor/major common */
@@ -3998,7 +3998,7 @@ gc_mark_children(rb_objspace_t *objspace, VALUE ptr)
 	}
     }
 
-    check_gen_consistency((VALUE)obj);
+    check_rvalue_consistency((VALUE)obj);
 #endif /* USE_RGENGC */
 
     if (FL_TEST(obj, FL_EXIVAR)) {
@@ -4601,7 +4601,7 @@ objspace_allrefs(rb_objspace_t *objspace)
 
     /* traverse root objects */
     objspace->mark_func_data = &mfd;
-    gc_mark_roots(objspace, TRUE, &data.category);
+    gc_mark_roots(objspace, &data.category);
     objspace->mark_func_data = 0;
 
     /* traverse rest objects reachable from root objects */
@@ -5175,7 +5175,7 @@ static int
 rgengc_remembered(rb_objspace_t *objspace, VALUE obj)
 {
     int result = rgengc_remembersetbits_get(objspace, obj);
-    check_gen_consistency(obj);
+    check_rvalue_consistency(obj);
     gc_report(6, objspace, "gc_remembered: %p (%s) => %d\n", (void *)obj, obj_type_name(obj), result);
     return result;
 }
