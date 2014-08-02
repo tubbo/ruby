@@ -1176,8 +1176,7 @@ rb_obj_written(VALUE a, RB_UNUSED_VAR(VALUE oldv), VALUE b, RB_UNUSED_VAR(const 
 #endif
 
 #if USE_RGENGC
-    /* `a' should be an RVALUE object */
-    if (FL_TEST_RAW((a), FL_PROMOTED) && !SPECIAL_CONST_P(b)) {
+    if (!SPECIAL_CONST_P(b)) {
 	rb_gc_writebarrier(a, b);
     }
 #endif
