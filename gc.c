@@ -195,7 +195,7 @@ static ruby_gc_params_t gc_params = {
  * 5: sweep
  */
 #ifndef RGENGC_DEBUG
-#define RGENGC_DEBUG       0
+#define RGENGC_DEBUG       1
 #endif
 
 /* RGENGC_CHECK_MODE
@@ -4825,6 +4825,12 @@ check_color_i(const VALUE child, void *ptr)
 }
 #endif
 
+static void
+check_children_i(const VALUE child, void *ptr)
+{
+    check_rvalue_consistency(child);
+}
+
 static int
 verify_internal_consistency_i(void *page_start, void *page_end, size_t stride, void *ptr)
 {
@@ -4836,6 +4842,10 @@ verify_internal_consistency_i(void *page_start, void *page_end, size_t stride, v
 	if (is_live_object(objspace, obj)) {
 	    /* count objects */
 	    data->live_object_count++;
+
+	    /* check healthyness of children */
+	    data->parent = obj;
+	    rb_objspace_reachable_objects_from(obj, check_children_i, (void *)data);
 
 #if USE_RGENGC
 	    if (RVALUE_OLD_P(obj)) {
@@ -4892,14 +4902,14 @@ gc_verify_internal_consistency(VALUE self)
 {
     rb_objspace_t *objspace = &rb_objspace;
     struct verify_internal_consistency_struct data = {0};
+    struct each_obj_args eo_args;
     data.objspace = objspace;
 
-    {
-	struct each_obj_args eo_args;
-	eo_args.callback = verify_internal_consistency_i;
-	eo_args.data = (void *)&data;
-	objspace_each_objects((VALUE)&eo_args);
-    }
+    gc_report(1, objspace, "gc_verify_internal_consistency: start\n");
+
+    eo_args.callback = verify_internal_consistency_i;
+    eo_args.data = (void *)&data;
+    objspace_each_objects((VALUE)&eo_args);
 
     if (data.err_count != 0) {
 #if RGENGC_CHECK_MODE >= 5
@@ -4954,6 +4964,8 @@ gc_verify_internal_consistency(VALUE self)
 		   list_count);
 	}
     }
+
+    gc_report(1, objspace, "gc_verify_internal_consistency: OK\n");
 
     return Qnil;
 }
@@ -5767,6 +5779,9 @@ gc_rest(rb_objspace_t *objspace)
 
     if (marking || sweeping) {
 	gc_enter(objspace, "gc_rest");
+
+	if (RGENGC_CHECK_MODE >= 2) gc_verify_internal_consistency(Qnil);
+
 	if (is_incremental_marking(objspace)) {
 	    gc_marks_rest(objspace);
 	}
