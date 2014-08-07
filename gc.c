@@ -254,6 +254,9 @@ static ruby_gc_params_t gc_params = {
 #ifndef GC_PROFILE_DETAIL_MEMORY
 #define GC_PROFILE_DETAIL_MEMORY 0
 #endif
+#ifndef GC_ENABLE_INCREMENTAL_MARK
+#define GC_ENABLE_INCREMENTAL_MARK 1
+#endif
 #ifndef GC_ENABLE_LAZY_SWEEP
 #define GC_ENABLE_LAZY_SWEEP   1
 #endif
@@ -471,7 +474,7 @@ typedef struct rb_objspace {
 
     struct {
 	int dont_gc;
-	int dont_lazy_sweep;
+	int dont_incremental;
 	int during_gc;
 	rb_atomic_t finalizing;
     } flags;
@@ -664,10 +667,11 @@ VALUE *ruby_initial_gc_stress_ptr = &rb_objspace.gc_stress;
 #define global_list		objspace->global_list
 #define ruby_gc_stress		objspace->gc_stress
 
-#define is_lazy_sweeping(heap) ((heap)->sweep_pages != 0)
-#define is_marking(objspace) ((objspace)->stat == marking)
-#define is_full_marking(objspace) ((objspace)->rgengc.during_minor_gc == FALSE)
-#define is_incremental_marking(objspace) ((objspace)->rincgc.during_incremental_marking)
+#define is_marking(objspace)             ((objspace)->stat == marking)
+#define is_sweeping(objspace)            ((objspace)->stat == sweeping)
+#define is_full_marking(objspace)        ((objspace)->rgengc.during_minor_gc == FALSE)
+#define is_incremental_marking(objspace) (GC_ENABLE_INCREMENTAL_MARK && (objspace)->rincgc.during_incremental_marking != FALSE)
+#define is_lazy_sweeping(heap)           (GC_ENABLE_LAZY_SWEEP       && (heap)->sweep_pages != 0)
 
 #if SIZEOF_LONG == SIZEOF_VOIDP
 # define nonspecial_obj_id(obj) (VALUE)((SIGNED_VALUE)(obj)|FIXNUM_FLAG)
@@ -708,7 +712,6 @@ static void aligned_free(void *);
 
 static void init_mark_stack(mark_stack_t *stack);
 
-static VALUE lazy_sweep_enable(void);
 static int ready_to_gc(rb_objspace_t *objspace);
 
 static int garbage_collect(rb_objspace_t *, int full_mark, int immediate_sweep, int reason);
@@ -1543,6 +1546,7 @@ newobj_of(VALUE klass, VALUE flags, VALUE v1, VALUE v2, VALUE v3)
     if ((flags & FL_WB_PROTECTED) == 0) {
 	MARK_IN_BITMAP(GET_HEAP_WB_UNPROTECTED_BITS(obj), obj);
     }
+
     if (is_incremental_marking(objspace)) {
 	MARK_IN_BITMAP(GET_HEAP_MARK_BITS(obj), obj);
 	gc_grey(objspace, obj);
@@ -1993,6 +1997,15 @@ objspace_each_objects(VALUE arg)
     return Qnil;
 }
 
+static VALUE
+incremental_enable(void)
+{
+    rb_objspace_t *objspace = &rb_objspace;
+
+    objspace->flags.dont_incremental = FALSE;
+    return Qnil;
+}
+
 /*
  * rb_objspace_each_objects() is special C API to walk through
  * Ruby object space.  This C API is too difficult to use it.
@@ -2034,19 +2047,19 @@ rb_objspace_each_objects(each_obj_callback *callback, void *data)
 {
     struct each_obj_args args;
     rb_objspace_t *objspace = &rb_objspace;
-    int prev_dont_lazy_sweep = objspace->flags.dont_lazy_sweep;
+    int prev_dont_incremental = objspace->flags.dont_incremental;
 
     gc_rest(objspace);
-    objspace->flags.dont_lazy_sweep = TRUE;
+    objspace->flags.dont_incremental = TRUE;
 
     args.callback = callback;
     args.data = data;
 
-    if (prev_dont_lazy_sweep) {
+    if (prev_dont_incremental) {
 	objspace_each_objects((VALUE)&args);
     }
     else {
-	rb_ensure(objspace_each_objects, (VALUE)&args, lazy_sweep_enable, Qnil);
+	rb_ensure(objspace_each_objects, (VALUE)&args, incremental_enable, Qnil);
     }
 }
 
@@ -2956,15 +2969,6 @@ count_objects(int argc, VALUE *argv, VALUE os)
 */
 
 /* Sweeping */
-
-static VALUE
-lazy_sweep_enable(void)
-{
-    rb_objspace_t *objspace = &rb_objspace;
-
-    objspace->flags.dont_lazy_sweep = FALSE;
-    return Qnil;
-}
 
 static size_t
 objspace_live_slot(rb_objspace_t *objspace)
@@ -4353,7 +4357,7 @@ gc_mark_stacked_objects(rb_objspace_t *objspace, int incremental)
         gc_mark_children(objspace, obj);
 
 	if (incremental) {
-	    if (RGENGC_CHECK_MODE && RVALUE_MARKING(obj) == 0) {
+	    if (RGENGC_CHECK_MODE && !RVALUE_MARKING(obj)) {
 		rb_bug("gc_mark_stacked_objects: incremental, but marking bit is 0");
 	    }
 	    CLEAR_IN_BITMAP(GET_HEAP_MARKING_BITS(obj), obj);
@@ -4983,11 +4987,7 @@ gc_marks_start(rb_objspace_t *objspace, int full_mark)
 
     objspace->rgengc.parent_object = Qfalse; /* should clear just before gc_mark_roots() */
 #endif
-
-    objspace->rincgc.during_incremental_marking = full_mark;
-
     gc_mark_roots(objspace, NULL);
-
     gc_report(1, objspace, "gc_marks_start: (%s) end, stack in %d\n", full_mark ? "full" : "minor", (int)mark_stack_size(&objspace->mark_stack));
 }
 
@@ -5092,7 +5092,6 @@ gc_marks_rest(rb_objspace_t *objspace)
 	} while (gc_marks_finish(objspace) == FALSE);
     }
     else {
-	rb_bug("unreachable");
 	gc_mark_stacked_objects(objspace, 0);
 	gc_marks_finish(objspace);
     }
@@ -5111,11 +5110,10 @@ gc_marks(rb_objspace_t *objspace, int full_mark)
 	objspace->mark_func_data = 0;
 
 #if USE_RGENGC
-#if RGENGC_CHECK_MODE >= 2
-	gc_verify_internal_consistency(Qnil);
-#endif
-
 	gc_marks_start(objspace, full_mark);
+	if (!is_incremental_marking(objspace)) {
+	    gc_marks_rest(objspace);
+	}
 
 #if RGENGC_PROFILE > 0
 	if (gc_prof_record(objspace)) {
@@ -5126,6 +5124,7 @@ gc_marks(rb_objspace_t *objspace, int full_mark)
 
 #else /* USE_RGENGC */
 	gc_marks_start(objspace, TRUE);
+	gc_marks_rest(objspace);
 #endif
 	objspace->mark_func_data = prev_mark_func_data;
     }
@@ -5680,6 +5679,9 @@ gc_start(rb_objspace_t *objspace, int full_mark, int immediate_sweep, int reason
     if (RGENGC_CHECK_MODE) {
 	assert(!is_lazy_sweeping(heap_eden));
 	assert(!is_incremental_marking(objspace));
+#if RGENGC_CHECK_MODE >= 2
+	gc_verify_internal_consistency(Qnil);
+#endif
     }
 
     gc_enter(objspace, "gc_start");
@@ -5716,15 +5718,22 @@ gc_start(rb_objspace_t *objspace, int full_mark, int immediate_sweep, int reason
 	reason |= GPR_FLAG_MAJOR_BY_FORCE; /* GC by CAPI, METHOD, and so on. */
     }
 
-    if (!GC_ENABLE_LAZY_SWEEP || objspace->flags.dont_lazy_sweep) {
+    if (!GC_ENABLE_LAZY_SWEEP || objspace->flags.dont_incremental) {
 	immediate_sweep = TRUE;
+    }
+    objspace->rincgc.immediate_sweep = immediate_sweep;
+
+    if (!GC_ENABLE_INCREMENTAL_MARK || objspace->flags.dont_incremental) {
+	objspace->rincgc.during_incremental_marking = FALSE;
+    }
+    else {
+	objspace->rincgc.during_incremental_marking = full_mark;
     }
 
     if (immediate_sweep) reason |= GPR_FLAG_IMMEDIATE_SWEEP;
 
-    objspace->rincgc.immediate_sweep = immediate_sweep;
-
-    gc_report(1, objspace, "gc_start(full_mark: %d, imm_sweep: %d, reason: %d)\n", full_mark, immediate_sweep, reason);
+    gc_report(1, objspace, "gc_start(full_mark: %d, imm_sweep: %d, incremental_marking: %d, reason: %d)\n",
+	      full_mark, immediate_sweep, is_incremental_marking(objspace), reason);
 
     objspace->profile.count++;
     objspace->profile.latest_gc_info = reason;
