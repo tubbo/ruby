@@ -801,10 +801,10 @@ check_rvalue_consistency(const VALUE obj)
 	/* TODO: temporary. now nobody using it */
 	assert((RBASIC(obj)->flags & FL_WB_PROTECTED) == 0);
 
-	obj_memsize_of((VALUE)obj, FALSE);
-
 	if (BUILTIN_TYPE(obj) == T_NONE)                rb_bug("check_rvalue_consistency: %p is T_NONE", obj_info(obj));
 	if (BUILTIN_TYPE(obj) == T_ZOMBIE)              rb_bug("check_rvalue_consistency: %p is T_ZOMBIE", obj_info(obj));
+
+	obj_memsize_of((VALUE)obj, FALSE);
 
 	/* check generation */
 	if (promoted_flag) {
@@ -1006,10 +1006,16 @@ RVALUE_DEMOTE_FROM_OLD(rb_objspace_t *objspace, VALUE obj)
 	rb_bug("RVALUE_DEMOTE_FROM_OLD: %s is not old object.", obj_info(obj));
     }
 
+    gc_report(1, objspace, "RVALUE_DEMOTE_FROM_OLD: %s\n", obj_info(obj));
+
     check_rvalue_consistency(obj);
     FL_UNSET2(obj, FL_PROMOTED);
     CLEAR_IN_BITMAP(GET_HEAP_OLDGEN_BITS(obj), obj);
-    objspace->rgengc.old_object_count--;
+
+    if (RVALUE_MARKED(obj)) {
+	objspace->rgengc.old_object_count--;
+    }
+
     check_rvalue_consistency(obj);
 }
 
@@ -3949,24 +3955,23 @@ gc_grey(rb_objspace_t *objspace, VALUE obj)
 }
 
 static void
-gc_promote(rb_objspace_t *objspace, VALUE obj)
+gc_aging(rb_objspace_t *objspace, VALUE obj)
 {
 #if USE_RGENGC
     check_rvalue_consistency(obj);
 
-    /* minor/major common */
     if (RVALUE_WB_UNPROTECTED(obj) == 0) {
 	if (RVALUE_INFANT_P(obj)) {
 	    /* infant -> young */
 	    RVALUE_PROMOTE_INFANT(objspace, obj, TRUE);
-	    gc_report(3, objspace, "gc_promote: promote infant -> young %s.\n", obj_info(obj));
+	    gc_report(3, objspace, "gc_aging: promote infant -> young %s.\n", obj_info(obj));
 	}
 	else {
 #if RGENGC_AGE2_PROMOTION
 	    if (RVALUE_YOUNG_P(obj)) {
 		/* young -> old */
 		RVALUE_PROMOTE_YOUNG(objspace, obj);
-		gc_report(3, objspace, "gc_promote: promote young -> old %s.\n", obj_info(obj));
+		gc_report(3, objspace, "gc_aging: promote young -> old %s.\n", obj_info(obj));
 	    }
 	    else {
 #endif
@@ -3979,7 +3984,7 @@ gc_promote(rb_objspace_t *objspace, VALUE obj)
 	}
     }
     else {
-	gc_report(3, objspace, "gc_promote: do not promote non-WB-protected %s.\n", obj_info(obj));
+	gc_report(3, objspace, "gc_aging: do not promote non-WB-protected %s.\n", obj_info(obj));
     }
 
     check_rvalue_consistency(obj);
@@ -3994,7 +3999,7 @@ gc_mark(rb_objspace_t *objspace, VALUE obj)
     if (LIKELY(objspace->mark_func_data == NULL)) {
 	rgengc_check_relation(objspace, obj);
 	if (!gc_mark_ptr(objspace, obj)) return; /* already marked */
-	gc_promote(objspace, obj);
+	gc_aging(objspace, obj);
 	gc_grey(objspace, obj);
     }
     else {
@@ -4048,9 +4053,18 @@ rb_gc_resurrect(VALUE obj)
 }
 
 static void
-gc_mark_children_traverse(rb_objspace_t *objspace, VALUE obj)
+gc_mark_children(rb_objspace_t *objspace, VALUE obj)
 {
     register RVALUE *any = RANY(obj);
+
+#if USE_RGENGC
+    if (RVALUE_OLD_P(obj)) {
+	objspace->rgengc.parent_object = obj;
+    }
+    else {
+	objspace->rgengc.parent_object = Qfalse;
+    }
+#endif
 
     if (FL_TEST(obj, FL_EXIVAR)) {
 	rb_mark_generic_ivar(obj);
@@ -4321,21 +4335,6 @@ gc_mark_children_traverse(rb_objspace_t *objspace, VALUE obj)
 	       BUILTIN_TYPE(obj), any,
 	       is_pointer_to_heap(objspace, any) ? "corrupted object" : "non object");
     }
-}
-
-static void
-gc_mark_children(rb_objspace_t *objspace, VALUE obj)
-{
-#if USE_RGENGC
-    if (RVALUE_OLD_P(obj)) {
-	objspace->rgengc.parent_object = obj;
-    }
-    else {
-	objspace->rgengc.parent_object = Qfalse;
-    }
-#endif
-
-    gc_mark_children_traverse(objspace, obj);
 }
 
 /**
@@ -4919,13 +4918,13 @@ gc_verify_internal_consistency(VALUE self)
 	}
     }
 
-    if (0) {
+    if (!is_incremental_marking(objspace)) {
 #if USE_RGENGC
 	if (objspace->rgengc.old_object_count != data.old_object_count) {
 	    rb_bug("inconsistent old slot nubmer: expect %"PRIuSIZE", but %"PRIuSIZE".", objspace->rgengc.old_object_count, data.old_object_count);
 	}
 #if RGENGC_AGE2_PROMOTION
-	if (objspace->rgengc.young_object_count != data.young_object_count) {
+	if (0 && objspace->rgengc.young_object_count != data.young_object_count) {
 	    rb_bug("inconsistent young slot nubmer: expect %"PRIuSIZE", but %"PRIuSIZE".", objspace->rgengc.young_object_count, data.young_object_count);
 	}
 #endif
@@ -5394,7 +5393,7 @@ rb_gc_writebarrier_remember(VALUE obj)
 {
     rb_objspace_t *objspace = &rb_objspace;
 
-    gc_report(1, objspace, "rb_gc_writebarrier_remember: %s\n", obj_info(obj));
+    gc_report(2, objspace, "rb_gc_writebarrier_remember: %s\n", obj_info(obj));
 
     if (is_incremental_marking(objspace)) {
 	if (RVALUE_BLACK_P(obj)) {
@@ -5517,43 +5516,46 @@ rb_obj_gc_flags(VALUE obj, ID* flags, size_t max)
 /* GC */
 
 void
-rb_gc_force_recycle(VALUE p)
+rb_gc_force_recycle(VALUE obj)
 {
     rb_objspace_t *objspace = &rb_objspace;
 
 #if USE_RGENGC
-    int is_old = RVALUE_OLD_P(p);
+    int is_old = RVALUE_OLD_P(obj);
+
+    gc_report(1, objspace, "rb_gc_force_recycle: %s\n", obj_info(obj));
 
     if (is_old) {
-	objspace->rgengc.old_object_count--;
+	if (RVALUE_MARKED(obj)) {
+	    objspace->rgengc.old_object_count--;
+	}
     }
 #if RGENGC_AGE2_PROMOTION
-    else if (RVALUE_YOUNG_P(p)) {
+    else if (RVALUE_YOUNG_P(obj)) {
 	objspace->rgengc.young_object_count--;
     }
 #endif
-
-    CLEAR_IN_BITMAP(GET_HEAP_REMEMBERSET_BITS(p), p);
-    CLEAR_IN_BITMAP(GET_HEAP_OLDGEN_BITS(p), p);
-    CLEAR_IN_BITMAP(GET_HEAP_WB_UNPROTECTED_BITS(p), p);
+    CLEAR_IN_BITMAP(GET_HEAP_REMEMBERSET_BITS(obj), obj);
+    CLEAR_IN_BITMAP(GET_HEAP_OLDGEN_BITS(obj), obj);
+    CLEAR_IN_BITMAP(GET_HEAP_WB_UNPROTECTED_BITS(obj), obj);
 
     if (is_incremental_marking(objspace)) {
-	if (MARKED_IN_BITMAP(GET_HEAP_MARKING_BITS(p), p)) {
-	    invalidate_mark_stack(&objspace->mark_stack, p);
-	    CLEAR_IN_BITMAP(GET_HEAP_MARKING_BITS(p), p);
+	if (MARKED_IN_BITMAP(GET_HEAP_MARKING_BITS(obj), obj)) {
+	    invalidate_mark_stack(&objspace->mark_stack, obj);
+	    CLEAR_IN_BITMAP(GET_HEAP_MARKING_BITS(obj), obj);
 	}
-	CLEAR_IN_BITMAP(GET_HEAP_MARK_BITS(p), p);
+	CLEAR_IN_BITMAP(GET_HEAP_MARK_BITS(obj), obj);
     }
     else {
-	if (is_old || !GET_HEAP_PAGE(p)->before_sweep) {
-	    CLEAR_IN_BITMAP(GET_HEAP_MARK_BITS(p), p);
+	if (is_old || !GET_HEAP_PAGE(obj)->before_sweep) {
+	    CLEAR_IN_BITMAP(GET_HEAP_MARK_BITS(obj), obj);
 	}
     }
 #endif
 
     objspace->profile.total_freed_object_num++;
 
-    heap_page_add_freeobj(objspace, GET_HEAP_PAGE(p), p);
+    heap_page_add_freeobj(objspace, GET_HEAP_PAGE(obj), obj);
 
     /* Disable counting swept_slots because there are no meaning.
      * if (!MARKED_IN_BITMAP(GET_HEAP_MARK_BITS(p), p)) {
@@ -6545,7 +6547,7 @@ rb_objspace_reachable_objects_from(VALUE obj, void (func)(VALUE, void *), void *
 	mfd.mark_func = func;
 	mfd.data = data;
 	objspace->mark_func_data = &mfd;
-	gc_mark_children_traverse(objspace, obj);
+	gc_mark_children(objspace, obj);
 	objspace->mark_func_data = 0;
     }
 }
