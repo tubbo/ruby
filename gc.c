@@ -195,7 +195,7 @@ static ruby_gc_params_t gc_params = {
  * 5: sweep
  */
 #ifndef RGENGC_DEBUG
-#define RGENGC_DEBUG       1
+#define RGENGC_DEBUG       0
 #endif
 
 /* RGENGC_CHECK_MODE
