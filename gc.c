@@ -1,3 +1,9 @@
+#define RGENGC_DEBUG               0
+#define RGENGC_CHECK_MODE          0
+#define GC_ENABLE_INCREMENTAL_MARK 1
+#define PRINT_TICK                 0
+#define PRINT_ENTER_EXIT_TICK      0
+
 /**********************************************************************
 
   gc.c -
@@ -207,7 +213,7 @@ static ruby_gc_params_t gc_params = {
  * 5: show all references
  */
 #ifndef RGENGC_CHECK_MODE
-#define RGENGC_CHECK_MODE  2
+#define RGENGC_CHECK_MODE  0
 #endif
 
 /* RGENGC_PROFILE
@@ -255,7 +261,7 @@ static ruby_gc_params_t gc_params = {
 #define GC_PROFILE_DETAIL_MEMORY 0
 #endif
 #ifndef GC_ENABLE_INCREMENTAL_MARK
-#define GC_ENABLE_INCREMENTAL_MARK 1
+#define GC_ENABLE_INCREMENTAL_MARK 0
 #endif
 #ifndef GC_ENABLE_LAZY_SWEEP
 #define GC_ENABLE_LAZY_SWEEP   1
@@ -596,12 +602,13 @@ struct heap_page {
     struct heap_page_body *body;
     RVALUE *freelist;
     RVALUE *start;
-    size_t final_slots;
-    size_t limit;
     struct heap_page *next;
     struct heap_page *prev;
     struct heap_page *free_next;
     rb_heap_t *heap;
+    int total_slots;
+    int free_slots;
+    int final_slots;
     int before_sweep;
 
     bits_t mark_bits[HEAP_BITMAP_LIMIT];
@@ -721,7 +728,7 @@ static void gc_rest(rb_objspace_t *objspace);
 
 static void gc_marks_start(rb_objspace_t *objspace, int full);
 static int  gc_marks_finish(rb_objspace_t *objspace);
-static void gc_marks_step(rb_objspace_t *objspace);
+static void gc_marks_step(rb_objspace_t *objspace, int slots);
 static void gc_marks_rest(rb_objspace_t *objspace);
 static void gc_marks_continue(rb_objspace_t *objspace, rb_heap_t *heap);
 
@@ -737,6 +744,11 @@ static void gc_grey(rb_objspace_t *objspace, VALUE ptr);
 static void gc_mark(rb_objspace_t *objspace, VALUE ptr);
 static void gc_mark_maybe(rb_objspace_t *objspace, VALUE ptr);
 static void gc_mark_children(rb_objspace_t *objspace, VALUE ptr);
+
+static void   push_mark_stack(mark_stack_t *, VALUE);
+static int    pop_mark_stack(mark_stack_t *, VALUE *);
+static size_t mark_stack_size(mark_stack_t *stack);
+static void   shrink_stack_chunk_cache(mark_stack_t *stack);
 
 static size_t obj_memsize_of(VALUE obj, int use_tdata);
 static VALUE gc_verify_internal_consistency(VALUE self);
@@ -1169,7 +1181,7 @@ heap_unlink_page(rb_objspace_t *objspace, rb_heap_t *heap, struct heap_page *pag
     page->next = NULL;
     page->heap = NULL;
     heap->page_length--;
-    heap->total_slots -= page->limit;
+    heap->total_slots -= page->total_slots;
 }
 
 static void
@@ -1190,10 +1202,10 @@ heap_pages_free_unused_pages(rb_objspace_t *objspace)
 	    struct heap_page *page = heap_pages_sorted[i];
 
 	    if (page->heap == heap_tomb && page->final_slots == 0) {
-		if (heap_pages_swept_slots - page->limit > heap_pages_max_free_slots) {
+		if (heap_pages_swept_slots - page->total_slots > heap_pages_max_free_slots) {
 		    if (0) fprintf(stderr, "heap_pages_free_unused_pages: %d free page %p, heap_pages_swept_slots: %d, heap_pages_max_free_slots: %d\n",
 				   (int)i, page, (int)heap_pages_swept_slots, (int)heap_pages_max_free_slots);
-		    heap_pages_swept_slots -= page->limit;
+		    heap_pages_swept_slots -= page->total_slots;
 		    heap_unlink_page(objspace, heap_tomb, page);
 		    heap_page_free(objspace, page);
 		    continue;
@@ -1275,13 +1287,14 @@ heap_page_allocate(rb_objspace_t *objspace)
     if (heap_pages_himem < end) heap_pages_himem = end;
 
     page->start = start;
-    page->limit = limit;
+    page->total_slots = limit;
     page_body->header.page = page;
 
     for (p = start; p != end; p++) {
 	gc_report(3, objspace, "assign_heap_page: %p is added to freelist\n", p);
 	heap_page_add_freeobj(objspace, page, (VALUE)p);
     }
+    page->free_slots = limit;
 
     return page;
 }
@@ -1320,7 +1333,7 @@ heap_add_page(rb_objspace_t *objspace, rb_heap_t *heap, struct heap_page *page)
     if (heap->pages) heap->pages->prev = page;
     heap->pages = page;
     heap->page_length++;
-    heap->total_slots += page->limit;
+    heap->total_slots += page->total_slots;
 }
 
 static void
@@ -1368,21 +1381,127 @@ heap_set_increment(rb_objspace_t *objspace, size_t additional_pages)
 
     heap_pages_increment = next_used_limit - used;
     heap_pages_expand_sorted(objspace);
+
+    gc_report(1, objspace, "heap_set_increment: heap_pages_increment is %d\n", (int)heap_pages_increment);
 }
 
 static int
 heap_increment(rb_objspace_t *objspace, rb_heap_t *heap)
 {
-    gc_report(5, objspace, "heap_increment: heap_pages_length: %d, heap_pages_inc: %d, heap->page_length: %d\n",
-		  (int)heap_pages_length, (int)heap_pages_increment, (int)heap->page_length);
-
     if (heap_pages_increment > 0) {
+	gc_report(1, objspace, "heap_increment: heap_pages_length: %d, heap_pages_inc: %d, heap->page_length: %d\n",
+		  (int)heap_pages_length, (int)heap_pages_increment, (int)heap->page_length);
 	heap_pages_increment--;
 	heap_assign_page(objspace, heap);
 	return TRUE;
     }
     return FALSE;
 }
+
+#ifndef PRINT_TICK
+#define PRINT_TICK 1
+#endif
+
+#if PRINT_TICK
+
+/* the following code is only for internal tuning. */
+
+/* Source code to use RDTSC is quoted and modified from
+ * http://www.mcs.anl.gov/~kazutomo/rdtsc.html
+ * written by Kazutomo Yoshii <kazutomo@mcs.anl.gov>
+ */
+
+#if defined(__GNUC__) && defined(__i386__)
+typedef unsigned long long tick_t;
+
+static inline tick_t
+tick(void)
+{
+    unsigned long long int x;
+    __asm__ __volatile__ ("rdtsc" : "=A" (x));
+    return x;
+}
+
+#elif defined(__GNUC__) && defined(__x86_64__)
+typedef unsigned long long tick_t;
+
+static __inline__ tick_t
+tick(void)
+{
+    unsigned long hi, lo;
+    __asm__ __volatile__ ("rdtsc" : "=a"(lo), "=d"(hi));
+    return ((unsigned long long)lo)|( ((unsigned long long)hi)<<32);
+}
+
+#elif defined(_WIN32) && defined(_MSC_VER)
+#include <intrin.h>
+typedef unsigned __int64 tick_t;
+
+static inline tick_t
+tick(void)
+{
+    return __rdtsc();
+}
+
+#else /* use clock */
+typedef clock_t tick_t;
+static inline tick_t
+tick(void)
+{
+    return clock();
+}
+#endif
+#define MEASURE_LINE(expr) do { \
+    tick_t start_time = tick(); \
+    expr; \
+    fprintf(stderr, "0\t%lld\t%s\n", tick() - start_time, #expr); \
+} while (0)
+#else /* USE_TICK */
+#define MEASURE_LINE(expr) expr
+#endif /* USE_TICK */
+
+#ifndef PRINT_ENTER_EXIT_TICK
+#define PRINT_ENTER_EXIT_TICK 1
+#endif
+
+#if PRINT_ENTER_EXIT_TICK
+
+static tick_t last_exit_tick;
+static tick_t enter_tick;
+static int enter_count = 0;
+
+static inline void
+gc_record(int direction, const char *event)
+{
+    if (direction == 0) { /* enter */
+	enter_count++;
+	enter_tick = tick();
+    }
+    else { /* exit */
+	tick_t exit_tick = tick();
+#if 1
+	/* [last mutator time] [gc time] [event] */
+	fprintf(stderr, "%llu\t%llu\t%s\n",
+		enter_tick - last_exit_tick,
+		exit_tick - enter_tick,
+		event);
+	last_exit_tick = exit_tick;
+#else
+	/* [enter_tick] [gc time] [event] */
+	fprintf(stderr, "%llu\t%llu\t%s\n",
+		enter_tick,
+		exit_tick - enter_tick,
+		event);
+#endif
+    }
+}
+#else /* PRINT_ENTER_EXIT_TICK */
+static inline void
+gc_record(int direction, const char *event)
+{
+    /* null */
+}
+#endif /* PRINT_ENTER_EXIT_TICK */
 
 static inline void
 gc_enter(rb_objspace_t *objspace, const char *event)
@@ -1391,6 +1510,7 @@ gc_enter(rb_objspace_t *objspace, const char *event)
 
     during_gc = TRUE;
     gc_report(1, objspace, "gc_entr: %s\n", event);
+    gc_record(0, event);
 }
 
 static inline void
@@ -1398,6 +1518,7 @@ gc_exit(rb_objspace_t *objspace, const char *event)
 {
     if (RGENGC_CHECK_MODE > 0) assert(during_gc != 0);
 
+    gc_record(1, event);
     gc_report(1, objspace, "gc_exit: %s\n", event);
     during_gc = FALSE;
 }
@@ -1408,6 +1529,9 @@ gc_sweep_continue(rb_objspace_t *objspace, rb_heap_t *heap)
     if (RGENGC_CHECK_MODE) assert(dont_gc == FALSE);
 
     gc_enter(objspace, "sweep_continue");
+    if (!GC_ENABLE_INCREMENTAL_MARK /* TODO: cheet */ && heap_increment(objspace, heap)) {
+	gc_report(1, objspace, "gc_sweep_continue: success heap_increment().\n");
+    }
     gc_sweep_step(objspace, heap);
     gc_exit(objspace, "sweep_continue");
 }
@@ -1415,24 +1539,37 @@ gc_sweep_continue(rb_objspace_t *objspace, rb_heap_t *heap)
 static void
 gc_marks_continue(rb_objspace_t *objspace, rb_heap_t *heap)
 {
-    struct heap_page *page;
+    int slots = 0;
+    const char *from;
 
     if (RGENGC_CHECK_MODE) assert(dont_gc == FALSE);
 
     gc_enter(objspace, "marks_continue");
 
     if (heap->pooled_pages) {
-	/* TODO: tune adding pages number */
-	page = heap->pooled_pages;
-	heap->pooled_pages = page->free_next;
-	page->free_next = NULL;
-	heap->free_pages = page;
+	while (heap->pooled_pages && slots < HEAP_OBJ_LIMIT) {
+	    struct heap_page *page = heap->pooled_pages;
+	    heap->pooled_pages = page->free_next;
+	    page->free_next = heap->free_pages;
+	    heap->free_pages = page;
+	    slots += page->free_slots;
+	}
+	from = "pooled-pages";
+    }
+    else if (heap_increment(objspace, heap)) {
+	slots = heap->free_pages->free_slots;
+	from = "incremented-pages";
+    }
 
-	gc_marks_step(objspace);
+    if (slots > 0) {
+	gc_report(1, objspace, "gc_marks_continue: provide %d slots from %s.\n", slots, from);
+	gc_marks_step(objspace, slots * 4);
     }
     else {
+	gc_report(1, objspace, "gc_marks_continue: no more pooled pages (stack depth: %d).\n", (int)mark_stack_size(&objspace->mark_stack));
 	gc_marks_rest(objspace);
     }
+
     gc_exit(objspace, "marks_continue");
 }
 
@@ -1440,8 +1577,6 @@ static void
 heap_prepare(rb_objspace_t *objspace, rb_heap_t *heap)
 {
     if (RGENGC_CHECK_MODE) assert(heap->free_pages == NULL);
-
-    if (heap_increment(objspace, heap)) return;
 
     if (is_lazy_sweeping(heap)) {
 	gc_sweep_continue(objspace, heap);
@@ -1451,6 +1586,7 @@ heap_prepare(rb_objspace_t *objspace, rb_heap_t *heap)
     }
 
     if (heap->free_pages == NULL &&
+	(GC_ENABLE_INCREMENTAL_MARK /* TODO: cheet */ || heap_increment(objspace, heap) == FALSE) &&
 	gc_start(objspace, FALSE, FALSE, GPR_FLAG_NEWOBJ) == FALSE) {
 	rb_memerror();
     }
@@ -1468,8 +1604,11 @@ heap_get_freeobj_from_next_freepage(rb_objspace_t *objspace, rb_heap_t *heap)
     page = heap->free_pages;
     heap->free_pages = page->free_next;
     heap->using_page = page;
+
+    if (RGENGC_CHECK_MODE) assert(page->free_slots != 0);
     p = page->freelist;
     page->freelist = NULL;
+    page->free_slots = 0;
     return p;
 }
 
@@ -1666,7 +1805,7 @@ is_pointer_to_heap(rb_objspace_t *objspace, void *ptr)
 	mid = (lo + hi) / 2;
 	page = heap_pages_sorted[mid];
 	if (page->start <= p) {
-	    if (p < page->start + page->limit) {
+	    if (p < page->start + page->total_slots) {
 		return TRUE;
 	    }
 	    lo = mid + 1;
@@ -1993,7 +2132,7 @@ objspace_each_objects(VALUE arg)
 	last_body = page->body;
 
 	pstart = page->start;
-	pend = pstart + page->limit;
+	pend = pstart + page->total_slots;
 
 	if ((*args->callback)(pstart, pend, sizeof(RVALUE), args->data)) {
 	    break;
@@ -2372,6 +2511,7 @@ finalize_list(rb_objspace_t *objspace, VALUE zombie)
 	RZOMBIE(zombie)->basic.flags = 0;
 	heap_pages_final_slots--;
 	page->final_slots--;
+	page->free_slots++;
 	heap_page_add_freeobj(objspace, GET_HEAP_PAGE(zombie), zombie);
 
 	heap_pages_swept_slots++;
@@ -2475,7 +2615,7 @@ rb_objspace_call_finalizer(rb_objspace_t *objspace)
 
     /* run data object's finalizers */
     for (i = 0; i < heap_pages_used; i++) {
-	p = heap_pages_sorted[i]->start; pend = p + heap_pages_sorted[i]->limit;
+	p = heap_pages_sorted[i]->start; pend = p + heap_pages_sorted[i]->total_slots;
 	while (p < pend) {
 	    switch (BUILTIN_TYPE(p)) {
 	      case T_DATA:
@@ -2910,7 +3050,7 @@ count_objects(int argc, VALUE *argv, VALUE os)
 	struct heap_page *page = heap_pages_sorted[i];
 	RVALUE *p, *pend;
 
-	p = page->start; pend = p + page->limit;
+	p = page->start; pend = p + page->total_slots;
 	for (;p < pend; p++) {
 	    if (p->as.basic.flags) {
 		counts[BUILTIN_TYPE(p)]++;
@@ -2919,7 +3059,7 @@ count_objects(int argc, VALUE *argv, VALUE os)
 		freed++;
 	    }
 	}
-	total += page->limit;
+	total += page->total_slots;
     }
 
     if (hash == Qnil) {
@@ -3012,17 +3152,15 @@ static inline int
 gc_page_sweep(rb_objspace_t *objspace, rb_heap_t *heap, struct heap_page *sweep_page)
 {
     int i;
-    size_t empty_slots = 0, freed_slots = 0, final_slots = 0;
+    int empty_slots = 0, freed_slots = 0, final_slots = 0;
     RVALUE *p, *pend,*offset;
     bits_t *bits, bitset;
 
     gc_report(2, objspace, "page_sweep: start.\n");
 
-    assert(is_incremental_marking(objspace) == 0);
-
     sweep_page->before_sweep = 0;
 
-    p = sweep_page->start; pend = p + sweep_page->limit;
+    p = sweep_page->start; pend = p + sweep_page->total_slots;
     offset = p - NUM_IN_PAGE(p);
     bits = sweep_page->mark_bits;
 
@@ -3081,16 +3219,15 @@ gc_page_sweep(rb_objspace_t *objspace, rb_heap_t *heap, struct heap_page *sweep_
 	record->empty_objects += empty_slots;
     }
 #endif
+    if (0) fprintf(stderr, "gc_page_sweep(%d): freed?: %d, limt: %d, freed_slots: %d, empty_slots: %d, final_slots: %d\n",
+		   (int)rb_gc_count(),
+		   final_slots + freed_slots + empty_slots == sweep_page->total_slots,
+		   (int)sweep_page->total_slots, (int)freed_slots, (int)empty_slots, (int)final_slots);
 
-    heap_pages_swept_slots += freed_slots + empty_slots;
+    heap_pages_swept_slots += sweep_page->free_slots = freed_slots + empty_slots;
     objspace->profile.total_freed_object_num += freed_slots;
     heap_pages_final_slots += final_slots;
     sweep_page->final_slots += final_slots;
-
-    if (0) fprintf(stderr, "gc_page_sweep(%d): freed?: %d, limt: %d, freed_slots: %d, empty_slots: %d, final_slots: %d\n",
-		   (int)rb_gc_count(),
-		   final_slots + freed_slots + empty_slots == sweep_page->limit,
-		   (int)sweep_page->limit, (int)freed_slots, (int)empty_slots, (int)final_slots);
 
     if (heap_pages_deferred_final && !finalizing) {
         rb_thread_t *th = GET_THREAD();
@@ -3099,7 +3236,9 @@ gc_page_sweep(rb_objspace_t *objspace, rb_heap_t *heap, struct heap_page *sweep_
         }
     }
 
-    if (final_slots + freed_slots + empty_slots == sweep_page->limit) {
+    gc_report(2, objspace, "page_sweep: end.\n");
+
+    if (final_slots + freed_slots + empty_slots == sweep_page->total_slots) {
 	/* there are no living objects -> move this page to tomb heap */
 	heap_unlink_page(objspace, heap, sweep_page);
 	heap_add_page(objspace, heap_tomb, sweep_page);
@@ -3112,9 +3251,6 @@ gc_page_sweep(rb_objspace_t *objspace, rb_heap_t *heap, struct heap_page *sweep_
 	    sweep_page->free_next = NULL;
 	}
     }
-
-    gc_report(2, objspace, "page_sweep: end.\n");
-
     return FALSE;
 }
 
@@ -3159,8 +3295,6 @@ gc_sweep_start(rb_objspace_t *objspace)
     size_t total_limit_slot;
 
     objspace->stat = sweeping;
-
-    assert(is_incremental_marking(objspace) == 0);
 
     gc_report(1, objspace, "gc_sweep_start\n");
 
@@ -3318,7 +3452,7 @@ static int
 gc_sweep_step(rb_objspace_t *objspace, rb_heap_t *heap)
 {
     struct heap_page *sweep_page = heap->sweep_pages, *next;
-    int need_pool = TRUE;
+    int need_pool = GC_ENABLE_INCREMENTAL_MARK ? TRUE : FALSE;
 
     gc_report(2, objspace, "gc_sweep_step\n");
 
@@ -3404,10 +3538,6 @@ gc_sweep(rb_objspace_t *objspace, int immediate_sweep)
 }
 
 /* Marking - Marking stack */
-
-static void push_mark_stack(mark_stack_t *, VALUE);
-static int pop_mark_stack(mark_stack_t *, VALUE *);
-static void shrink_stack_chunk_cache(mark_stack_t *stack);
 
 static stack_chunk_t *
 stack_chunk_alloc(void)
@@ -4345,7 +4475,7 @@ static inline int
 gc_mark_stacked_objects(rb_objspace_t *objspace, int incremental)
 {
     mark_stack_t *mstack = &objspace->mark_stack;
-    VALUE obj = 0;
+    VALUE obj;
 
     while (pop_mark_stack(mstack, &obj)) {
 	if (obj == Qundef) continue; /* skip */
@@ -4383,58 +4513,7 @@ gc_mark_stacked_objects(rb_objspace_t *objspace, int incremental)
     }
 }
 
-#ifndef RGENGC_PRINT_TICK
-#define RGENGC_PRINT_TICK 0
-#endif
-/* the following code is only for internal tuning. */
-
-/* Source code to use RDTSC is quoted and modified from
- * http://www.mcs.anl.gov/~kazutomo/rdtsc.html
- * written by Kazutomo Yoshii <kazutomo@mcs.anl.gov>
- */
-
-#if RGENGC_PRINT_TICK
-#if defined(__GNUC__) && defined(__i386__)
-typedef unsigned long long tick_t;
-
-static inline tick_t
-tick(void)
-{
-    unsigned long long int x;
-    __asm__ __volatile__ ("rdtsc" : "=A" (x));
-    return x;
-}
-
-#elif defined(__GNUC__) && defined(__x86_64__)
-typedef unsigned long long tick_t;
-
-static __inline__ tick_t
-tick(void)
-{
-    unsigned long hi, lo;
-    __asm__ __volatile__ ("rdtsc" : "=a"(lo), "=d"(hi));
-    return ((unsigned long long)lo)|( ((unsigned long long)hi)<<32);
-}
-
-#elif defined(_WIN32) && defined(_MSC_VER)
-#include <intrin.h>
-typedef unsigned __int64 tick_t;
-
-static inline tick_t
-tick(void)
-{
-    return __rdtsc();
-}
-
-#else /* use clock */
-typedef clock_t tick_t;
-static inline tick_t
-tick(void)
-{
-    return clock();
-}
-#endif
-
+#if PRITNT_ROOT_TICKS
 #define MAX_TICKS 0x100
 static tick_t mark_ticks[MAX_TICKS];
 static const char *mark_ticks_categories[MAX_TICKS];
@@ -4464,7 +4543,7 @@ gc_mark_roots(rb_objspace_t *objspace, const char **categoryp)
     rb_thread_t *th = GET_THREAD();
     if (categoryp) *categoryp = "xxx";
 
-#if RGENGC_PRINT_TICK
+#if PRINT_ROOT_TICKS
     tick_t start_tick = tick();
     int tick_count = 0;
     const char *prev_category = 0;
@@ -4474,7 +4553,7 @@ gc_mark_roots(rb_objspace_t *objspace, const char **categoryp)
     }
 #endif
 
-#if RGENGC_PRINT_TICK
+#if PRINT_ROOT_TICSK
 #define MARK_CHECKPOINT_PRINT_TICK(category) do { \
     if (prev_category) { \
 	tick_t t = tick(); \
@@ -4843,7 +4922,7 @@ verify_internal_consistency_i(void *page_start, void *page_end, size_t stride, v
 	    /* count objects */
 	    data->live_object_count++;
 
-	    /* check healthyness of children */
+	    /* check health of children */
 	    data->parent = obj;
 	    rb_objspace_reachable_objects_from(obj, check_children_i, (void *)data);
 
@@ -4905,7 +4984,7 @@ gc_verify_internal_consistency(VALUE self)
     struct each_obj_args eo_args;
     data.objspace = objspace;
 
-    gc_report(1, objspace, "gc_verify_internal_consistency: start\n");
+    gc_report(5, objspace, "gc_verify_internal_consistency: start\n");
 
     eo_args.callback = verify_internal_consistency_i;
     eo_args.data = (void *)&data;
@@ -4928,7 +5007,7 @@ gc_verify_internal_consistency(VALUE self)
 	}
     }
 
-    if (!is_incremental_marking(objspace)) {
+    if (!is_marking(objspace)) {
 #if USE_RGENGC
 	if (objspace->rgengc.old_object_count != data.old_object_count) {
 	    rb_bug("inconsistent old slot nubmer: expect %"PRIuSIZE", but %"PRIuSIZE".", objspace->rgengc.old_object_count, data.old_object_count);
@@ -4965,7 +5044,7 @@ gc_verify_internal_consistency(VALUE self)
 	}
     }
 
-    gc_report(1, objspace, "gc_verify_internal_consistency: OK\n");
+    gc_report(5, objspace, "gc_verify_internal_consistency: OK\n");
 
     return Qnil;
 }
@@ -5053,7 +5132,7 @@ gc_marks_finish(rb_objspace_t *objspace)
 	    rb_bug("gc_marks_finish: mark stack is not empty (%d).", (int)mark_stack_size(&objspace->mark_stack));
 	}
 
-	gc_mark_roots(objspace, 0);
+	MEASURE_LINE(gc_mark_roots(objspace, 0));
 
 	if (is_mark_stack_empty(&objspace->mark_stack) == FALSE) {
 	    gc_report(1, objspace, "gc_marks_finish: not empty (%d). retry.\n", (int)mark_stack_size(&objspace->mark_stack));
@@ -5062,7 +5141,7 @@ gc_marks_finish(rb_objspace_t *objspace)
 
 	objspace->rincgc.during_incremental_marking = FALSE;
 	/* check children of all marked wb-unprotected objects */
-	gc_marks_wb_unprotected_objects(objspace);
+	MEASURE_LINE(gc_marks_wb_unprotected_objects(objspace));
     }
 
     if (is_full_marking(objspace)) { /* after major GC */
@@ -5082,10 +5161,16 @@ gc_marks_finish(rb_objspace_t *objspace)
 }
 
 static void
-gc_marks_step(rb_objspace_t *objspace)
+gc_marks_step(rb_objspace_t *objspace, int slots)
 {
-    if (gc_mark_stacked_objects(objspace, HEAP_OBJ_LIMIT/8)) {
-	if (gc_marks_finish(objspace)) {
+    if (RGENGC_CHECK_MODE) assert(is_incremental_marking(objspace));
+
+    if (gc_mark_stacked_objects(objspace, slots)) {
+	if (heap_eden->free_pages) {
+	    /* do not finish yet */
+	    gc_report(1, objspace, "gc_marks_step: the mark stack is empty, but there are more free pages.\n");
+	}
+	else if (gc_marks_finish(objspace)) {
 	    /* finish */
 	    gc_sweep(objspace, objspace->rincgc.immediate_sweep);
 	}
@@ -5099,7 +5184,7 @@ gc_marks_rest(rb_objspace_t *objspace)
 
     if (is_incremental_marking(objspace)) {
 	do {
-	    while (gc_mark_stacked_objects(objspace, 0x100000) == FALSE);
+	    while (gc_mark_stacked_objects(objspace, INT_MAX) == FALSE);
 	} while (gc_marks_finish(objspace) == FALSE);
     }
     else {
