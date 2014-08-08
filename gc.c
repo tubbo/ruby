@@ -1,5 +1,5 @@
 #define RGENGC_DEBUG               0
-#define RGENGC_CHECK_MODE          0
+#define RGENGC_CHECK_MODE          2
 #define GC_ENABLE_INCREMENTAL_MARK 1
 #define PRINT_ENTER_EXIT_TICK      0
 
@@ -1695,11 +1695,6 @@ newobj_of(VALUE klass, VALUE flags, VALUE v1, VALUE v2, VALUE v3)
 
     if ((flags & FL_WB_PROTECTED) == 0) {
 	MARK_IN_BITMAP(GET_HEAP_WB_UNPROTECTED_BITS(obj), obj);
-    }
-
-    if (is_incremental_marking(objspace)) {
-	MARK_IN_BITMAP(GET_HEAP_MARK_BITS(obj), obj);
-	gc_grey(objspace, obj);
     }
 
 #if GC_DEBUG
@@ -5209,7 +5204,7 @@ gc_marks_rest(rb_objspace_t *objspace)
     if (is_incremental_marking(objspace)) {
 	do {
 	    while (gc_mark_stacked_objects_incremental(objspace, INT_MAX) == FALSE);
-	} while (gc_marks_finish(objspace));
+	} while (gc_marks_finish(objspace) == FALSE);
     }
     else {
 	gc_mark_stacked_objects_all(objspace);
@@ -5436,6 +5431,16 @@ rgengc_mark_and_rememberset_clear(rb_objspace_t *objspace, rb_heap_t *heap)
 
 /* RGENGC: APIs */
 
+static void
+gc_mark_from(rb_objspace_t *objspace, VALUE obj, VALUE parent)
+{
+    objspace->rgengc.parent_object = parent;
+    rgengc_check_relation(objspace, obj);
+    gc_mark_ptr(objspace, obj);
+    gc_aging(objspace, obj);
+    gc_grey(objspace, obj);
+}
+
 void
 rb_gc_writebarrier(VALUE a, VALUE b)
 {
@@ -5461,7 +5466,7 @@ rb_gc_writebarrier(VALUE a, VALUE b)
 	if (RVALUE_BLACK_P(a) && RVALUE_WHITE_P(b)) {
 	    if (RVALUE_WB_UNPROTECTED(a) == FALSE) {
 		gc_report(2, objspace, "rb_gc_writebarrier: [GR] %s -> %s\n", obj_info(a), obj_info(b));
-		gc_grey(objspace, a);
+		gc_mark_from(objspace, b, a);
 	    }
 	}
 	else {
