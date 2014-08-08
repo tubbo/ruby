@@ -1200,11 +1200,11 @@ heap_pages_free_unused_pages(rb_objspace_t *objspace)
 {
     size_t i, j;
 
-    if (heap_tomb->pages) {
+    if (heap_tomb->pages && heap_pages_swept_slots > heap_pages_max_free_slots) {
 	for (i = j = 1; j < heap_pages_used; i++) {
 	    struct heap_page *page = heap_pages_sorted[i];
 
-	    if (page->heap == heap_tomb && page->final_slots == 0) {
+	    if (page->heap == heap_tomb && page->free_slots == page->total_slots) {
 		if (heap_pages_swept_slots - page->total_slots > heap_pages_max_free_slots) {
 		    if (0) fprintf(stderr, "heap_pages_free_unused_pages: %d free page %p, heap_pages_swept_slots: %d, heap_pages_max_free_slots: %d\n",
 				   (int)i, page, (int)heap_pages_swept_slots, (int)heap_pages_max_free_slots);
