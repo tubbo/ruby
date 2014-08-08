@@ -1,8 +1,9 @@
 #define RGENGC_DEBUG               0
 #define RGENGC_CHECK_MODE          0
 #define GC_ENABLE_INCREMENTAL_MARK 1
-#define PRINT_TICK                 0
 #define PRINT_ENTER_EXIT_TICK      0
+
+#define PRINT_TICK                 (PRINT_ENTER_EXIT_TICK)
 
 /**********************************************************************
 
@@ -456,6 +457,7 @@ typedef struct rb_objspace {
     } malloc_params;
 
     enum gc_stat stat;
+    size_t marked_objects;
 
     rb_heap_t eden_heap;
     rb_heap_t tomb_heap; /* heap for zombies and ghosts */
@@ -738,7 +740,8 @@ static int  gc_sweep_step(rb_objspace_t *objspace, rb_heap_t *heap);
 static void gc_sweep_rest(rb_objspace_t *objspace);
 static void gc_sweep_continue(rb_objspace_t *objspace, rb_heap_t *heap);
 
-static int gc_mark_stacked_objects(rb_objspace_t *, int incremental);
+static int gc_mark_stacked_objects_incremental(rb_objspace_t *, size_t count);
+static int gc_mark_stacked_objects_all(rb_objspace_t *);
 static void gc_grey(rb_objspace_t *objspace, VALUE ptr);
 
 static void gc_mark(rb_objspace_t *objspace, VALUE ptr);
@@ -1452,9 +1455,11 @@ tick(void)
 }
 #endif
 #define MEASURE_LINE(expr) do { \
-    tick_t start_time = tick(); \
+    volatile tick_t start_time = tick(); \
+    volatile tick_t end_time; \
     expr; \
-    fprintf(stderr, "0\t%lld\t%s\n", tick() - start_time, #expr); \
+    end_time = tick(); \
+    fprintf(stderr, "0\t%lld\t%s\n", end_time - start_time, #expr); \
 } while (0)
 #else /* USE_TICK */
 #define MEASURE_LINE(expr) expr
@@ -1563,7 +1568,7 @@ gc_marks_continue(rb_objspace_t *objspace, rb_heap_t *heap)
 
     if (slots > 0) {
 	gc_report(1, objspace, "gc_marks_continue: provide %d slots from %s.\n", slots, from);
-	gc_marks_step(objspace, slots * 4);
+	gc_marks_step(objspace, slots * 2);
     }
     else {
 	gc_report(1, objspace, "gc_marks_continue: no more pooled pages (stack depth: %d).\n", (int)mark_stack_size(&objspace->mark_stack));
@@ -3148,7 +3153,7 @@ gc_setup_mark_bits(struct heap_page *page)
 
 /* TRUE : has empty slots                                             */
 /* FALSE: no empty slots (or move to tomb heap because no live slots) */
-static inline int
+static inline void
 gc_page_sweep(rb_objspace_t *objspace, rb_heap_t *heap, struct heap_page *sweep_page)
 {
     int i;
@@ -3219,10 +3224,10 @@ gc_page_sweep(rb_objspace_t *objspace, rb_heap_t *heap, struct heap_page *sweep_
 	record->empty_objects += empty_slots;
     }
 #endif
-    if (0) fprintf(stderr, "gc_page_sweep(%d): freed?: %d, limt: %d, freed_slots: %d, empty_slots: %d, final_slots: %d\n",
+    if (0) fprintf(stderr, "gc_page_sweep(%d): total_slots: %d, freed_slots: %d, empty_slots: %d, final_slots: %d\n",
 		   (int)rb_gc_count(),
-		   final_slots + freed_slots + empty_slots == sweep_page->total_slots,
-		   (int)sweep_page->total_slots, (int)freed_slots, (int)empty_slots, (int)final_slots);
+		   (int)sweep_page->total_slots,
+		   freed_slots, empty_slots, final_slots);
 
     heap_pages_swept_slots += sweep_page->free_slots = freed_slots + empty_slots;
     objspace->profile.total_freed_object_num += freed_slots;
@@ -3237,21 +3242,6 @@ gc_page_sweep(rb_objspace_t *objspace, rb_heap_t *heap, struct heap_page *sweep_
     }
 
     gc_report(2, objspace, "page_sweep: end.\n");
-
-    if (final_slots + freed_slots + empty_slots == sweep_page->total_slots) {
-	/* there are no living objects -> move this page to tomb heap */
-	heap_unlink_page(objspace, heap, sweep_page);
-	heap_add_page(objspace, heap_tomb, sweep_page);
-    }
-    else {
-	if (freed_slots + empty_slots > 0) {
-	    return TRUE; /* has empty slots */
-	}
-	else {
-	    sweep_page->free_next = NULL;
-	}
-    }
-    return FALSE;
 }
 
 /* allocate additional minimum page to work */
@@ -3453,6 +3443,7 @@ gc_sweep_step(rb_objspace_t *objspace, rb_heap_t *heap)
 {
     struct heap_page *sweep_page = heap->sweep_pages, *next;
     int need_pool = GC_ENABLE_INCREMENTAL_MARK ? TRUE : FALSE;
+    int unlink_limit = 3;
 
     gc_report(2, objspace, "gc_sweep_step\n");
 
@@ -3464,8 +3455,16 @@ gc_sweep_step(rb_objspace_t *objspace, rb_heap_t *heap)
 
     while (sweep_page) {
 	heap->sweep_pages = next = sweep_page->next;
+	gc_page_sweep(objspace, heap, sweep_page);
 
-	if (gc_page_sweep(objspace, heap, sweep_page)) {
+	if (sweep_page->final_slots + sweep_page->free_slots == sweep_page->total_slots &&
+	    unlink_limit > 0) {
+	    unlink_limit--;
+	    /* there are no living objects -> move this page to tomb heap */
+	    heap_unlink_page(objspace, heap, sweep_page);
+	    heap_add_page(objspace, heap_tomb, sweep_page);
+	}
+	else if (sweep_page->free_slots > 0) {
 	    if (need_pool) {
 		need_pool = FALSE;
 		heap_add_poolpage(objspace, heap, sweep_page);
@@ -3474,6 +3473,9 @@ gc_sweep_step(rb_objspace_t *objspace, rb_heap_t *heap)
 		heap_add_freepage(objspace, heap, sweep_page);
 		break;
 	    }
+	}
+	else {
+	    sweep_page->free_next = NULL;
 	}
 
 	sweep_page = next;
@@ -4076,7 +4078,10 @@ rgengc_check_relation(rb_objspace_t *objspace, VALUE obj)
 static void
 gc_grey(rb_objspace_t *objspace, VALUE obj)
 {
-    if (RGENGC_CHECK_MODE) assert(RVALUE_MARKED(obj));
+    if (RGENGC_CHECK_MODE) {
+	assert(RVALUE_MARKED(obj));
+	assert(!RVALUE_MARKING(obj));
+    }
 
     if (is_incremental_marking(objspace)) {
 	MARK_IN_BITMAP(GET_HEAP_MARKING_BITS(obj), obj);
@@ -4087,6 +4092,8 @@ gc_grey(rb_objspace_t *objspace, VALUE obj)
 static void
 gc_aging(rb_objspace_t *objspace, VALUE obj)
 {
+    objspace->marked_objects++;
+
 #if USE_RGENGC
     check_rvalue_consistency(obj);
 
@@ -4472,10 +4479,11 @@ gc_mark_children(rb_objspace_t *objspace, VALUE obj)
  * incremental: n -> mark at most `n' objects
  */
 static inline int
-gc_mark_stacked_objects(rb_objspace_t *objspace, int incremental)
+gc_mark_stacked_objects(rb_objspace_t *objspace, int incremental, size_t count)
 {
     mark_stack_t *mstack = &objspace->mark_stack;
     VALUE obj;
+    size_t marked_objects_at_the_beggining = objspace->marked_objects;
 
     while (pop_mark_stack(mstack, &obj)) {
 	if (obj == Qundef) continue; /* skip */
@@ -4491,7 +4499,9 @@ gc_mark_stacked_objects(rb_objspace_t *objspace, int incremental)
 	    }
 	    CLEAR_IN_BITMAP(GET_HEAP_MARKING_BITS(obj), obj);
 
-	    if (--incremental == 0) break;
+	    if (objspace->marked_objects - marked_objects_at_the_beggining > count) {
+		break;
+	    }
 	}
 	else {
 	    if (RGENGC_CHECK_MODE && RVALUE_MARKING(obj)) {
@@ -4512,6 +4522,19 @@ gc_mark_stacked_objects(rb_objspace_t *objspace, int incremental)
 	return FALSE;
     }
 }
+
+static int
+gc_mark_stacked_objects_incremental(rb_objspace_t *objspace, size_t count)
+{
+    return gc_mark_stacked_objects(objspace, TRUE, count);
+}
+
+static int
+gc_mark_stacked_objects_all(rb_objspace_t *objspace)
+{
+    return gc_mark_stacked_objects(objspace, FALSE, 0);
+}
+
 
 #if PRITNT_ROOT_TICKS
 #define MAX_TICKS 0x100
@@ -5055,6 +5078,7 @@ gc_marks_start(rb_objspace_t *objspace, int full_mark)
     /* start marking */
     gc_report(1, objspace, "gc_marks_start: (%s)\n", full_mark ? "full" : "minor");
     objspace->stat = marking;
+    objspace->marked_objects = 0;
 
 #if USE_RGENGC
     objspace->rgengc.during_minor_gc = full_mark ? FALSE : TRUE;
@@ -5117,7 +5141,7 @@ gc_marks_wb_unprotected_objects(rb_objspace_t *objspace)
 	page = page->next;
     }
 
-    gc_mark_stacked_objects(objspace, 0);
+    gc_mark_stacked_objects_all(objspace);
 }
 
 static int
@@ -5132,7 +5156,7 @@ gc_marks_finish(rb_objspace_t *objspace)
 	    rb_bug("gc_marks_finish: mark stack is not empty (%d).", (int)mark_stack_size(&objspace->mark_stack));
 	}
 
-	MEASURE_LINE(gc_mark_roots(objspace, 0));
+	gc_mark_roots(objspace, 0);
 
 	if (is_mark_stack_empty(&objspace->mark_stack) == FALSE) {
 	    gc_report(1, objspace, "gc_marks_finish: not empty (%d). retry.\n", (int)mark_stack_size(&objspace->mark_stack));
@@ -5141,7 +5165,7 @@ gc_marks_finish(rb_objspace_t *objspace)
 
 	objspace->rincgc.during_incremental_marking = FALSE;
 	/* check children of all marked wb-unprotected objects */
-	MEASURE_LINE(gc_marks_wb_unprotected_objects(objspace));
+	gc_marks_wb_unprotected_objects(objspace);
     }
 
     if (is_full_marking(objspace)) { /* after major GC */
@@ -5165,7 +5189,7 @@ gc_marks_step(rb_objspace_t *objspace, int slots)
 {
     if (RGENGC_CHECK_MODE) assert(is_incremental_marking(objspace));
 
-    if (gc_mark_stacked_objects(objspace, slots)) {
+    if (gc_mark_stacked_objects_incremental(objspace, slots)) {
 	if (heap_eden->free_pages) {
 	    /* do not finish yet */
 	    gc_report(1, objspace, "gc_marks_step: the mark stack is empty, but there are more free pages.\n");
@@ -5184,11 +5208,11 @@ gc_marks_rest(rb_objspace_t *objspace)
 
     if (is_incremental_marking(objspace)) {
 	do {
-	    while (gc_mark_stacked_objects(objspace, INT_MAX) == FALSE);
-	} while (gc_marks_finish(objspace) == FALSE);
+	    while (gc_mark_stacked_objects_incremental(objspace, INT_MAX) == FALSE);
+	} while (gc_marks_finish(objspace));
     }
     else {
-	gc_mark_stacked_objects(objspace, 0);
+	gc_mark_stacked_objects_all(objspace);
 	gc_marks_finish(objspace);
     }
     gc_sweep(objspace, objspace->rincgc.immediate_sweep);
