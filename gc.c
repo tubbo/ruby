@@ -1,5 +1,5 @@
-#define RGENGC_DEBUG               0
-#define RGENGC_CHECK_MODE          0
+#define RGENGC_DEBUG               1
+#define RGENGC_CHECK_MODE          2
 #define GC_ENABLE_INCREMENTAL_MARK 1
 #define PRINT_ENTER_EXIT_TICK      0
 
@@ -1506,6 +1506,14 @@ gc_sweep_continue(rb_objspace_t *objspace, rb_heap_t *heap)
     gc_exit(objspace, "sweep_continue");
 }
 
+#define PUSH_MARK_FUNC_DATA(v) do { \
+    struct mark_func_data_struct *prev_mark_func_data; \
+    prev_mark_func_data = objspace->mark_func_data; \
+    objspace->mark_func_data = (v);
+
+#define POP_MARK_FUNC_DATA() objspace->mark_func_data = prev_mark_func_data;} while (0)
+
+
 static void
 gc_marks_continue(rb_objspace_t *objspace, rb_heap_t *heap)
 {
@@ -1516,29 +1524,33 @@ gc_marks_continue(rb_objspace_t *objspace, rb_heap_t *heap)
 
     gc_enter(objspace, "marks_continue");
 
-    if (heap->pooled_pages) {
-	while (heap->pooled_pages && slots < HEAP_OBJ_LIMIT) {
-	    struct heap_page *page = heap->pooled_pages;
-	    heap->pooled_pages = page->free_next;
-	    page->free_next = heap->free_pages;
-	    heap->free_pages = page;
-	    slots += page->free_slots;
+    PUSH_MARK_FUNC_DATA(NULL);
+    {
+	if (heap->pooled_pages) {
+	    while (heap->pooled_pages && slots < HEAP_OBJ_LIMIT) {
+		struct heap_page *page = heap->pooled_pages;
+		heap->pooled_pages = page->free_next;
+		page->free_next = heap->free_pages;
+		heap->free_pages = page;
+		slots += page->free_slots;
+	    }
+	    from = "pooled-pages";
 	}
-	from = "pooled-pages";
-    }
-    else if (heap_increment(objspace, heap)) {
-	slots = heap->free_pages->free_slots;
-	from = "incremented-pages";
-    }
+	else if (heap_increment(objspace, heap)) {
+	    slots = heap->free_pages->free_slots;
+	    from = "incremented-pages";
+	}
 
-    if (slots > 0) {
-	gc_report(1, objspace, "gc_marks_continue: provide %d slots from %s.\n", slots, from);
-	gc_marks_step(objspace, slots * 2);
+	if (slots > 0) {
+	    gc_report(1, objspace, "gc_marks_continue: provide %d slots from %s.\n", slots, from);
+	    gc_marks_step(objspace, slots * 2);
+	}
+	else {
+	    gc_report(1, objspace, "gc_marks_continue: no more pooled pages (stack depth: %d).\n", (int)mark_stack_size(&objspace->mark_stack));
+	    gc_marks_rest(objspace);
+	}
     }
-    else {
-	gc_report(1, objspace, "gc_marks_continue: no more pooled pages (stack depth: %d).\n", (int)mark_stack_size(&objspace->mark_stack));
-	gc_marks_rest(objspace);
-    }
+    POP_MARK_FUNC_DATA();
 
     gc_exit(objspace, "marks_continue");
 }
@@ -3390,9 +3402,9 @@ gc_sweep_finish(rb_objspace_t *objspace)
 #if RGENGC_CHECK_MODE >= 2
     gc_verify_internal_consistency(Qnil);
 #endif
-    objspace->stat = none;
 
     gc_event_hook(objspace, RUBY_INTERNAL_EVENT_GC_END_SWEEP, 0);
+    objspace->stat = none;
 }
 
 static int
@@ -5113,13 +5125,11 @@ gc_marks_rest(rb_objspace_t *objspace)
 static void
 gc_marks(rb_objspace_t *objspace, int full_mark)
 {
-    struct mark_func_data_struct *prev_mark_func_data;
-
     gc_prof_mark_timer_start(objspace);
+
+    PUSH_MARK_FUNC_DATA(NULL);
     {
 	/* setup marking */
-	prev_mark_func_data = objspace->mark_func_data;
-	objspace->mark_func_data = 0;
 
 #if USE_RGENGC
 	gc_marks_start(objspace, full_mark);
@@ -5138,8 +5148,8 @@ gc_marks(rb_objspace_t *objspace, int full_mark)
 	gc_marks_start(objspace, TRUE);
 	gc_marks_rest(objspace);
 #endif
-	objspace->mark_func_data = prev_mark_func_data;
     }
+    POP_MARK_FUNC_DATA();
     gc_prof_mark_timer_stop(objspace);
 }
 
@@ -5736,18 +5746,15 @@ gc_start(rb_objspace_t *objspace, int full_mark, int immediate_sweep, int reason
 
     objspace->profile.count++;
     objspace->profile.latest_gc_info = reason;
-
-    gc_event_hook(objspace, RUBY_INTERNAL_EVENT_GC_START, 0 /* TODO: pass minor/immediate flag? */);
-
     objspace->profile.total_allocated_object_num_at_gc_start = objspace->profile.total_allocated_object_num;
     objspace->profile.heap_used_at_gc_start = heap_pages_used;
-
     gc_prof_setup_new_record(objspace, reason);
+
+    gc_event_hook(objspace, RUBY_INTERNAL_EVENT_GC_START, 0 /* TODO: pass minor/immediate flag? */);
+    assert(during_gc);
+
     gc_prof_timer_start(objspace);
     {
-	if (during_gc == 0) {
-	    rb_bug("during_gc should not be 0. RUBY_INTERNAL_EVENT_GC_START user should not cause GC in events.");
-	}
 	gc_marks(objspace, full_mark);
     }
     gc_prof_timer_stop(objspace);
@@ -5768,7 +5775,9 @@ gc_rest(rb_objspace_t *objspace)
 	if (RGENGC_CHECK_MODE >= 2) gc_verify_internal_consistency(Qnil);
 
 	if (is_incremental_marking(objspace)) {
+	    PUSH_MARK_FUNC_DATA(NULL);
 	    gc_marks_rest(objspace);
+	    POP_MARK_FUNC_DATA();
 	}
 	if (is_lazy_sweeping(heap_eden)) {
 	    gc_sweep_rest(objspace);
