@@ -1068,7 +1068,8 @@ struct RStruct {
 
 #define FL_SINGLETON FL_USER0
 #define FL_WB_PROTECTED (((VALUE)1)<<5)
-#define FL_PROMOTED  (((VALUE)1)<<6)
+#define FL_PROMOTED0 (((VALUE)1)<<5)
+#define FL_PROMOTED1 (((VALUE)1)<<6)
 #define FL_FINALIZE  (((VALUE)1)<<7)
 #define FL_TAINT     (((VALUE)1)<<8)
 #define FL_UNTRUSTED FL_TAINT
@@ -1122,7 +1123,7 @@ struct RStruct {
 #define OBJ_FREEZE(x) FL_SET((x), FL_FREEZE)
 
 #if USE_RGENGC
-#define OBJ_PROMOTED(x)             (SPECIAL_CONST_P(x) ? 0 : FL_TEST_RAW((x), FL_PROMOTED))
+#define OBJ_PROMOTED(x)             (SPECIAL_CONST_P(x) ? 0 : (FL_TEST_RAW((x), FL_PROMOTED0) && FL_TEST_RAW((x), FL_PROMOTED1)))
 #define OBJ_WB_UNPROTECT(x)         rb_obj_wb_unprotect(x, __FILE__, __LINE__)
 
 void rb_gc_writebarrier(VALUE a, VALUE b);
