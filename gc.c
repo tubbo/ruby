@@ -4,6 +4,7 @@
 #define PRINT_ENTER_EXIT_TICK      0
 
 #define PRINT_TICK                 (PRINT_ENTER_EXIT_TICK)
+#define TICK_TYPE 2
 
 /**********************************************************************
 
@@ -542,6 +543,7 @@ typedef struct rb_objspace {
 	size_t remembered_shady_object_limit;
 	size_t old_object_count;
 	size_t old_object_limit;
+	size_t old_object_count_at_gc_start;
 
 #if RGENGC_ESTIMATE_OLDMALLOC
 	size_t oldmalloc_increase;
@@ -1371,8 +1373,17 @@ heap_increment(rb_objspace_t *objspace, rb_heap_t *heap)
 #define PRINT_TICK 1
 #endif
 
+/*
+ * 1 - TSC (H/W Time Stamp Counter)
+ * 2 - getrusage
+ */
+#ifndef TICK_TYPE
+#define TICK_TYPE 2
+#endif
+
 #if PRINT_TICK
 
+#if TICK_TYPE == 1
 /* the following code is only for internal tuning. */
 
 /* Source code to use RDTSC is quoted and modified from
@@ -1382,7 +1393,7 @@ heap_increment(rb_objspace_t *objspace, rb_heap_t *heap)
 
 #if defined(__GNUC__) && defined(__i386__)
 typedef unsigned long long tick_t;
-
+#define PRItick "llu"
 static inline tick_t
 tick(void)
 {
@@ -1393,6 +1404,7 @@ tick(void)
 
 #elif defined(__GNUC__) && defined(__x86_64__)
 typedef unsigned long long tick_t;
+#define PRItick "llu"
 
 static __inline__ tick_t
 tick(void)
@@ -1405,6 +1417,7 @@ tick(void)
 #elif defined(_WIN32) && defined(_MSC_VER)
 #include <intrin.h>
 typedef unsigned __int64 tick_t;
+#define PRItick "llu"
 
 static inline tick_t
 tick(void)
@@ -1414,22 +1427,39 @@ tick(void)
 
 #else /* use clock */
 typedef clock_t tick_t;
+#define PRItick "llu"
+
 static inline tick_t
 tick(void)
 {
     return clock();
 }
-#endif
+#endif /* TSC */
+
+#elif TICK_TYPE == 2
+typedef double tick_t;
+#define PRItick "4.9f"
+
+static inline tick_t
+tick(void)
+{
+    return getrusage_time();
+}
+#else /* TICK_TYPE */
+#error "choose tick type"
+#endif /* TICK_TYPE */
+
 #define MEASURE_LINE(expr) do { \
     volatile tick_t start_time = tick(); \
     volatile tick_t end_time; \
     expr; \
     end_time = tick(); \
-    fprintf(stderr, "0\t%lld\t%s\n", end_time - start_time, #expr); \
+    fprintf(stderr, "0\t%"PRItick"\t%s\n", end_time - start_time, #expr); \
 } while (0)
-#else /* USE_TICK */
+
+#else /* PRINT_TICK */
 #define MEASURE_LINE(expr) expr
-#endif /* USE_TICK */
+#endif /* PRINT_TICK */
 
 #ifndef PRINT_ENTER_EXIT_TICK
 #define PRINT_ENTER_EXIT_TICK 1
@@ -1440,35 +1470,61 @@ tick(void)
 static tick_t last_exit_tick;
 static tick_t enter_tick;
 static int enter_count = 0;
+static char last_gc_status[0x10];
+
+static void
+fill_gc_status(rb_objspace_t *objspace, char *buff)
+{
+    int i = 0;
+    if (is_marking(objspace)) {
+	buff[i++] = 'M';
+	if (is_full_marking(objspace))        buff[i++] = 'F';
+	if (is_incremental_marking(objspace)) buff[i++] = 'I';
+    }
+    else if (is_sweeping(objspace)) {
+	buff[i++] = 'S';
+	if (is_lazy_sweeping(heap_eden))      buff[i++] = 'L';
+    }
+    else {
+	buff[i++] = 'N';
+    }
+    buff[i] = '\0';
+}
+
 
 static inline void
-gc_record(int direction, const char *event)
+gc_record(rb_objspace_t *objspace, int direction, const char *event)
 {
     if (direction == 0) { /* enter */
 	enter_count++;
 	enter_tick = tick();
+	fill_gc_status(objspace, last_gc_status);
     }
     else { /* exit */
 	tick_t exit_tick = tick();
+	char current_gc_status[0x10];
+	fill_gc_status(objspace, current_gc_status);
 #if 1
 	/* [last mutator time] [gc time] [event] */
-	fprintf(stderr, "%llu\t%llu\t%s\n",
+	fprintf(stderr, "%"PRItick"\t%"PRItick"\t%s\t[%s->%s]\n",
 		enter_tick - last_exit_tick,
 		exit_tick - enter_tick,
-		event);
+		event,
+		last_gc_status, current_gc_status);
 	last_exit_tick = exit_tick;
 #else
 	/* [enter_tick] [gc time] [event] */
-	fprintf(stderr, "%llu\t%llu\t%s\n",
+	fprintf(stderr, "%"PRItick"\t%"PRItick"\t%s\t[%s->%s]\n",
 		enter_tick,
 		exit_tick - enter_tick,
-		event);
+		event,
+		last_gc_status, current_gc_status);
 #endif
     }
 }
 #else /* PRINT_ENTER_EXIT_TICK */
 static inline void
-gc_record(int direction, const char *event)
+gc_record(rb_objspace_t *objspace, int direction, const char *event)
 {
     /* null */
 }
@@ -1481,7 +1537,7 @@ gc_enter(rb_objspace_t *objspace, const char *event)
 
     during_gc = TRUE;
     gc_report(1, objspace, "gc_entr: %s\n", event);
-    gc_record(0, event);
+    gc_record(objspace, 0, event);
 }
 
 static inline void
@@ -1489,7 +1545,7 @@ gc_exit(rb_objspace_t *objspace, const char *event)
 {
     if (RGENGC_CHECK_MODE > 0) assert(during_gc != 0);
 
-    gc_record(1, event);
+    gc_record(objspace, 1, event);
     gc_report(1, objspace, "gc_exit: %s\n", event);
     during_gc = FALSE;
 }
@@ -1542,7 +1598,7 @@ gc_marks_continue(rb_objspace_t *objspace, rb_heap_t *heap)
 
 	if (slots > 0) {
 	    gc_report(2, objspace, "gc_marks_continue: provide %d slots from %s.\n", slots, from);
-	    gc_marks_step(objspace, slots * 2);
+	    gc_marks_step(objspace, slots);
 	}
 	else {
 	    gc_report(2, objspace, "gc_marks_continue: no more pooled pages (stack depth: %d).\n", (int)mark_stack_size(&objspace->mark_stack));
@@ -3171,7 +3227,7 @@ gc_page_sweep(rb_objspace_t *objspace, rb_heap_t *heap, struct heap_page *sweep_
 			  break;
 		      }
 
-		      /* minor cases */
+			/* minor cases */
 		      case T_ZOMBIE:
 			/* already counted */
 			break;
@@ -3219,7 +3275,7 @@ gc_page_sweep(rb_objspace_t *objspace, rb_heap_t *heap, struct heap_page *sweep_
 static void
 gc_heap_prepare_minimum_pages(rb_objspace_t *objspace, rb_heap_t *heap)
 {
-    if (!heap->free_pages) {
+    if (!heap->free_pages && heap_increment(objspace, heap) == FALSE) {
 	/* there is no free after page_sweep() */
 	heap_set_increment(objspace, 1);
 	if (!heap_increment(objspace, heap)) { /* can't allocate additional free objects */
@@ -3257,7 +3313,7 @@ gc_sweep_start(rb_objspace_t *objspace)
 
     objspace->stat = sweeping;
 
-    gc_report(1, objspace, "gc_sweep_start\n");
+    gc_report(1, objspace, "gc_sweep_start (%s)\n", objspace->rincgc.immediate_sweep ? "immediate" : "lazy");
 
     /* sweep unlinked method entries */
     if (GET_VM()->unlinked_method_entry_list) {
@@ -4973,6 +5029,7 @@ gc_marks_start(rb_objspace_t *objspace, int full_mark)
     gc_report(1, objspace, "gc_marks_start: (%s)\n", full_mark ? "full" : "minor");
     objspace->stat = marking;
     objspace->marked_objects = 0;
+    objspace->rgengc.old_object_count_at_gc_start = objspace->rgengc.old_object_count;
 
 #if USE_RGENGC
     objspace->rgengc.during_minor_gc = full_mark ? FALSE : TRUE;
@@ -5070,32 +5127,37 @@ gc_marks_finish(rb_objspace_t *objspace)
     gc_marks_check(objspace, gc_check_after_marks_i, "after_marks");
 #endif
 
-    { /* decide full GC is needed or not */
+    {
+	/* decide full GC is needed or not */
 	rb_heap_t *heap = heap_eden;
 	size_t sweep_slots;
 
 	if (is_full_marking(objspace)) {
+	    assert(heap->total_slots >= objspace->marked_objects);
 	    sweep_slots = heap->total_slots - objspace->marked_objects;
 	}
 	else {
-	    sweep_slots = heap->total_slots - objspace->marked_objects - objspace->rgengc.old_object_count;
+	    assert(heap->total_slots >= objspace->marked_objects + objspace->rgengc.old_object_count_at_gc_start);
+	    sweep_slots = heap->total_slots - objspace->marked_objects - objspace->rgengc.old_object_count_at_gc_start;
 	}
 	/* sweep_slots is a number of slots will be swept. not include final slots, so it is an estimation. */
 
 	if (sweep_slots < heap_pages_min_free_slots) {
 	    if (!is_full_marking(objspace) && objspace->profile.count - objspace->rgengc.last_major_gc > 2 /* magic number */) {
+		gc_report(1, objspace, "gc_marks_finish (next is full GC!!)\n");
 		objspace->rgengc.need_major_gc = GPR_FLAG_MAJOR_BY_NOFREE;
 	    }
 	    else {
+		gc_report(1, objspace, "gc_marks_finish (increment!!)\n");
 		heap_set_increment(objspace, heap_extend_pages(objspace));
 		heap_increment(objspace, heap);
 	    }
 	}
+	gc_report(1, objspace, "gc_marks_finish (marks %d objects, old %d objects, total %d slots, sweep %d slots, next GC: %s)\n",
+		  (int)objspace->marked_objects, (int)objspace->rgengc.old_object_count, (int)heap->total_slots, (int)sweep_slots,
+		  objspace->rgengc.need_major_gc ? "major" : "minor");
     }
 
-    gc_report(1, objspace, "gc_marks_finish (marks %d objects in %d total slots, next GC: %s)\n",
-	      (int)objspace->marked_objects, (int)heap_eden->total_slots,
-	      objspace->rgengc.need_major_gc ? "major" : "minor");
 
     gc_event_hook(objspace, RUBY_INTERNAL_EVENT_GC_END_MARK, 0);
 
@@ -7479,6 +7541,7 @@ wmap_size(VALUE self)
 
 #define GC_PROFILE_RECORD_DEFAULT_SIZE 100
 
+/* return sec in user time */
 static double
 getrusage_time(void)
 {
@@ -7508,25 +7571,25 @@ getrusage_time(void)
 
 #ifdef _WIN32
     {
-        FILETIME creation_time, exit_time, kernel_time, user_time;
-        ULARGE_INTEGER ui;
-        LONG_LONG q;
-        double t;
+	FILETIME creation_time, exit_time, kernel_time, user_time;
+	ULARGE_INTEGER ui;
+	LONG_LONG q;
+	double t;
 
-        if (GetProcessTimes(GetCurrentProcess(),
-                            &creation_time, &exit_time, &kernel_time, &user_time) != 0) {
-            memcpy(&ui, &user_time, sizeof(FILETIME));
-            q = ui.QuadPart / 10L;
-            t = (DWORD)(q % 1000000L) * 1e-6;
-            q /= 1000000L;
+	if (GetProcessTimes(GetCurrentProcess(),
+			    &creation_time, &exit_time, &kernel_time, &user_time) != 0) {
+	    memcpy(&ui, &user_time, sizeof(FILETIME));
+	    q = ui.QuadPart / 10L;
+	    t = (DWORD)(q % 1000000L) * 1e-6;
+	    q /= 1000000L;
 #ifdef __GNUC__
-            t += q;
+	    t += q;
 #else
-            t += (double)(DWORD)(q >> 16) * (1 << 16);
-            t += (DWORD)q & ~(~0 << 16);
+	    t += (double)(DWORD)(q >> 16) * (1 << 16);
+	    t += (DWORD)q & ~(~0 << 16);
 #endif
-            return t;
-        }
+	    return t;
+	}
     }
 #endif
 
