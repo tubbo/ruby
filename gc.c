@@ -4899,13 +4899,12 @@ gc_marks_start(rb_objspace_t *objspace, int full_mark)
     /* start marking */
     gc_report(1, objspace, "gc_marks_start: (%s)\n", full_mark ? "full" : "minor");
     objspace->stat = marking;
-    objspace->marked_objects = 0;
     objspace->rgengc.old_object_count_at_gc_start = objspace->rgengc.old_object_count;
 
 #if USE_RGENGC
-    objspace->rgengc.during_minor_gc = full_mark ? FALSE : TRUE;
-
-    if (is_full_marking(objspace)) {
+    if (full_mark) {
+	objspace->rgengc.during_minor_gc = FALSE;
+	objspace->marked_objects = 0;
 	objspace->profile.major_gc_count++;
 	objspace->rgengc.remembered_shady_object_count = 0;
 	objspace->rgengc.old_object_count = 0;
@@ -4913,6 +4912,8 @@ gc_marks_start(rb_objspace_t *objspace, int full_mark)
 	rgengc_mark_and_rememberset_clear(objspace, heap_eden);
     }
     else {
+	objspace->rgengc.during_minor_gc = TRUE;
+	objspace->marked_objects = objspace->rgengc.old_object_count; /* OLD objects are already marked */
 	objspace->profile.minor_gc_count++;
 	rgengc_rememberset_mark(objspace, heap_eden);
     }
@@ -5017,20 +5018,13 @@ gc_marks_finish(rb_objspace_t *objspace)
     gc_marks_check(objspace, gc_check_after_marks_i, "after_marks");
 #endif
 
-    {
-	/* decide full GC is needed or not */
+    {   /* decide full GC is needed or not */
 	rb_heap_t *heap = heap_eden;
-	size_t sweep_slots;
+	size_t sweep_slots =
+	  (heap_pages_increment * HEAP_OBJ_LIMIT) +       /* allocatable slots in empty pages */
+	  (heap->total_slots - objspace->marked_objects); /* will be sweep slots */
 
-	if (is_full_marking(objspace)) {
-	    if (RGENGC_CHECK_MODE) assert(heap->total_slots >= objspace->marked_objects);
-	    sweep_slots = heap->total_slots - objspace->marked_objects;
-	}
-	else {
-	    if (RGENGC_CHECK_MODE) assert(heap->total_slots >= objspace->marked_objects + objspace->rgengc.old_object_count_at_gc_start);
-	    sweep_slots = heap->total_slots - objspace->marked_objects - objspace->rgengc.old_object_count_at_gc_start;
-	}
-	/* sweep_slots is a number of slots will be swept. not include final slots, so it is an estimation. */
+	if (RGENGC_CHECK_MODE) assert(heap->total_slots >= objspace->marked_objects);
 
 	if (sweep_slots < heap_pages_min_free_slots) {
 	    if (!is_full_marking(objspace) && objspace->profile.count - objspace->rgengc.last_major_gc > 2 /* magic number */) {
