@@ -1476,11 +1476,14 @@ heap_prepare(rb_objspace_t *objspace, rb_heap_t *heap)
 {
     if (RGENGC_CHECK_MODE) assert(heap->free_pages == NULL);
 
-    if (is_lazy_sweeping(heap)) {
+    switch (objspace->stat) {
+      case sweeping:
 	gc_sweep_continue(objspace, heap);
-    }
-    else if (is_incremental_marking(objspace)) {
+	break;
+
+      case marking:
 	gc_marks_continue(objspace, heap);
+	break;
     }
 
     if (heap->free_pages == NULL &&
@@ -5003,7 +5006,8 @@ gc_marks_finish(rb_objspace_t *objspace)
     }
 
     if (heap_eden->pooled_pages) {
-	while (heap_move_pooled_pages_to_free_pages(heap_eden));
+	while (heap_move_pooled_pages_to_free_pages(heap_eden) != NULL);
+	gc_report(1, objspace, "gc_marks_finish: pooled pages are exists. retry.\n");
 	return FALSE; /* continue marking phase */
     }
 
@@ -5050,7 +5054,7 @@ gc_marks_finish(rb_objspace_t *objspace)
 static void
 gc_marks_step(rb_objspace_t *objspace, int slots)
 {
-    if (RGENGC_CHECK_MODE) assert(is_incremental_marking(objspace));
+    if (RGENGC_CHECK_MODE) assert(is_marking(objspace));
 
     if (gc_mark_stacked_objects_incremental(objspace, slots)) {
 	if (gc_marks_finish(objspace)) {
@@ -5684,6 +5688,7 @@ gc_start(rb_objspace_t *objspace, int full_mark, int immediate_sweep, int reason
     if (!ready_to_gc(objspace)) return TRUE; /* GC is not allowed */
 
     if (RGENGC_CHECK_MODE) {
+	assert(objspace->stat == none);
 	assert(!is_lazy_sweeping(heap_eden));
 	assert(!is_incremental_marking(objspace));
 #if RGENGC_CHECK_MODE >= 2
@@ -5790,19 +5795,8 @@ struct objspace_and_reason {
     int immediate_sweep;
 };
 
-#ifndef PRINT_ENTER_EXIT_TICK
-#define PRINT_ENTER_EXIT_TICK 1
-#endif
-
-#if PRINT_ENTER_EXIT_TICK
-
-static tick_t last_exit_tick;
-static tick_t enter_tick;
-static int enter_count = 0;
-static char last_gc_status[0x10];
-
 static void
-fill_gc_status(rb_objspace_t *objspace, char *buff)
+gc_current_status_fill(rb_objspace_t *objspace, char *buff)
 {
     int i = 0;
     if (is_marking(objspace)) {
@@ -5820,18 +5814,37 @@ fill_gc_status(rb_objspace_t *objspace, char *buff)
     buff[i] = '\0';
 }
 
+static const char *
+gc_current_status(rb_objspace_t *objspace)
+{
+    static char buff[0x10];
+    gc_current_status_fill(objspace, buff);
+    return buff;
+}
+
+#ifndef PRINT_ENTER_EXIT_TICK
+#define PRINT_ENTER_EXIT_TICK 1
+#endif
+
+#if PRINT_ENTER_EXIT_TICK
+
+static tick_t last_exit_tick;
+static tick_t enter_tick;
+static int enter_count = 0;
+static char last_gc_status[0x10];
+
 static inline void
 gc_record(rb_objspace_t *objspace, int direction, const char *event)
 {
     if (direction == 0) { /* enter */
 	enter_count++;
 	enter_tick = tick();
-	fill_gc_status(objspace, last_gc_status);
+	gc_current_status_fill(objspace, last_gc_status);
     }
     else { /* exit */
 	tick_t exit_tick = tick();
 	char current_gc_status[0x10];
-	fill_gc_status(objspace, current_gc_status);
+	gc_current_status_fill(objspace, current_gc_status);
 #if 1
 	/* [last mutator time] [gc time] [event] */
 	fprintf(stderr, "%"PRItick"\t%"PRItick"\t%s\t[%s->%s]\n",
@@ -5864,7 +5877,7 @@ gc_enter(rb_objspace_t *objspace, const char *event)
     if (RGENGC_CHECK_MODE) assert(during_gc == 0);
 
     during_gc = TRUE;
-    gc_report(1, objspace, "gc_entr: %s\n", event);
+    gc_report(1, objspace, "gc_entr: %s [%s]\n", event, gc_current_status(objspace));
     gc_record(objspace, 0, event);
 }
 
@@ -5874,7 +5887,7 @@ gc_exit(rb_objspace_t *objspace, const char *event)
     if (RGENGC_CHECK_MODE > 0) assert(during_gc != 0);
 
     gc_record(objspace, 1, event);
-    gc_report(1, objspace, "gc_exit: %s\n", event);
+    gc_report(1, objspace, "gc_exit: %s [%s]\n", event, gc_current_status(objspace));
     during_gc = FALSE;
 }
 
