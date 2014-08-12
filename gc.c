@@ -1981,7 +1981,6 @@ Init_heap(void)
 #endif
 
     heap_add_pages(objspace, heap_eden, gc_params.heap_init_slots / HEAP_OBJ_LIMIT);
-
     init_mark_stack(&objspace->mark_stack);
 
 #ifdef USE_SIGALTSTACK
@@ -3506,7 +3505,7 @@ pop_mark_stack_chunk(mark_stack_t *stack)
     stack->index = stack->limit;
 }
 
-#if defined(ENABLE_VM_OBJSPACE) && ENABLE_VM_OBJSPACE
+#if (defined(ENABLE_VM_OBJSPACE) && ENABLE_VM_OBJSPACE) || (RGENGC_CHECK_MODE >= 4)
 static void
 free_stack_chunks(mark_stack_t *stack)
 {
@@ -3578,8 +3577,9 @@ init_mark_stack(mark_stack_t *stack)
 {
     int i;
 
-    if (0) push_mark_stack_chunk(stack);
+    MEMZERO(stack, sizeof(mark_stack_t), 1);
     stack->index = stack->limit = STACK_CHUNK_SIZE;
+    stack->cache_size = 0;
 
     for (i=0; i < 4; i++) {
         add_stack_chunk_cache(stack, stack_chunk_alloc());
@@ -4521,7 +4521,6 @@ reflist_dump(struct reflist *refs)
     }
 }
 
-#if RGENGC_CHECK_MODE >= 4
 static int
 reflist_refered_from_machine_context(struct reflist *refs)
 {
@@ -4532,7 +4531,6 @@ reflist_refered_from_machine_context(struct reflist *refs)
     }
     return 0;
 }
-#endif
 
 struct allrefs {
     rb_objspace_t *objspace;
@@ -4546,6 +4544,7 @@ struct allrefs {
     struct st_table *references;
     const char *category;
     VALUE root_obj;
+    mark_stack_t mark_stack;
 };
 
 static int
@@ -4570,7 +4569,7 @@ allrefs_i(VALUE obj, void *ptr)
     struct allrefs *data = (struct allrefs *)ptr;
 
     if (allrefs_add(data, obj)) {
-	push_mark_stack(&data->objspace->mark_stack, obj);
+	push_mark_stack(&data->mark_stack, obj);
     }
 }
 
@@ -4582,7 +4581,7 @@ allrefs_roots_i(VALUE obj, void *ptr)
     data->root_obj = MAKE_ROOTSIG(data->category);
 
     if (allrefs_add(data, obj)) {
-	push_mark_stack(&data->objspace->mark_stack, obj);
+	push_mark_stack(&data->mark_stack, obj);
     }
 }
 
@@ -4592,9 +4591,12 @@ objspace_allrefs(rb_objspace_t *objspace)
     struct allrefs data;
     struct mark_func_data_struct mfd;
     VALUE obj;
+    int prev_dont_gc = dont_gc;
+    dont_gc = TRUE;
 
     data.objspace = objspace;
     data.references = st_init_numtable();
+    init_mark_stack(&data.mark_stack);
 
     mfd.mark_func = allrefs_roots_i;
     mfd.data = &data;
@@ -4606,11 +4608,12 @@ objspace_allrefs(rb_objspace_t *objspace)
     POP_MARK_FUNC_DATA();
 
     /* traverse rest objects reachable from root objects */
-    while (pop_mark_stack(&objspace->mark_stack, &obj)) {
+    while (pop_mark_stack(&data.mark_stack, &obj)) {
 	rb_objspace_reachable_objects_from(data.root_obj = obj, allrefs_i, &data);
     }
-    shrink_stack_chunk_cache(&objspace->mark_stack);
+    free_stack_chunks(&data.mark_stack);
 
+    dont_gc = prev_dont_gc;
     return data.references;
 }
 
@@ -4649,7 +4652,6 @@ allrefs_dump(rb_objspace_t *objspace)
 }
 #endif
 
-#if RGENGC_CHECK_MODE >= 4
 static int
 gc_check_after_marks_i(st_data_t k, st_data_t v, void *ptr)
 {
@@ -4674,7 +4676,6 @@ gc_check_after_marks_i(st_data_t k, st_data_t v, void *ptr)
     }
     return ST_CONTINUE;
 }
-#endif
 
 static void
 gc_marks_check(rb_objspace_t *objspace, int (*checker_func)(ANYARGS), const char *checker_name)
@@ -4707,8 +4708,7 @@ gc_marks_check(rb_objspace_t *objspace, int (*checker_func)(ANYARGS), const char
     objspace->rgengc.oldmalloc_increase = saved_oldmalloc_increase;
 #endif
 }
-
-#endif /* RGENGC_CHECK_MODE >= 2 */
+#endif /* RGENGC_CHECK_MODE >= 4 */
 
 struct verify_internal_consistency_struct {
     rb_objspace_t *objspace;
@@ -6843,7 +6843,7 @@ objspace_malloc_increase(rb_objspace_t *objspace, void *mem, size_t new_size, si
 
     if (type == MEMOP_TYPE_MALLOC) {
       retry:
-	if (malloc_increase > malloc_limit && ruby_native_thread_p()) {
+	if (malloc_increase > malloc_limit && ruby_native_thread_p() && !dont_gc) {
 	    if (ruby_thread_has_gvl_p() && is_lazy_sweeping(heap_eden)) {
 		gc_rest(objspace); /* gc_rest can reduce malloc_increase */
 		goto retry;
