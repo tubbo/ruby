@@ -5008,7 +5008,7 @@ gc_marks_finish(rb_objspace_t *objspace)
 	gc_marks_wb_unprotected_objects(objspace);
     }
 
-    if (is_full_marking(objspace)) { /* after major GC */
+    if (is_full_marking(objspace)) {
 	/* See the comment about RUBY_GC_HEAP_OLDOBJECT_LIMIT_FACTOR */
 	const double r = gc_params.oldobject_limit_factor;
 	objspace->rgengc.remembered_shady_object_limit = (size_t)(objspace->rgengc.remembered_shady_object_count * r);
@@ -5038,6 +5038,13 @@ gc_marks_finish(rb_objspace_t *objspace)
 		heap_increment(objspace, heap);
 	    }
 	}
+	if (objspace->rgengc.remembered_shady_object_count > objspace->rgengc.remembered_shady_object_limit) {
+	    objspace->rgengc.need_major_gc |= GPR_FLAG_MAJOR_BY_SHADY;
+	}
+	if (objspace->rgengc.old_object_count > objspace->rgengc.old_object_limit) {
+	    objspace->rgengc.need_major_gc |= GPR_FLAG_MAJOR_BY_OLDGEN;
+	}
+
 	gc_report(1, objspace, "gc_marks_finish (marks %d objects, old %d objects, total %d slots, sweep %d slots, next GC: %s)\n",
 		  (int)objspace->marked_objects, (int)objspace->rgengc.old_object_count, (int)heap->total_slots, (int)sweep_slots,
 		  objspace->rgengc.need_major_gc ? "major" : "minor");
@@ -5067,6 +5074,7 @@ gc_marks_rest(rb_objspace_t *objspace)
     gc_report(1, objspace, "gc_marks_rest\n");
 
     heap_eden->pooled_pages = NULL;
+
     if (is_incremental_marking(objspace)) {
 	do {
 	    while (gc_mark_stacked_objects_incremental(objspace, INT_MAX) == FALSE);
@@ -5076,6 +5084,8 @@ gc_marks_rest(rb_objspace_t *objspace)
 	gc_mark_stacked_objects_all(objspace);
 	gc_marks_finish(objspace);
     }
+
+    /* move to sweep */
     gc_sweep(objspace);
 }
 
@@ -5708,14 +5718,6 @@ gc_start(rb_objspace_t *objspace, int full_mark, int immediate_sweep, int reason
 #if USE_RGENGC
 	if (objspace->rgengc.need_major_gc) {
 	    reason |= objspace->rgengc.need_major_gc;
-	    full_mark = TRUE;
-	}
-	if (objspace->rgengc.remembered_shady_object_count > objspace->rgengc.remembered_shady_object_limit) {
-	    reason |= GPR_FLAG_MAJOR_BY_SHADY;
-	    full_mark = TRUE;
-	}
-	if (objspace->rgengc.old_object_count > objspace->rgengc.old_object_limit) {
-	    reason |= GPR_FLAG_MAJOR_BY_OLDGEN;
 	    full_mark = TRUE;
 	}
 	objspace->rgengc.need_major_gc = GPR_FLAG_NONE;
