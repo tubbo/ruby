@@ -1476,14 +1476,11 @@ heap_prepare(rb_objspace_t *objspace, rb_heap_t *heap)
 {
     if (RGENGC_CHECK_MODE) assert(heap->free_pages == NULL);
 
-    switch (objspace->stat) {
-      case sweeping:
+    if (is_lazy_sweeping(heap)) {
 	gc_sweep_continue(objspace, heap);
-	break;
-
-      case marking:
+    }
+    else if (is_incremental_marking(objspace)) {
 	gc_marks_continue(objspace, heap);
-	break;
     }
 
     if (heap->free_pages == NULL &&
@@ -4989,6 +4986,12 @@ gc_marks_finish(rb_objspace_t *objspace)
 
     /* finish incremental GC */
     if (is_incremental_marking(objspace)) {
+	if (heap_eden->pooled_pages) {
+	    heap_move_pooled_pages_to_free_pages(heap_eden);
+	    gc_report(1, objspace, "gc_marks_finish: pooled pages are exists. retry.\n");
+	    return FALSE; /* continue marking phase */
+	}
+
 	if (RGENGC_CHECK_MODE && is_mark_stack_empty(&objspace->mark_stack) == 0) {
 	    rb_bug("gc_marks_finish: mark stack is not empty (%d).", (int)mark_stack_size(&objspace->mark_stack));
 	}
@@ -5003,12 +5006,6 @@ gc_marks_finish(rb_objspace_t *objspace)
 	objspace->rincgc.during_incremental_marking = FALSE;
 	/* check children of all marked wb-unprotected objects */
 	gc_marks_wb_unprotected_objects(objspace);
-    }
-
-    if (heap_eden->pooled_pages) {
-	while (heap_move_pooled_pages_to_free_pages(heap_eden) != NULL);
-	gc_report(1, objspace, "gc_marks_finish: pooled pages are exists. retry.\n");
-	return FALSE; /* continue marking phase */
     }
 
     if (is_full_marking(objspace)) { /* after major GC */
@@ -5875,6 +5872,7 @@ static inline void
 gc_enter(rb_objspace_t *objspace, const char *event)
 {
     if (RGENGC_CHECK_MODE) assert(during_gc == 0);
+    if (RGENGC_CHECK_MODE >= 3) gc_verify_internal_consistency(Qnil);
 
     during_gc = TRUE;
     gc_report(1, objspace, "gc_entr: %s [%s]\n", event, gc_current_status(objspace));
@@ -5884,7 +5882,7 @@ gc_enter(rb_objspace_t *objspace, const char *event)
 static inline void
 gc_exit(rb_objspace_t *objspace, const char *event)
 {
-    if (RGENGC_CHECK_MODE > 0) assert(during_gc != 0);
+    if (RGENGC_CHECK_MODE) assert(during_gc != 0);
 
     gc_record(objspace, 1, event);
     gc_report(1, objspace, "gc_exit: %s [%s]\n", event, gc_current_status(objspace));
