@@ -5028,7 +5028,7 @@ gc_marks_finish(rb_objspace_t *objspace)
 	if (RGENGC_CHECK_MODE) assert(heap->total_slots >= objspace->marked_objects);
 
 	if (sweep_slots < heap_pages_min_free_slots) {
-	    if (!is_full_marking(objspace) && objspace->profile.count - objspace->rgengc.last_major_gc > 2 /* magic number */) {
+	    if (!is_full_marking(objspace) && objspace->profile.count - objspace->rgengc.last_major_gc > 3 /* magic number */) {
 		gc_report(1, objspace, "gc_marks_finish (next is full GC!!)\n");
 		objspace->rgengc.need_major_gc = GPR_FLAG_MAJOR_BY_NOFREE;
 	    }
