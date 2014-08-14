@@ -4020,11 +4020,9 @@ rb_objspace_marked_object_p(VALUE obj)
     return RVALUE_MARKED(obj) ? TRUE : FALSE;
 }
 
-static void
-gc_mark_children(rb_objspace_t *objspace, VALUE obj)
+static inline void
+gc_mark_set_parent(rb_objspace_t *objspace, VALUE obj)
 {
-    register RVALUE *any = RANY(obj);
-
 #if USE_RGENGC
     if (RVALUE_OLD_P(obj)) {
 	objspace->rgengc.parent_object = obj;
@@ -4033,6 +4031,14 @@ gc_mark_children(rb_objspace_t *objspace, VALUE obj)
 	objspace->rgengc.parent_object = Qfalse;
     }
 #endif
+}
+
+static void
+gc_mark_children(rb_objspace_t *objspace, VALUE obj)
+{
+    register RVALUE *any = RANY(obj);
+
+    gc_mark_set_parent(objspace, obj);
 
     if (FL_TEST(obj, FL_EXIVAR)) {
 	rb_mark_generic_ivar(obj);
@@ -5338,7 +5344,7 @@ rgengc_mark_and_rememberset_clear(rb_objspace_t *objspace, rb_heap_t *heap)
 static void
 gc_mark_from(rb_objspace_t *objspace, VALUE obj, VALUE parent)
 {
-    objspace->rgengc.parent_object = parent;
+    gc_mark_set_parent(objspace, parent);
     rgengc_check_relation(objspace, obj);
     gc_mark_ptr(objspace, obj);
     gc_aging(objspace, obj);
