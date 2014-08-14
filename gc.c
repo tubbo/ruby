@@ -3807,7 +3807,7 @@ mark_m_tbl_wrapper(rb_objspace_t *objspace, struct method_table_wrapper *wrapper
 {
     struct mark_tbl_arg arg;
     if (!wrapper || !wrapper->tbl) return;
-    if (LIKELY(objspace->mark_func_data == 0) && 0 /* TODO: disable */) {
+    if (LIKELY(objspace->mark_func_data == 0) && !is_incremental_marking(objspace)) {
 	/* prevent multiple marking during same GC cycle,
 	 * since m_tbl is shared between several T_ICLASS */
 	size_t serial = rb_gc_count();
@@ -5045,8 +5045,8 @@ gc_marks_finish(rb_objspace_t *objspace)
 	    objspace->rgengc.need_major_gc |= GPR_FLAG_MAJOR_BY_OLDGEN;
 	}
 
-	gc_report(1, objspace, "gc_marks_finish (marks %d objects, old %d objects, total %d slots, sweep %d slots, next GC: %s)\n",
-		  (int)objspace->marked_objects, (int)objspace->rgengc.old_object_count, (int)heap->total_slots, (int)sweep_slots,
+	gc_report(1, objspace, "gc_marks_finish (marks %d objects, old %d objects, total %d slots, sweep %d slots, increment: %d, next GC: %s)\n",
+		  (int)objspace->marked_objects, (int)objspace->rgengc.old_object_count, (int)heap->total_slots, (int)sweep_slots, (int)heap_pages_increment,
 		  objspace->rgengc.need_major_gc ? "major" : "minor");
     }
 
@@ -5748,7 +5748,7 @@ gc_start(rb_objspace_t *objspace, const int full_mark, const int immediate_mark,
 	objspace->rincgc.during_incremental_marking = FALSE;
     }
     else {
-	objspace->rincgc.during_incremental_marking = !do_full_mark;
+	objspace->rincgc.during_incremental_marking = do_full_mark;
     }
 
     if (!GC_ENABLE_LAZY_SWEEP || objspace->flags.dont_incremental) {
