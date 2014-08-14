@@ -5375,7 +5375,6 @@ rb_gc_writebarrier_incremental(VALUE a, VALUE b)
 	return FALSE;
     }
     else {
-	fprintf(stderr, "rb_gc_writebarrier_incremental: %s -> %s\n", obj_info(a), obj_info(b));
 	gc_report(2, objspace, "rb_gc_writebarrier_incremental: [LG] %s -> %s\n", obj_info(a), obj_info(b));
 
 	if (RVALUE_BLACK_P(a) && RVALUE_WHITE_P(b)) {
