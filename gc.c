@@ -4397,6 +4397,8 @@ gc_mark_roots(rb_objspace_t *objspace, const char **categoryp)
     rb_thread_t *th = GET_THREAD();
     if (categoryp) *categoryp = "xxx";
 
+    objspace->rgengc.parent_object = Qfalse;
+
 #if PRINT_ROOT_TICKS
     tick_t start_tick = tick();
     int tick_count = 0;
@@ -4917,8 +4919,6 @@ gc_marks_start(rb_objspace_t *objspace, int full_mark)
 	objspace->profile.minor_gc_count++;
 	rgengc_rememberset_mark(objspace, heap_eden);
     }
-
-    objspace->rgengc.parent_object = Qfalse; /* should clear just before gc_mark_roots() */
 #endif
     gc_mark_roots(objspace, NULL);
     gc_report(1, objspace, "gc_marks_start: (%s) end, stack in %d\n", full_mark ? "full" : "minor", (int)mark_stack_size(&objspace->mark_stack));
@@ -5029,11 +5029,11 @@ gc_marks_finish(rb_objspace_t *objspace)
 
 	if (sweep_slots < heap_pages_min_free_slots) {
 	    if (!is_full_marking(objspace) && objspace->profile.count - objspace->rgengc.last_major_gc > 3 /* magic number */) {
-		gc_report(1, objspace, "gc_marks_finish (next is full GC!!)\n");
+		gc_report(1, objspace, "gc_marks_finish: next is full GC!!)\n");
 		objspace->rgengc.need_major_gc = GPR_FLAG_MAJOR_BY_NOFREE;
 	    }
 	    else {
-		gc_report(1, objspace, "gc_marks_finish (increment!!)\n");
+		gc_report(1, objspace, "gc_marks_finish: heap_set_increment!!\n");
 		heap_set_increment(objspace, heap_extend_pages(objspace));
 		heap_increment(objspace, heap);
 	    }
