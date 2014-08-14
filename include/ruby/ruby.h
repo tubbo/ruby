@@ -1123,10 +1123,12 @@ struct RStruct {
 #define OBJ_FREEZE(x) FL_SET((x), FL_FREEZE)
 
 #if USE_RGENGC
-#define OBJ_PROMOTED(x)             (SPECIAL_CONST_P(x) ? 0 : (FL_TEST_RAW((x), FL_PROMOTED0) && FL_TEST_RAW((x), FL_PROMOTED1)))
+#define OBJ_PROMOTED_RAW(x)         ((RBASIC(x)->flags & (FL_PROMOTED0|FL_PROMOTED1)) == (FL_PROMOTED0|FL_PROMOTED1))
+#define OBJ_PROMOTED(x)             (SPECIAL_CONST_P(x) ? 0 : OBJ_PROMOTED_RAW(x))
 #define OBJ_WB_UNPROTECT(x)         rb_obj_wb_unprotect(x, __FILE__, __LINE__)
 
-void rb_gc_writebarrier(VALUE a, VALUE b);
+int rb_gc_writebarrier_incremental(VALUE a, VALUE b);
+void rb_gc_writebarrier_generational(VALUE a, VALUE b);
 void rb_gc_writebarrier_unprotect(VALUE obj);
 
 #else /* USE_RGENGC */
@@ -1178,7 +1180,11 @@ rb_obj_written(VALUE a, RB_UNUSED_VAR(VALUE oldv), VALUE b, RB_UNUSED_VAR(const 
 
 #if USE_RGENGC
     if (!SPECIAL_CONST_P(b)) {
-	rb_gc_writebarrier(a, b);
+	if (rb_gc_writebarrier_incremental(a, b) == 0) {
+	    if (OBJ_PROMOTED_RAW(a) && !OBJ_PROMOTED_RAW(b)) {
+		rb_gc_writebarrier_generational(a, b);
+	    }
+	}
     }
 #endif
 
