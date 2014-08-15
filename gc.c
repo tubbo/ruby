@@ -413,8 +413,8 @@ typedef struct stack_chunk {
 typedef struct mark_stack {
     stack_chunk_t *chunk;
     stack_chunk_t *cache;
-    size_t index;
-    size_t limit;
+    int index;
+    int limit;
     size_t cache_size;
     size_t unused_cache_size;
 } mark_stack_t;
@@ -1303,7 +1303,7 @@ heap_page_allocate(rb_objspace_t *objspace)
     struct heap_page *page;
     struct heap_page_body *page_body = 0;
     size_t hi, lo, mid;
-    size_t limit = HEAP_OBJ_LIMIT;
+    int limit = HEAP_OBJ_LIMIT;
 
     /* assign heap_page body (contains heap_page_header and RVALUEs) */
     page_body = (struct heap_page_body *)aligned_malloc(HEAP_ALIGN, HEAP_SIZE);
@@ -1352,7 +1352,7 @@ heap_page_allocate(rb_objspace_t *objspace)
     if ((VALUE)start % sizeof(RVALUE) != 0) {
 	int delta = (int)(sizeof(RVALUE) - ((VALUE)start % sizeof(RVALUE)));
 	start = (RVALUE*)((VALUE)start + delta);
-	limit = (HEAP_SIZE - (size_t)((VALUE)start - (VALUE)page_body))/sizeof(RVALUE);
+	limit = (HEAP_SIZE - (int)((VALUE)start - (VALUE)page_body))/sizeof(RVALUE);
     }
     end = start + limit;
 
