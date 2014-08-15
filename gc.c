@@ -974,13 +974,6 @@ RVALUE_REMEMBERED(VALUE obj)
 }
 
 static inline int
-RVALUE_OLD_BITMAP_P(VALUE obj)
-{
-    check_rvalue_consistency(obj);
-    return (RVALUE_OLDGEN_BITMAP(obj) != 0);
-}
-
-static inline int
 RVALUE_OLD_P_RAW(VALUE obj)
 {
     const VALUE promoted = FL_PROMOTED0 | FL_PROMOTED1;
@@ -994,12 +987,14 @@ RVALUE_OLD_P(VALUE obj)
     return RVALUE_OLD_P_RAW(obj);
 }
 
+#if RGENGC_CHECK_MODE || GC_DEBUG
 static inline int
 RVALUE_AGE(VALUE obj)
 {
     check_rvalue_consistency(obj);
     return RVALUE_FLAGS_AGE(RBASIC(obj)->flags);
 }
+#endif
 
 static inline void
 RVALUE_PROMOTE_RAW(rb_objspace_t *objspace, VALUE obj)
