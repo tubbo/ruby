@@ -82,6 +82,18 @@
 #define V_UINTREF(X) V_UNION(X, puintVal)
 #endif
 
+#ifdef HAVE_LONG_LONG
+#define I8_2_NUM LL2NUM
+#define UI8_2_NUM ULL2NUM
+#define NUM2I8  NUM2LL
+#define NUM2UI8 NUM2ULL
+#else
+#define I8_2_NUM INT2NUM
+#define UI8_2_NUM UINT2NUM
+#define NUM2I8  NUM2INT
+#define NUM2UI8 NUM2UINT
+#endif
+
 #define OLE_ADDREF(X) (X) ? ((X)->lpVtbl->AddRef(X)) : 0
 #define OLE_RELEASE(X) (X) ? ((X)->lpVtbl->Release(X)) : 0
 #define OLE_FREE(x) {\
@@ -99,7 +111,6 @@
 VALUE cWIN32OLE;
 LCID cWIN32OLE_lcid;
 
-
 LPWSTR ole_vstr2wc(VALUE vstr);
 LONG reg_open_key(HKEY hkey, const char *name, HKEY *phkey);
 LONG reg_open_vkey(HKEY hkey, VALUE key, HKEY *phkey);
@@ -113,18 +124,25 @@ VALUE ole_wc2vstr(LPWSTR pw, BOOL isfree);
 #define WC2VSTR(x) ole_wc2vstr((x), TRUE)
 
 BOOL ole_initialized();
-VALUE ole_methods_from_typeinfo(ITypeInfo *pTypeInfo, int mask);
 HRESULT ole_docinfo_from_type(ITypeInfo *pTypeInfo, BSTR *name, BSTR *helpstr, DWORD *helpcontext, BSTR *helpfile);
 VALUE ole_typedesc2val(ITypeInfo *pTypeInfo, TYPEDESC *pTypeDesc, VALUE typedetails);
-VALUE ole_typelib_from_itypeinfo(ITypeInfo *pTypeInfo);
-VALUE ole_type_from_itypeinfo(ITypeInfo *pTypeInfo);
 VALUE make_inspect(const char *class_name, VALUE detail);
+void ole_val2variant(VALUE val, VARIANT *var);
+void ole_val2variant2(VALUE val, VARIANT *var);
+void ole_val2variant_ex(VALUE val, VARIANT *var, VARTYPE vt);
 VALUE ole_variant2val(VARIANT *pvar);
+HRESULT ole_val_ary2variant_ary(VALUE val, VARIANT *var, VARTYPE vt);
+VOID *val2variant_ptr(VALUE val, VARIANT *var, VARTYPE vt);
+HRESULT typelib_from_val(VALUE obj, ITypeLib **pTypeLib);
 
 #include "win32ole_variant_m.h"
 #include "win32ole_typelib.h"
 #include "win32ole_type.h"
 #include "win32ole_variable.h"
+#include "win32ole_method.h"
+#include "win32ole_param.h"
+#include "win32ole_variant.h"
+#include "win32ole_record.h"
 #include "win32ole_error.h"
 
 #endif

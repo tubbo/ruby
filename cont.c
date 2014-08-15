@@ -89,8 +89,8 @@ enum context_type {
 
 typedef struct rb_context_struct {
     enum context_type type;
-    VALUE self;
     int argc;
+    VALUE self;
     VALUE value;
     VALUE *vm_stack;
 #ifdef CAPTURE_JUST_VALID_VM_STACK
@@ -134,14 +134,14 @@ typedef struct rb_fiber_struct {
     rb_context_t cont;
     VALUE prev;
     enum fiber_status status;
-    struct rb_fiber_struct *prev_fiber;
-    struct rb_fiber_struct *next_fiber;
     /* If a fiber invokes "transfer",
      * then this fiber can't "resume" any more after that.
      * You shouldn't mix "transfer" and "resume".
      */
     int transfered;
 
+    struct rb_fiber_struct *prev_fiber;
+    struct rb_fiber_struct *next_fiber;
 #if FIBER_USE_NATIVE
 #ifdef _WIN32
     void *fib_handle;
@@ -191,7 +191,7 @@ cont_mark(void *ptr)
 	    rb_gc_mark_locations(cont->vm_stack,
 				 cont->vm_stack + cont->vm_stack_slen + cont->vm_stack_clen);
 #else
-	    rb_gc_mark_localtion(cont->vm_stack,
+	    rb_gc_mark_locations(cont->vm_stack,
 				 cont->vm_stack, cont->saved_thread.stack_size);
 #endif
 	}
