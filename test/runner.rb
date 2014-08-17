@@ -22,7 +22,6 @@ module Test::Unit
   module ZombieHunter
     def after_teardown
       super
-      GC.verify_internal_consistency
       assert_empty(Process.waitall)
     end
   end
