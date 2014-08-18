@@ -1,9 +1,10 @@
 #define RGENGC_DEBUG               0
-#define RGENGC_CHECK_MODE          0
+#define RGENGC_CHECK_MODE          2
 #define GC_ENABLE_INCREMENTAL_MARK 1
 #define PRINT_ENTER_EXIT_TICK      0
 #define RGENGC_FORCE_MAJOR_GC      0
 
+#define USE_RINCGC 1
 #define USE_TICK_T                 (PRINT_ENTER_EXIT_TICK)
 #define TICK_TYPE 2
 
@@ -19,8 +20,6 @@
   Copyright (C) 2000  Information-technology Promotion Agency, Japan
 
 **********************************************************************/
-
-#define USE_RINCGC 1
 
 #include "ruby/ruby.h"
 #include "ruby/st.h"
