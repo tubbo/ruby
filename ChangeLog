@@ -1,3 +1,42 @@
+Mon Aug 18 17:06:27 2014  Nobuyoshi Nakada  <nobu@ruby-lang.org>
+
+	* sprintf.c (rb_str_format): support rational 'f' format.
+	  [ruby-core:64382] [Bug #10136]
+
+Mon Aug 18 08:03:46 2014  SHIBATA Hiroshi  <shibata.hiroshi@gmail.com>
+
+	* spec/default.mspec: use 2.2 definition.
+
+Sun Aug 17 19:41:40 2014  Kazuki Tsujimoto  <kazuki@callcc.net>
+
+	* gc.c (obj_memsize_of): don't calculate memsize of T_NODE
+	  when called from check_gen_consistency. It fixes segmentation
+	  fault on RGENGC_CHECK_MODE >= 1 introduced by r47188.
+
+Sun Aug 17 17:08:12 2014  Masaki Suketa <masaki.suketa@nifty.ne.jp>
+
+	* ext/win32ole/win32ole.c (ole_invoke): use RHASH_SIZE instead of
+	  calling Hash#length method.
+
+Sat Aug 16 19:32:06 2014  Masaki Suketa <masaki.suketa@nifty.ne.jp>
+
+	* ext/win32ole/win32ole_event.c (evs_length): use RARRAY_LEN instead
+	  of calling Array#length method.
+
+Sat Aug 16 10:20:17 2014  Eric Wong  <e@80x24.org>
+
+	* time.c (time_timespec): fix tv_nsec overflow
+	  [Bug #10144]
+
+Fri Aug 15 20:34:17 2014  Masaki Suketa <masaki.suketa@nifty.ne.jp>
+
+	* ext/win32ole/win32ole.c: separate WIN32OLE_EVENT src from
+	  win32ole.c.
+	* ext/win32ole/win32ole.h: ditto.
+	* ext/win32ole/win32ole_event.c: ditto.
+	* ext/win32ole/win32ole_event.h: ditto.
+	* ext/win32ole/depend: ditto.
+
 Fri Aug 15 19:38:00 2014  Koichi Sasada  <ko1@atdot.net>
 
 	* iseq.c (rb_iseq_clone): Should not insert write barrier from
@@ -19,11 +58,11 @@ Fri Aug 15 19:34:33 2014  Koichi Sasada  <ko1@atdot.net>
 
 Fri Aug 15 19:27:25 2014  Koichi Sasada  <ko1@atdot.net>
 
-	* array.c (rb_ary_tmp_new): added.
+	* array.c (rb_ary_tmp_new_fill): added.
 	  This function creates internal use only array (which is completely
 	  hided by ObjectSpace.each_object) with filling nil.
 
-	  Otherwise, it can be incldues strange VALUEs.
+	  Otherwise, it can be includes strange VALUEs.
 
 	* internal.h: added.
 
