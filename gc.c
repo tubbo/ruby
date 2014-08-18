@@ -2,6 +2,7 @@
 #define RGENGC_CHECK_MODE          0
 #define GC_ENABLE_INCREMENTAL_MARK 1
 #define PRINT_ENTER_EXIT_TICK      0
+#define RGENGC_FORCE_MAJOR_GC      0
 
 #define USE_TICK_T                 (PRINT_ENTER_EXIT_TICK)
 #define TICK_TYPE 2
@@ -237,12 +238,20 @@ static ruby_gc_params_t gc_params = {
 #define RGENGC_ESTIMATE_OLDMALLOC 1
 #endif
 
+/* RGENGC_FORCE_MAJOR_GC
+ * Force major/full GC if this macro is not 0.
+ */
+#ifndef RGENGC_FORCE_MAJOR_GC
+#define RGENGC_FORCE_MAJOR_GC 0
+#endif
+
 #else /* USE_RGENGC */
 
 #define RGENGC_DEBUG       0
 #define RGENGC_CHECK_MODE  0
 #define RGENGC_PROFILE     0
 #define RGENGC_ESTIMATE_OLDMALLOC 0
+#define RGENGC_FORCE_MAJOR_GC 0
 
 #endif /* USE_RGENGC */
 
@@ -4956,7 +4965,6 @@ gc_marks_finish(rb_objspace_t *objspace)
 #if RGENGC_CHECK_MODE >= 4
     gc_marks_check(objspace, gc_check_after_marks_i, "after_marks");
 #endif
-
     {   /* decide full GC is needed or not */
 	rb_heap_t *heap = heap_eden;
 	size_t sweep_slots =
@@ -5315,14 +5323,16 @@ rb_gc_writebarrier_incremental(VALUE a, VALUE b)
     else {
 	gc_report(2, objspace, "rb_gc_writebarrier_incremental: [LG] %s -> %s\n", obj_info(a), obj_info(b));
 
-	if (RVALUE_BLACK_P(a) && RVALUE_WHITE_P(b)) {
-	    if (RVALUE_WB_UNPROTECTED(a) == FALSE) {
-		gc_report(2, objspace, "rb_gc_writebarrier: [GR] %s -> %s\n", obj_info(a), obj_info(b));
-		gc_mark_from(objspace, b, a);
+	if (RVALUE_BLACK_P(a)) {
+	    if (RVALUE_WHITE_P(b)) {
+		if (RVALUE_WB_UNPROTECTED(a) == FALSE) {
+		    gc_report(2, objspace, "rb_gc_writebarrier: [GR] %s -> %s\n", obj_info(a), obj_info(b));
+		    gc_mark_from(objspace, b, a);
+		}
 	    }
-	}
-	else if (RVALUE_OLD_P(a) && !RVALUE_OLD_P(b)) {
-	    rb_gc_writebarrier_generational(a, b);
+	    else if (RVALUE_OLD_P(a) && !RVALUE_OLD_P(b)) {
+		rb_gc_writebarrier_generational(a, b);
+	    }
 	}
 
 	return TRUE;
@@ -5742,7 +5752,9 @@ gc_start(rb_objspace_t *objspace, const int full_mark, const int immediate_mark,
 	    reason |= objspace->rgengc.need_major_gc;
 	    do_full_mark = TRUE;
 	}
+
 	objspace->rgengc.need_major_gc = GPR_FLAG_NONE;
+	if (RGENGC_FORCE_MAJOR_GC) objspace->rgengc.need_major_gc = GPR_FLAG_MAJOR_BY_NOFREE;
 #endif
     }
 
