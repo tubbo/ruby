@@ -5166,12 +5166,18 @@ rb_gc_writebarrier_incremental(VALUE a, VALUE b)
 		    gc_mark_from(objspace, b, a);
 		}
 	    }
-	    else if (RVALUE_OLD_P(a) && !RVALUE_OLD_P(b) && !RVALUE_WB_UNPROTECTED(b)) {
-		gc_report(1, objspace, "rb_gc_writebarrier_incremental: [GN] %s -> %s\n", obj_info(a), obj_info(b));
-		RVALUE_AGE_SET_OLD(objspace, b);
+	    else if (RVALUE_OLD_P(a) && !RVALUE_OLD_P(b)) {
+		if (!RVALUE_WB_UNPROTECTED(b)) {
+		    gc_report(1, objspace, "rb_gc_writebarrier_incremental: [GN] %s -> %s\n", obj_info(a), obj_info(b));
+		    RVALUE_AGE_SET_OLD(objspace, b);
 
-		if (RVALUE_BLACK_P(b)) {
-		    gc_grey(objspace, b);
+		    if (RVALUE_BLACK_P(b)) {
+			gc_grey(objspace, b);
+		    }
+		}
+		else {
+		    gc_report(1, objspace, "rb_gc_writebarrier_incremental: [LL] %s -> %s\n", obj_info(a), obj_info(b));
+		    gc_remember_unprotected(objspace, b);
 		}
 	    }
 	}
