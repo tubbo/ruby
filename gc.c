@@ -593,15 +593,16 @@ enum {
 
 struct heap_page {
     struct heap_page_body *body;
-    RVALUE *freelist;
-    RVALUE *start;
-    struct heap_page *next;
     struct heap_page *prev;
-    struct heap_page *free_next;
     rb_heap_t *heap;
     int total_slots;
     int free_slots;
     int final_slots;
+
+    struct heap_page *free_next;
+    RVALUE *start;
+    RVALUE *freelist;
+    struct heap_page *next;
 
     struct {
 	unsigned int before_sweep : 1;
@@ -5155,11 +5156,18 @@ rgengc_remembered(rb_objspace_t *objspace, VALUE obj)
     return result;
 }
 
+#ifndef PROFILE_REMEMBERSET_MARK
+#define PROFILE_REMEMBERSET_MARK 0
+#endif
+
 static void
 rgengc_rememberset_mark(rb_objspace_t *objspace, rb_heap_t *heap)
 {
     size_t j;
     struct heap_page *page = heap->pages;
+#if PROFILE_REMEMBERSET_MARK
+    int has_old = 0, has_shady = 0, has_both = 0, skip = 0;
+#endif
     gc_report(1, objspace, "rgengc_rememberset_mark: start\n");
 
     while (page) {
@@ -5170,7 +5178,11 @@ rgengc_rememberset_mark(rb_objspace_t *objspace, rb_heap_t *heap)
 	    bits_t *marking_bits = page->marking_bits;
 	    bits_t *long_lived_bits = page->long_lived_bits;
 	    bits_t *wb_unprotected_bits = page->wb_unprotected_bits;
-
+#if PROFILE_REMEMBERSET_MARK
+	    if (page->flags.has_remembered_objects && page->flags.has_long_lived_shady_objects) has_both++;
+	    else if (page->flags.has_remembered_objects) has_old++;
+	    else if (page->flags.has_long_lived_shady_objects) has_shady++;
+#endif
 	    for (j=0; j<HEAP_BITMAP_LIMIT; j++) {
 		bits[j] = marking_bits[j] | (long_lived_bits[j] & wb_unprotected_bits[j]);
 		marking_bits[j] = 0;
@@ -5201,10 +5213,18 @@ rgengc_rememberset_mark(rb_objspace_t *objspace, rb_heap_t *heap)
 		}
 	    }
 	}
+#if PROFILE_REMEMBERSET_MARK
+	else {
+	    skip++;
+	}
+#endif
 
 	page = page->next;
     }
 
+#if PROFILE_REMEMBERSET_MARK
+    fprintf(stderr, "%d\t%d\t%d\t%d\n", has_both, has_old, has_shady, skip);
+#endif
     gc_report(1, objspace, "rgengc_rememberset_mark: finished\n");
 }
 
