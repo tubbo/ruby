@@ -1,3 +1,138 @@
+Mon Aug 25 11:02:07 2014  Eric Wong  <e@80x24.org>
+
+	* vm_core.h (rb_iseq_location_t): change first_lineno type to VALUE
+	* iseq.c (rb_iseq_build_for_ruby2cext): update based on argument
+
+Sun Aug 24 16:14:46 2014  SHIBATA Hiroshi  <shibata.hiroshi@gmail.com>
+
+	* lib/e2mmap.rb: remove needless instance variables.
+	* lib/irb.rb: ditto.
+	* lib/irb/**/*.rb: ditto.
+	* lib/shell.rb: ditto.
+
+Sun Aug 24 12:44:26 2014  SHIBATA Hiroshi  <shibata.hiroshi@gmail.com>
+
+	* test/ruby/test_complex.rb: removed needless conditions.
+	* test/ruby/test_rational.rb: ditto.
+
+Sun Aug 24 11:47:39 2014  SHIBATA Hiroshi  <shibata.hiroshi@gmail.com>
+
+	* test/ruby/test_rational.rb: fixed indent.
+
+Sun Aug 24 11:44:11 2014  SHIBATA Hiroshi  <shibata.hiroshi@gmail.com>
+
+	* test/ruby/test_rational.rb: remove commented-out code.
+
+Sun Aug 24 11:09:29 2014  Eric Wong  <e@80x24.org>
+
+	* lib/benchmark.rb (measure): reduce allocations as in r47260
+
+Sun Aug 24 10:35:54 2014  Pete Higgins  <pete@peterhiggins.org>
+
+	* lib/benchmark.rb (module Benchmark): define BENCHMARK_CLOCK
+	  (realtime): use Process.clock_gettime(BENCHMARK_CLOCK)
+	  Reduces allocations to improve performance [Feature #10165]
+
+	* test/benchmark/test_benchmark.rb (test_realtime_output): new test
+
+Fri Aug 22 20:23:54 2014  Koichi Sasada  <ko1@atdot.net>
+
+	* string.c (rb_fstring): fix condition (easy to cause infinite loop!).
+
+Fri Aug 22 20:07:43 2014  Koichi Sasada  <ko1@atdot.net>
+
+	* string.c (rb_fstring, fstr_update_callback): simply delete garbage
+	  key first.
+
+	  Garbage keys can be swept by lazy sweeping invoked by creating new
+	  fstring.  So that simply do:
+	  (1) delete garbage key and return `fstr_update_callback' immediately
+	  (2) try again `fstr_update_callback()' to create a new fstr.
+
+	  This bug can be cause memory corruption, reported by
+	  http://u64.rubyci.org/~chkbuild/ruby-trunk/log/20140821T220302Z.fail.html.gz
+
+Fri Aug 22 19:30:39 2014  SHIBATA Hiroshi  <shibata.hiroshi@gmail.com>
+
+	* test/ruby/test_complex.rb: removed commented-out code.
+
+Fri Aug 22 19:25:28 2014  SHIBATA Hiroshi  <shibata.hiroshi@gmail.com>
+
+	* test/ruby/test_complex.rb: fixed broken tests. Math is not
+	  compatible CMath now.
+
+Fri Aug 22 15:36:09 2014  Nobuyoshi Nakada  <nobu@ruby-lang.org>
+
+	* common.mk (Doxyfile): revert r43888, not to require preinstalled
+	  ruby.  [ruby-core:64488] [Bug #10161]
+
+Fri Aug 22 12:32:15 2014  SHIBATA Hiroshi  <shibata.hiroshi@gmail.com>
+
+	* lib/shell.rb: removed commented-out code.
+	* lib/shell/builtin-command.rb: ditto.
+	* lib/shell/command-processor.rb: ditto.
+
+Fri Aug 22 12:21:46 2014  SHIBATA Hiroshi  <shibata.hiroshi@gmail.com>
+
+	* lib/complex.rb: removed deprecated library.
+	* lib/rational.rb: ditto.
+
+Fri Aug 22 11:38:49 2014  SHIBATA Hiroshi  <shibata.hiroshi@gmail.com>
+
+	* lib/prettyprint.rb: removed PrettyPrint#first?
+	  because it is obsoleted method since Ruby 1.8.2
+
+Thu Aug 21 17:10:31 2014  Nobuyoshi Nakada  <nobu@ruby-lang.org>
+
+	* win32/win32.c (constat_attr): manage reverse video internally
+	  since Windows console window does not manage it.  based on the
+	  patch by white leaf in [ruby-dev:48483].  [Bug #10158]
+
+Thu Aug 21 14:45:41 2014  SHIBATA Hiroshi  <shibata.hiroshi@gmail.com>
+
+	* lib/e2mmap.rb: removed commented-out code.
+
+Thu Aug 21 13:23:34 2014  SHIBATA Hiroshi  <shibata.hiroshi@gmail.com>
+
+	* lib/rinda/ring.rb: split executable code into sample directory.
+	* sample/rinda-ring.rb: ditto.
+
+Thu Aug 21 13:21:45 2014  SHIBATA Hiroshi  <shibata.hiroshi@gmail.com>
+
+	* lib/drb/acl.rb: split executable code into sample directory.
+	* sample/drb/acl.rb: ditto.
+
+Thu Aug 21 12:55:35 2014  SHIBATA Hiroshi  <shibata.hiroshi@gmail.com>
+
+	* .gitignore: ignored temporary file for Changelog.
+	  http://mkosaki.blog46.fc2.com/blog-entry-1284.html
+
+Thu Aug 21 12:40:22 2014  SHIBATA Hiroshi  <shibata.hiroshi@gmail.com>
+
+	* lib/net/imap.rb: split executable code into sample directory.
+	* sample/net-imap.rb: ditto.
+
+Thu Aug 21 12:23:56 2014  SHIBATA Hiroshi  <shibata.hiroshi@gmail.com>
+
+	* lib/net/imap.rb: removed commented-out code.
+
+Wed Aug 20 17:27:02 2014  Nobuyoshi Nakada  <nobu@ruby-lang.org>
+
+	* configure.in (RUBY_TRY_CFLAGS, RUBY_TRY_LDFLAGS),
+	  (RUBY_CHECK_BUILTIN_SETJMP, RUBY_SETJMP_TYPE),
+	  (RUBY_STACK_GROW_DIRECTION): quote defun names, for some
+	  versions of autoconf possibly.  [ruby-core:64473] [Bug #10156]
+
+Tue Aug 19 22:28:32 2014  Nobuyoshi Nakada  <nobu@ruby-lang.org>
+
+	* sprintf.c (rb_str_format): fix condition to round.
+	  [ruby-core:64454] [Bug #10151]
+
+Tue Aug 19 22:22:45 2014  Nobuyoshi Nakada  <nobu@ruby-lang.org>
+
+	* enc/trans/euckr-tbl.rb (EUCKR_TO_UCS_TBL): add missing euro and
+	  registered signs.  [ruby-core:64452] [Bug #10149]
+
 Tue Aug 19 13:59:43 2014  Nobuyoshi Nakada  <nobu@ruby-lang.org>
 
 	* compar.c (rb_cmperr): preserve encodings of arguments in the
