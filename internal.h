@@ -40,6 +40,14 @@ extern "C" {
 #define UNINITIALIZED_VAR(x) x
 #endif
 
+#if __has_attribute(warn_unused_result)
+#define WARN_UNUSED_RESULT(x) x __attribute__((warn_unused_result))
+#elif defined(__GNUC__) && (__GNUC__ * 1000 + __GNUC_MINOR__) >= 3004
+#define WARN_UNUSED_RESULT(x) x __attribute__((warn_unused_result))
+#else
+#define WARN_UNUSED_RESULT(x) x
+#endif
+
 #ifdef HAVE_VALGRIND_MEMCHECK_H
 # include <valgrind/memcheck.h>
 # ifndef VALGRIND_MAKE_MEM_DEFINED
@@ -891,6 +899,7 @@ size_t rb_strftime(char *s, size_t maxsize, const char *format, rb_encoding *enc
 #endif
 
 /* string.c */
+void Init_frozen_strings(void);
 VALUE rb_fstring(VALUE);
 VALUE rb_fstring_new(const char *ptr, long len);
 #ifdef RUBY_ENCODING_H

@@ -388,6 +388,27 @@ if defined?(WIN32OLE_VARIANT)
       assert_equal(dt, obj.value)
     end
 
+    def test_conversion_dbl2date_with_msec
+      # Date is "2014/8/27 12:34:56.789"
+      obj = WIN32OLE_VARIANT.new(41878.524268391200167, WIN32OLE::VARIANT::VT_DATE)
+      t = obj.value
+      assert_equal("2014-08-27 12:34:56", t.strftime('%Y-%m-%d %H:%M:%S'))
+      assert_equal(789, (t.nsec / 1000000).round)
+    end
+
+    def test_conversion_time2date_with_msec
+      t0 = Time.new(2014, 8, 27, 12, 34, 56)
+      t0 += 0.789
+      t1 = WIN32OLE_VARIANT.new(t0).value
+      assert_equal("2014-08-27 12:34:56", t1.strftime('%Y-%m-%d %H:%M:%S'))
+      assert_equal(789, (t1.nsec / 1000000).round)
+
+      t0 = Time.now
+      t1 = WIN32OLE_VARIANT.new(t0).value
+      assert_equal(t0.strftime('%Y-%m-%d %H:%M:%S'), t1.strftime('%Y-%m-%d %H:%M:%S'))
+      assert_equal(t0.nsec.round(-6), t1.nsec.round(-6))
+    end
+
     # this test failed because of VariantTimeToSystemTime
     # and SystemTimeToVariantTime API ignores wMilliseconds
     # member of SYSTEMTIME  struct.

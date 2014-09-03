@@ -616,6 +616,8 @@ is_socket(int fd, VALUE path)
 }
 #endif
 
+static const char closed_stream[] = "closed stream";
+
 void
 rb_eof_error(void)
 {
@@ -642,7 +644,7 @@ rb_io_check_closed(rb_io_t *fptr)
 {
     rb_io_check_initialized(fptr);
     if (fptr->fd < 0) {
-	rb_raise(rb_eIOError, "closed stream");
+	rb_raise(rb_eIOError, closed_stream);
     }
 }
 
@@ -1124,7 +1126,7 @@ int
 rb_io_wait_readable(int f)
 {
     if (f < 0) {
-	rb_raise(rb_eIOError, "closed stream");
+	rb_raise(rb_eIOError, closed_stream);
     }
     switch (errno) {
       case EINTR:
@@ -1150,7 +1152,7 @@ int
 rb_io_wait_writable(int f)
 {
     if (f < 0) {
-	rb_raise(rb_eIOError, "closed stream");
+	rb_raise(rb_eIOError, closed_stream);
     }
     switch (errno) {
       case EINTR:
@@ -4164,7 +4166,7 @@ finish_writeconv(rb_io_t *fptr, int noalloc)
                 }
                 if (rb_io_wait_writable(fptr->fd)) {
                     if (fptr->fd < 0)
-                        return noalloc ? Qtrue : rb_exc_new3(rb_eIOError, rb_str_new_cstr("closed stream"));
+                        return noalloc ? Qtrue : rb_exc_new3(rb_eIOError, rb_str_new_cstr(closed_stream));
                     goto retry;
                 }
                 return noalloc ? Qtrue : INT2NUM(errno);
@@ -4446,13 +4448,31 @@ rb_io_close_m(VALUE io)
 static VALUE
 io_call_close(VALUE io)
 {
-    return rb_funcall(io, rb_intern("close"), 0, 0);
+    rb_check_funcall(io, rb_intern("close"), 0, 0);
+    return io;
+}
+
+static VALUE
+ignore_closed_stream(VALUE io, VALUE exc)
+{
+    enum {mesg_len = sizeof(closed_stream)-1};
+    VALUE mesg = rb_attr_get(exc, rb_intern("mesg"));
+    if (!RB_TYPE_P(mesg, T_STRING) ||
+	RSTRING_LEN(mesg) != mesg_len ||
+	memcmp(RSTRING_PTR(mesg), closed_stream, mesg_len)) {
+	rb_exc_raise(exc);
+    }
+    return io;
 }
 
 static VALUE
 io_close(VALUE io)
 {
-    return rb_rescue(io_call_close, io, 0, 0);
+    VALUE closed = rb_check_funcall(io, rb_intern("closed?"), 0, 0);
+    if (closed != Qundef && RTEST(closed)) return io;
+    rb_rescue2(io_call_close, io, ignore_closed_stream, io,
+	       rb_eIOError, (VALUE)0);
+    return io;
 }
 
 /*
@@ -5174,9 +5194,9 @@ rb_io_extract_encoding_option(VALUE opt, rb_encoding **enc_p, rb_encoding **enc2
     if ((extenc != Qundef || intenc != Qundef) && !NIL_P(encoding)) {
 	if (!NIL_P(ruby_verbose)) {
 	    int idx = rb_to_encoding_index(encoding);
-	    rb_warn("Ignoring encoding parameter '%s': %s_encoding is used",
-		    idx < 0 ? StringValueCStr(encoding) : rb_enc_name(rb_enc_from_index(idx)),
-		    extenc == Qundef ? "internal" : "external");
+	    if (idx >= 0) encoding = rb_enc_from_encoding(rb_enc_from_index(idx));
+	    rb_warn("Ignoring encoding parameter '%"PRIsVALUE"': %s_encoding is used",
+		    encoding, extenc == Qundef ? "internal" : "external");
 	}
 	encoding = Qnil;
     }
@@ -7598,9 +7618,9 @@ static VALUE
 rb_io_s_new(int argc, VALUE *argv, VALUE klass)
 {
     if (rb_block_given_p()) {
-	const char *cname = rb_class2name(klass);
+	VALUE cname = rb_obj_as_string(klass);
 
-	rb_warn("%s::new() does not take block; use %s::open() instead",
+	rb_warn("%"PRIsVALUE"::new() does not take block; use %"PRIsVALUE"::open() instead",
 		cname, cname);
     }
     return rb_class_new_instance(argc, argv, klass);
@@ -7858,7 +7878,7 @@ argf_next_argv(VALUE argf)
     if (ARGF.next_p == 1) {
       retry:
 	if (RARRAY_LEN(ARGF.argv) > 0) {
-	    ARGF.filename = rb_ary_shift(ARGF.argv);
+	    ARGF.filename = rb_str_encode_ospath(rb_ary_shift(ARGF.argv));
 	    fn = StringValueCStr(ARGF.filename);
 	    if (strlen(fn) == 1 && fn[0] == '-') {
 		ARGF.current_file = rb_stdin;
@@ -7883,22 +7903,24 @@ argf_next_argv(VALUE argf)
 			rb_io_close(rb_stdout);
 		    }
 		    fstat(fr, &st);
+		    str = ARGF.filename;
 		    if (*ARGF.inplace) {
-			str = rb_str_new2(fn);
+			str = rb_str_dup(str);
 			rb_str_cat2(str, ARGF.inplace);
+			/* TODO: encoding of ARGF.inplace */
 #ifdef NO_SAFE_RENAME
 			(void)close(fr);
 			(void)unlink(RSTRING_PTR(str));
 			if (rename(fn, RSTRING_PTR(str)) < 0) {
-			    rb_warn("Can't rename %s to %s: %s, skipping file",
-				    fn, RSTRING_PTR(str), strerror(errno));
+			    rb_warn("Can't rename %"PRIsVALUE" to %"PRIsVALUE": %s, skipping file",
+				    ARGF.filename, str, strerror(errno));
 			    goto retry;
 			}
 			fr = rb_sysopen(str, O_RDONLY, 0);
 #else
 			if (rename(fn, RSTRING_PTR(str)) < 0) {
-			    rb_warn("Can't rename %s to %s: %s, skipping file",
-				    fn, RSTRING_PTR(str), strerror(errno));
+			    rb_warn("Can't rename %"PRIsVALUE" to %"PRIsVALUE": %s, skipping file",
+				    ARGF.filename, str, strerror(errno));
 			    close(fr);
 			    goto retry;
 			}
@@ -7909,8 +7931,8 @@ argf_next_argv(VALUE argf)
 			rb_fatal("Can't do inplace edit without backup");
 #else
 			if (unlink(fn) < 0) {
-			    rb_warn("Can't remove %s: %s, skipping file",
-				    fn, strerror(errno));
+			    rb_warn("Can't remove %"PRIsVALUE": %s, skipping file",
+				    ARGF.filename, strerror(errno));
 			    close(fr);
 			    goto retry;
 			}
@@ -7933,8 +7955,8 @@ argf_next_argv(VALUE argf)
 #endif
 			if (err && getuid() == 0 && st2.st_uid == 0) {
 			    const char *wkfn = RSTRING_PTR(ARGF.filename);
-			    rb_warn("Can't set owner/group of %s to same as %s: %s, skipping file",
-				    wkfn, fn, strerror(errno));
+			    rb_warn("Can't set owner/group of %"PRIsVALUE" to same as %"PRIsVALUE": %s, skipping file",
+				    ARGF.filename, str, strerror(errno));
 			    (void)close(fr);
 			    (void)close(fw);
 			    (void)unlink(wkfn);
@@ -8538,9 +8560,7 @@ advice_arg_check(VALUE advice)
 	advice != sym_willneed &&
 	advice != sym_dontneed &&
 	advice != sym_noreuse) {
-	VALUE symname = rb_inspect(advice);
-	rb_raise(rb_eNotImpError, "Unsupported advice: %s",
-		 StringValuePtr(symname));
+	rb_raise(rb_eNotImpError, "Unsupported advice: %+"PRIsVALUE, advice);
     }
 }
 

@@ -2282,7 +2282,12 @@ End
   end
 
   def test_new_with_block
-    assert_in_out_err([], "r, w = IO.pipe; IO.new(r) {}", [], /^.+$/)
+    assert_in_out_err([], "r, w = IO.pipe; IO.new(r.fileno) {}", [], /^.+$/)
+    n = "IO\u{5165 51fa 529b}"
+    c = eval("class #{n} < IO; self; end")
+    IO.pipe do |r, w|
+      assert_warning(/#{n}/) {c.new(r.fileno) {}}
+    end
   end
 
   def test_readline2
@@ -2471,10 +2476,10 @@ End
   def test_invalid_advise
     feature4204 = '[ruby-dev:42887]'
     make_tempfile {|tf|
-      %w{Normal rand glark will_need zzzzzzzzzzzz \u2609}.map(&:to_sym).each do |adv|
+      %W{Normal rand glark will_need zzzzzzzzzzzz \u2609}.map(&:to_sym).each do |adv|
         [[0,0], [0, 20], [400, 2]].each do |offset, len|
           open(tf.path) do |t|
-            assert_raise(NotImplementedError, feature4204) { t.advise(adv, offset, len) }
+            assert_raise_with_message(NotImplementedError, /#{Regexp.quote(adv.inspect)}/, feature4204) { t.advise(adv, offset, len) }
           end
         end
       end
@@ -3064,5 +3069,14 @@ End
       assert_nothing_raised(RuntimeError, bug8669) { str.clear }
       assert_raise(RuntimeError) { t.join }
     }
+  end
+
+  def test_exception_at_close
+    bug10153 = '[ruby-core:64463] [Bug #10153] exception in close at the end of block'
+    assert_raise(Errno::EBADF, bug10153) do
+      IO.pipe do |r, w|
+        assert_nothing_raised {IO.open(w.fileno) {}}
+      end
+    end
   end
 end

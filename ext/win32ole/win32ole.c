@@ -26,7 +26,7 @@
 const IID IID_IMultiLanguage2 = {0xDCCFC164, 0x2B38, 0x11d2, {0xB7, 0xEC, 0x00, 0xC0, 0x4F, 0x8F, 0x5D, 0x9A}};
 #endif
 
-#define WIN32OLE_VERSION "1.7.7"
+#define WIN32OLE_VERSION "1.8.0"
 
 typedef HRESULT (STDAPICALLTYPE FNCOCREATEINSTANCEEX)
     (REFCLSID, IUnknown*, DWORD, COSERVERINFO*, DWORD, MULTI_QI*);
@@ -405,7 +405,9 @@ static double
 rbtime2vtdate(VALUE tmobj)
 {
     SYSTEMTIME st;
-    double t = 0;
+    double t;
+    double nsec;
+
     memset(&st, 0, sizeof(SYSTEMTIME));
     st.wYear = FIX2INT(rb_funcall(tmobj, rb_intern("year"), 0));
     st.wMonth = FIX2INT(rb_funcall(tmobj, rb_intern("month"), 0));
@@ -415,7 +417,17 @@ rbtime2vtdate(VALUE tmobj)
     st.wSecond = FIX2INT(rb_funcall(tmobj, rb_intern("sec"), 0));
     st.wMilliseconds = FIX2INT(rb_funcall(tmobj, rb_intern("nsec"), 0)) / 1000000;
     SystemTimeToVariantTime(&st, &t);
-    return t;
+
+    /*
+     * Unfortunately SystemTimeToVariantTime function always ignores the
+     * wMilliseconds of SYSTEMTIME struct.
+     * So, we need to calculate milliseconds by ourselves.
+     */
+    nsec =  FIX2INT(rb_funcall(tmobj, rb_intern("nsec"), 0));
+    nsec /= 1000000.0;
+    nsec /= (24.0 * 3600.0);
+    nsec /= 1000;
+    return t + nsec;
 }
 
 static VALUE
@@ -423,8 +435,8 @@ vtdate2rbtime(double date)
 {
     SYSTEMTIME st;
     VALUE v;
+    double msec;
     VariantTimeToSystemTime(date, &st);
-
     v = rb_funcall(rb_cTime, rb_intern("new"), 6,
 		      INT2FIX(st.wYear),
 		      INT2FIX(st.wMonth),
@@ -432,8 +444,21 @@ vtdate2rbtime(double date)
 		      INT2FIX(st.wHour),
 		      INT2FIX(st.wMinute),
 		      INT2FIX(st.wSecond));
-    if (st.wMilliseconds > 0) {
-	return rb_funcall(v, rb_intern("+"), 1, rb_float_new((double)(st.wMilliseconds / 1000.0)));
+    /*
+     * Unfortunately VariantTimeToSystemTime always ignores the
+     * wMilliseconds of SYSTEMTIME struct(The wMilliseconds is 0).
+     * So, we need to calculate milliseconds by ourselves.
+     */
+    msec = fabs(date);
+    msec -= floor(date);
+    msec *= 24 * 60;
+    msec -= floor(msec);
+    msec *= 60;
+    msec -= st.wSecond;
+    msec = round(msec * 1000);
+    msec /= 1000;
+    if (msec != 0) {
+        return rb_funcall(v, rb_intern("+"), 1, rb_float_new(msec));
     }
     return v;
 }
@@ -1907,10 +1932,10 @@ fole_s_connect(int argc, VALUE *argv, VALUE self)
     ole_initialize();
 
     rb_scan_args(argc, argv, "1*", &svr_name, &others);
-    SafeStringValue(svr_name);
+    StringValue(svr_name);
     if (rb_safe_level() > 0 && OBJ_TAINTED(svr_name)) {
-        rb_raise(rb_eSecurityError, "Insecure Object Connection - %s",
-		 StringValuePtr(svr_name));
+        rb_raise(rb_eSecurityError, "insecure connection - `%s'",
+		StringValuePtr(svr_name));
     }
 
     /* get CLSID from OLE server name */
@@ -2390,16 +2415,16 @@ fole_initialize(int argc, VALUE *argv, VALUE self)
     rb_call_super(0, 0);
     rb_scan_args(argc, argv, "11*", &svr_name, &host, &others);
 
-    SafeStringValue(svr_name);
+    StringValue(svr_name);
     if (rb_safe_level() > 0 && OBJ_TAINTED(svr_name)) {
-        rb_raise(rb_eSecurityError, "Insecure Object Creation - %s",
+        rb_raise(rb_eSecurityError, "insecure object creation - `%s'",
                  StringValuePtr(svr_name));
     }
     if (!NIL_P(host)) {
-	SafeStringValue(host);
+        StringValue(host);
         if (rb_safe_level() > 0 && OBJ_TAINTED(host)) {
-            rb_raise(rb_eSecurityError, "Insecure Object Creation - %s",
-                     StringValuePtr(svr_name));
+            rb_raise(rb_eSecurityError, "insecure object creation - `%s'",
+                     StringValuePtr(host));
         }
         return ole_create_dcom(self, svr_name, host, others);
     }

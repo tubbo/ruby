@@ -1,3 +1,186 @@
+Mon Sep  1 20:11:02 2014  Masaki Suketa <masaki.suketa@nifty.ne.jp>
+
+	* ext/win32ole/win32ole.c (rbtime2vtdate): try to convert millisecond
+	  of Time object to millisecond of VT_DATE VARIANT.
+	* test/win32ole/test_win32ole_variant.rb
+	  (test_conversion_time2date_with_msec): ditto.
+
+Sun Aug 31 16:58:49 2014  Tanaka Akira  <akr@fsij.org>
+
+	* lib/benchmark.rb: Fix a syntax error.
+
+Sun Aug 31 08:46:44 2014  Eric Wong  <e@80x24.org>
+
+	* ext/zlib/zlib.c (gzfile_reset): preserve ZSTREAM_FLAG_GZFILE
+	  [Bug #10101]
+
+	* test/zlib/test_zlib.rb (test_rewind): test each_byte
+
+Sat Aug 30 19:22:47 2014  Eric Wong  <e@80x24.org>
+
+	* symbol.c (rb_sym2id): do not return garbage object
+
+Sat Aug 30 06:39:48 2014  Aaron Patterson <aaron@tenderlovemaking.com>
+
+	* ext/psych/lib/psych/visitors/yaml_tree.rb: fix NameError dumping and
+	  loading. Fixes GH #85. Thanks @brentdax for the patch!
+	* test/psych/test_exception.rb: test for fix
+
+Sat Aug 30 06:23:40 2014  Aaron Patterson <aaron@tenderlovemaking.com>
+
+	* ext/psych/lib/psych/scalar_scanner.rb: fix loading strings that
+	  look like integers but have a newline. Fixes GH #189
+	* test/psych/test_string.rb: test for fix
+
+Sat Aug 30 06:10:39 2014  Aaron Patterson <aaron@tenderlovemaking.com>
+
+	* ext/psych/lib/psych/visitors/to_ruby.rb: merge keys with a hash
+	  should merge the hash in to the parent.
+	* test/psych/test_merge_keys.rb: test for change. Fixes GH #202
+
+Sat Aug 30 06:00:26 2014  Aaron Patterson <aaron@tenderlovemaking.com>
+
+	* ext/psych/lib/psych/visitors/to_ruby.rb: quoted "<<" strings
+	  should not be treated as merge keys.
+	* ext/psych/lib/psych/visitors/yaml_tree.rb: hashes with keys
+	  containing "<<" should roundtrip.
+	* test/psych/test_merge_keys.rb: test for change. Fixes GH #203
+
+Fri Aug 29 17:56:44 2014  SHIBATA Hiroshi  <shibata.hiroshi@gmail.com>
+
+	* test/net/imap/test_imap_response_parser.rb: removed needless code.
+
+Fri Aug 29 17:36:58 2014  SHIBATA Hiroshi  <shibata.hiroshi@gmail.com>
+
+	* test/rinda/test_rinda.rb: removed useless assignment variables.
+	* test/rss/rss-assertions.rb: ditto.
+	* test/rss/test_maker_itunes.rb: ditto.
+
+Fri Aug 29 16:18:26 2014  Eric Wong  <e@80x24.org>
+
+	* string.c: revert part of r47311, add rb_vm_fstring_table(),
+	  remove vm_core.h dependency. [ruby-core:64627]
+
+Fri Aug 29 15:17:13 2014  Eric Wong  <e@80x24.org>
+
+	* string.c: remove static frozen_strings
+	* string.c (Init_frozen_strings): new function
+	* string.c (rb_fstring): remove check for frozen strings,
+	  use per-VM table
+	* string.c (rb_str_free): use per-VM table
+	* string.c (Init_String): use per-VM table
+	* vm_core.h (rb_vm_t): add frozen_strings table
+	* internal.h (Init_frozen_strings): new function prototype
+	* eval.c (ruby_setup): call Init_frozen_strings
+	  [Feature #10182]
+
+Wed Aug 27 23:10:24 2014  Masaki Matsushita <glass.saga@gmail.com>
+
+	* lib/tempfile.rb: remove "require 'thread'". its features are no
+	  longer used.
+
+Wed Aug 27 21:19:40 2014  gogo tanaka  <mail@tanakakazuki.com>
+
+	* lib/drb/acl.rb: Removed meaningless #to_s methods in interpolation.
+	  [Feature #10174][ruby-core:64584]
+	* lib/erb.rb: ditto.
+	* lib/observer.rb: ditto.
+	* lib/rake/invocation_chain.rb: ditto.
+	* lib/rubygems/command_manager.rb: ditto.
+	* lib/rubygems/config_file.rb: ditto.
+	* lib/uri/common.rb: ditto.
+
+Wed Aug 27 21:08:20 2014  gogo tanaka  <mail@tanakakazuki.com>
+
+	* lib/drb/drb.rb: use attr_reader instead of Module#attr.
+	  [Feature #10172][ruby-core:64582]
+	* lib/irb/ruby-token.rb: ditto.
+	* lib/net/telnet.rb: ditto.
+	* lib/rdoc/ruby_token.rb: ditto.
+	* lib/thwait.rb: ditto.
+
+Wed Aug 27 19:52:33 2014  Masaki Suketa <masaki.suketa@nifty.ne.jp>
+
+	* ext/win32ole/win32ole.c (vtdate2rbtime): try to convert millisecond
+	  of VT_DATE VARIANT to nsec of Time object.
+	* test/win32ole/test_win32ole_variant.rb
+	  (test_conversion_dbl2date_with_msec): ditto.
+
+Wed Aug 27 09:57:29 2014  SHIBATA Hiroshi  <shibata.hiroshi@gmail.com>
+
+	* test/ruby/test_complex.rb: removed unreachable code.
+	* test/ruby/test_rational.rb: ditto.
+
+Wed Aug 27 07:59:17 2014  Eric Wong  <e@80x24.org>
+
+	* compile.c (iseq_set_sequence): check for multiplication overflow
+
+Tue Aug 26 22:07:42 2014  SHIBATA Hiroshi  <shibata.hiroshi@gmail.com>
+
+	* test/ruby/test_complex.rb: cherry-picked working assertions from r47251.
+	* test/ruby/test_rational.rb: cherry-picked working assertions from r47263.
+
+Tue Aug 26 21:07:56 2014  gogo tanaka  <mail@tanakakazuki.com>
+
+	* lib/mathn.rb (Fixnum#**, Bignum#**, Float#**, Rational#**):
+	  remove as these are now built-in.  [ruby-core:63973] [Bug #10086]
+
+Tue Aug 26 20:46:55 2014  Tanaka Akira  <akr@fsij.org>
+
+	* time.c (rb_time_unmagnify_to_float): Avoid double rounding.
+	  Reported by Tsuyoshi Sawada.
+	  https://bugs.ruby-lang.org/issues/10135#note-1
+
+Tue Aug 26 17:12:47 2014  Nobuyoshi Nakada  <nobu@ruby-lang.org>
+
+	* io.c (io_close): ignore only "closed stream" IOError and
+	  NoMethodError, do not swallow other exceptions at the end of
+	  block.  [ruby-core:64463] [Bug #10153]
+
+Tue Aug 26 13:46:33 2014  Kazuhiro NISHIYAMA  <zn@mbf.nifty.com>
+
+	* template/fake.rb.in: fix failed to make install when @srcdir@ is
+	  absolute path.
+
+Tue Aug 26 13:43:50 2014  SHIBATA Hiroshi  <shibata.hiroshi@gmail.com>
+
+	* test/ruby/test_range.rb: added workaround for VERBOSE message.
+
+Tue Aug 26 12:38:02 2014  SHIBATA Hiroshi  <shibata.hiroshi@gmail.com>
+
+	* test/test_mathn.rb: added workaround for VERBOSE messages.
+
+Tue Aug 26 11:44:04 2014  SHIBATA Hiroshi  <shibata.hiroshi@gmail.com>
+
+	* lib/shell/process-controller.rb: removed commented-out code.
+
+Tue Aug 26 11:39:01 2014  SHIBATA Hiroshi  <shibata.hiroshi@gmail.com>
+
+	* lib/thwait.rb (ThreadsWait): removed needless constant.
+
+Tue Aug 26 09:27:10 2014  SHIBATA Hiroshi  <shibata.hiroshi@gmail.com>
+
+	* lib/mathn.rb: mathn library is deprecated on ruby 2.2.
+	  [Feature #10169][ruby-core:64553]
+
+Tue Aug 26 09:25:03 2014  SHIBATA Hiroshi  <shibata.hiroshi@gmail.com>
+
+	* lib/mathn.rb: removed commented-out code.
+
+Mon Aug 25 20:15:50 2014  Masaki Suketa <masaki.suketa@nifty.ne.jp>
+
+	* ext/win32ole/win32ole.c(fole_s_connect, fole_initialize): raise a
+	  security error with the tainted string object.
+	* ext/win32ole/win32ole_event.c(ev_advise): ditto.
+	* test/win32ole/test_win32ole.rb(test_s_new_exc_svr_tainted,
+	  test_s_new_exc_host_tainted): ditto.
+	* test/win32ole/test_win32ole_event.rb(test_s_new_exc_tainted): ditto.
+
+Mon Aug 25 12:56:54 2014  Ivan Korunkov  <ivankorunkov@ya.ru>
+
+	* lib/logger.rb (format_datetime): use "%6N" to show microsecond.
+	  [Fix GH-704]
+
 Mon Aug 25 11:02:07 2014  Eric Wong  <e@80x24.org>
 
 	* vm_core.h (rb_iseq_location_t): change first_lineno type to VALUE
@@ -4415,8 +4598,9 @@ Fri Apr  4 07:13:44 2014  Nobuyoshi Nakada  <nobu@ruby-lang.org>
 
 Wed Apr  2 21:50:06 2014  Nobuyoshi Nakada  <nobu@ruby-lang.org>
 
-	* configure.in (ac_cv_func___builtin_setjmp): __builtin_longjmp() in
-	  clang 5.1 uses `void**`, not `jmp_buf`.  [Bug #9692]
+	* configure.in (ac_cv_func___builtin_setjmp): __builtin_longjmp()
+	  in Apple LLVM 5.1 (LLVM 3.4svn) uses `void**`, not `jmp_buf`.
+	  [Bug #9692]
 
 Wed Apr  2 20:57:15 2014  Koichi Sasada  <ko1@atdot.net>
 
