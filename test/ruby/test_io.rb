@@ -2282,11 +2282,15 @@ End
   end
 
   def test_new_with_block
-    assert_in_out_err([], "r, w = IO.pipe; IO.new(r.fileno) {}", [], /^.+$/)
+    assert_in_out_err([], "r, w = IO.pipe; r.autoclose=false; IO.new(r.fileno) {}.close", [], /^.+$/)
     n = "IO\u{5165 51fa 529b}"
     c = eval("class #{n} < IO; self; end")
     IO.pipe do |r, w|
-      assert_warning(/#{n}/) {c.new(r.fileno) {}}
+      assert_warning(/#{n}/) {
+        r.autoclose=false
+        io = c.new(r.fileno) {}
+        io.close
+      }
     end
   end
 
@@ -2867,15 +2871,19 @@ End
       Thread.pass until th.stop?
       buf.replace("")
       assert_empty(buf, bug6099)
-      th.join rescue ($@.concat(caller); raise) unless th.alive?
+      assert_predicate(th, :alive?)
       w.write(data)
       Thread.pass while th.alive?
-      th.join rescue ($@.concat(caller); raise)
     end
     assert_equal(data, buf, bug6099)
   rescue RuntimeError # can't modify string; temporarily locked
   ensure
-    th.join if th
+    if th
+      begin
+        th.join
+      rescue IOError
+      end
+    end
   end
 
   def test_advise_pipe

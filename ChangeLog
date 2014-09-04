@@ -1,3 +1,101 @@
+Thu Sep  4 03:57:46 2014  Eric Wong  <e@80x24.org>
+
+	* man/ruby.1: spelling fix ("bellow" => "below") [ci-skip]
+
+Thu Sep  4 03:52:16 2014  Eric Wong  <e@80x24.org>
+
+	* man/ruby.1: add trailing slash to URLs [ci-skip]
+
+Wed Sep  3 19:10:28 2014  Tanaka Akira  <akr@fsij.org>
+
+	* process.c (before_fork_ruby): Renamed from before_fork.
+	  (after_fork_ruby): Renamed from after_fork.
+
+Wed Sep  3 18:56:05 2014  Tanaka Akira  <akr@fsij.org>
+
+	* process.c (forked_child): Removed.
+
+Wed Sep  3 16:56:07 2014  Nobuyoshi Nakada  <nobu@ruby-lang.org>
+
+	* object.c (rb_obj_copy_ivar): allocate no memory for empty
+	  instance variables.  [ruby-core:64700] [Bug #10191]
+
+Wed Sep  3 12:05:17 2014  Tanaka Akira  <akr@fsij.org>
+
+	* process.c (retry_fork_async_signal_safe): Use vfork() if available.
+	  vfork() is still faster than fork() especially when the parent
+	  process uses big memory.
+
+	  ruby -rbenchmark -e 'a = "a" * 1_000_000_000; puts Benchmark.measure { system("true") }'
+	  fork:   0.000000   0.010000   0.010000 (  0.014968)
+	  vfork:  0.000000   0.000000   0.000000 (  0.000912)
+	  on Debian sid.
+
+Wed Sep  3 11:33:08 2014  SHIBATA Hiroshi  <shibata.hiroshi@gmail.com>
+
+	* test/openssl/test_pkey_rsa.rb (OpenSSL#test_sign_verify_memory_leak):
+	  added timeout into testcase for low performance environment.
+	  [Bug #9984][ruby-core:63367]
+
+Wed Sep  3 07:50:15 2014  Tanaka Akira  <akr@fsij.org>
+
+	* configure.in: Use AC_FUNC_FORK.
+
+	* io.c: Use HAVE_WORKING_FORK instead of HAVE_FORK.
+
+	* process.c: Ditto.
+
+Wed Sep  3 00:12:44 2014  Tanaka Akira  <akr@fsij.org>
+
+	* process.c (retry_fork_async_signal_safe): Don't return on in child
+	  process.
+
+Tue Sep  2 23:47:35 2014  Tanaka Akira  <akr@fsij.org>
+
+	* process.c (retry_fork_async_signal_safe): Specialized version of
+	  retry_fork respect to rb_fork_async_signal_safe.
+	  (retry_fork_ruby): Specialized version of retry_fork respect to
+	  rb_fork_ruby.
+	  (rb_fork_ruby): Removed.
+
+Tue Sep  2 23:26:26 2014  Tanaka Akira  <akr@fsij.org>
+
+	* process.c (send_child_error): Simplified.
+	  (recv_child_error): Ditto.
+
+Tue Sep  2 22:56:25 2014  Tanaka Akira  <akr@fsij.org>
+
+	* process.c (rb_fork_async_signal_safe): Inline rb_fork_internal.
+	  (rb_fork_ruby): Ditto.
+	  (rb_fork_internal): Removed.
+	  (chfunc_protect): Removed.
+
+Tue Sep  2 22:43:52 2014  Tanaka Akira  <akr@fsij.org>
+
+	* test/ruby/test_io.rb (test_new_with_block): Set autoclose to avoid
+	  EBADF.
+
+Tue Sep  2 22:01:51 2014  Kouhei Sutou  <kou@cozmixng.org>
+
+	* Makefile.in (update-coverage): Remove a never executed line.
+
+Tue Sep  2 19:48:26 2014  Tanaka Akira  <akr@fsij.org>
+
+	* process.c (handle_fork_error): Extracted from retry_fork.
+
+Tue Sep  2 17:02:53 2014  Vit Ondruch  <v.ondruch@tiscali.cz>
+
+	* tool/rbinstall.rb: fixed error of local installation.
+	  [Bug #10192][ruby-core:64702]
+
+Tue Sep  2 16:58:03 2014  SHIBATA Hiroshi  <shibata.hiroshi@gmail.com>
+
+	* test/runner.rb: reporting test coverage for test-all with COVERAGE env.
+	  [Feature #10189][ruby-core:64681][fix GH-708]
+	* Makefile.in: added task for coverage report.
+	* common.mk: added definition of forked simplecov url.
+	* .gitignore: ignored coverage directory.
+
 Mon Sep  1 20:11:02 2014  Masaki Suketa <masaki.suketa@nifty.ne.jp>
 
 	* ext/win32ole/win32ole.c (rbtime2vtdate): try to convert millisecond
