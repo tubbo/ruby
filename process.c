@@ -84,6 +84,9 @@
 #ifdef HAVE_GRP_H
 #include <grp.h>
 #endif
+#ifdef HAVE_SYS_ID_H
+#include <sys/id.h>
+#endif
 
 #ifdef __APPLE__
 # include <mach/mach_time.h>
@@ -3277,6 +3280,108 @@ recv_child_error(int fd, int *errp, char *errmsg, size_t errmsg_buflen)
     return size != 0;
 }
 
+#if !defined(HAVE_GETRESUID) && defined(HAVE_GETUIDX)
+/* AIX 7.1 */
+static int
+getresuid(rb_uid_t *ruid, rb_uid_t *euid, rb_uid_t *suid)
+{
+    rb_uid_t ret;
+
+    *ruid = getuid();
+    *euid = geteuid();
+    ret = getuidx(ID_SAVED);
+    if (ret == (rb_uid_t)-1)
+	return -1;
+    *suid = ret;
+    return 0;
+}
+#define HAVE_GETRESUID
+#endif
+
+#if !defined(HAVE_GETRESGID) && defined(HAVE_GETGIDX)
+/* AIX 7.1 */
+static int
+getresgid(rb_gid_t *rgid, rb_gid_t *egid, rb_gid_t *sgid)
+{
+    rb_gid_t ret;
+
+    *rgid = getgid();
+    *egid = getegid();
+    ret = getgidx(ID_SAVED);
+    if (ret == (rb_gid_t)-1)
+	return -1;
+    *sgid = ret;
+    return 0;
+}
+#define HAVE_GETRESGID
+#endif
+
+static int
+has_privilege(void)
+{
+    /*
+     * has_privilege() is used to choose vfork() or fork().
+     *
+     * If the process has privilege, the parent process or
+     * the child process can change UID/GID.
+     * If vfork() is used to create the child process and
+     * the parent or child process change effective UID/GID,
+     * different privileged processes shares memory.
+     * It is a bad situation.
+     * So, fork() should be used.
+     */
+
+    rb_uid_t ruid, euid;
+    rb_gid_t rgid, egid;
+
+#if defined HAVE_ISSETUGID
+    if (issetugid())
+	return 1;
+#endif
+
+#ifdef HAVE_GETRESUID
+    {
+        int ret;
+        rb_uid_t suid;
+        ret = getresuid(&ruid, &euid, &suid);
+        if (ret == -1)
+            rb_sys_fail("getresuid(2)");
+        if (euid != suid)
+            return 1;
+    }
+#else
+    {
+        ruid = getuid();
+        euid = geteuid();
+    }
+#endif
+
+    if (euid == 0 || euid != ruid)
+        return 1;
+
+#ifdef HAVE_GETRESGID
+    {
+        int ret;
+        rb_gid_t sgid;
+        ret = getresgid(&rgid, &egid, &sgid);
+        if (ret == -1)
+            rb_sys_fail("getresgid(2)");
+        if (egid != sgid)
+            return 0;
+    }
+#else
+    {
+        rgid = getgid();
+        egid = getegid();
+    }
+#endif
+
+    if (egid == 0 || egid != rgid)
+        return 1;
+
+    return 0;
+}
+
 static rb_pid_t
 retry_fork_async_signal_safe(int *status, int *ep,
         int (*chfunc)(void*, char *, size_t), void *charg,
@@ -3289,7 +3394,10 @@ retry_fork_async_signal_safe(int *status, int *ep,
     while (1) {
         prefork();
 #ifdef HAVE_WORKING_VFORK
-        pid = vfork();
+        if (!has_privilege())
+            pid = vfork();
+        else
+            pid = fork();
 #else
         pid = fork();
 #endif

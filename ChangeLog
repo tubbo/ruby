@@ -1,3 +1,79 @@
+Fri Sep  5 19:00:40 2014  SHIBATA Hiroshi  <shibata.hiroshi@gmail.com>
+
+	* lib/shellwords.rb: proofreading documentation.
+	  [Bug #10155][ruby-core:64471]
+
+Fri Sep  5 18:34:33 2014  Laurent Arnoud  <laurent@spkdev.net>
+
+	* test/csv/test_row.rb: Added some missing tests in CSV.
+	  [fix GH-710]
+	* test/csv/test_table.rb: ditto.
+
+Fri Sep  5 12:57:52 2014  Tanaka Akira  <akr@fsij.org>
+
+	* process.c (has_privilege): Refine uid/gid check.
+
+Fri Sep  5 12:40:55 2014  Tanaka Akira  <akr@fsij.org>
+
+	* configure.in: Check sys/id.h, getuidx and getgidx for AIX.
+
+	* process.c (getresuid): Defined for AIX.
+	  (getresgid): Ditto
+	  AIX don't have getresuid/getresgid but getuidx/getgidx.
+
+Fri Sep  5 12:28:21 2014  Tanaka Akira  <akr@fsij.org>
+
+	* process.c (has_privilege): Fix assignements.
+
+Fri Sep  5 11:10:13 2014  SHIBATA Hiroshi  <shibata.hiroshi@gmail.com>
+
+	* lib/rdoc/generator/pot/po.rb: fixed broken tests for trailing whitespace.
+	* test/rdoc/test_rdoc_generator_pot.rb: ditto.
+	* test/rdoc/test_rdoc_generator_pot_po.rb: ditto.
+
+Fri Sep  5 10:41:07 2014  SHIBATA Hiroshi  <shibata.hiroshi@gmail.com>
+
+	* test/rdoc/test_rdoc_rdoc.rb (TestRDocRDoc#test_parse_file_encoding):
+	  typofix.
+
+Fri Sep  5 10:39:14 2014  SHIBATA Hiroshi  <shibata.hiroshi@gmail.com>
+
+	* lib/rdoc.rb, lib/rdoc, test/rdoc: Update to RDoc 4.2.0.alpha(313287)
+
+Fri Sep  5 06:04:22 2014  Eric Wong  <e@80x24.org>
+
+	* vm.c: remove unused USE_THREAD_RECYCLE [misc #10198]
+
+Fri Sep  5 00:29:08 2014  Tanaka Akira  <akr@fsij.org>
+
+	* configure.in (dirfd): Check function.
+
+	* dir.c (dir_fileno): New method.
+	  [ruby-dev:48265] [Feature #9880]
+
+Thu Sep  4 23:39:52 2014  Tanaka Akira  <akr@fsij.org>
+
+	* process.c (has_privilege): New function.
+	  (retry_fork_async_signal_safe): Don't use vfork() for privileged
+	  process.
+
+	* configure.in (getresuid): Check function.
+	  (getresgid): Ditto.
+
+Thu Sep  4 20:22:14 2014  Laurent Arnoud  <laurent@spkdev.net>
+
+	* test/pathname/test_pathname.rb: added testcase for Pathname#mountpoint.
+	  [fix GH-709]
+
+Thu Sep  4 20:09:21 2014  SHIBATA Hiroshi  <shibata.hiroshi@gmail.com>
+
+	* symbian/*: removed Symbian support.
+	  [Feature #10199][ruby-core:64725]
+	* dln.c: ditto.
+	* include/ruby/defines.h: ditto.
+	* thread_pthread.c: ditto.
+	* vm.c: ditto.
+
 Thu Sep  4 17:44:40 2014  Koichi Sasada  <ko1@atdot.net>
 
 	* dir.c (glob_helper): use #ifdef instead of #if.

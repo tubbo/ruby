@@ -1143,7 +1143,8 @@ AC_CHECK_HEADERS( \
   malloc.h \
   malloc_np.h \
   malloc/malloc.h \
-  setjmpex.h
+  setjmpex.h \
+  sys/id.h
 )
 
 AC_ARG_WITH([gmp],
@@ -1974,6 +1975,7 @@ AC_CHECK_FUNCS(chsize)
 AC_CHECK_FUNCS(clock_gettime)
 AC_CHECK_FUNCS(cosh)
 AC_CHECK_FUNCS(daemon)
+AC_CHECK_FUNCS(dirfd)
 AC_CHECK_FUNCS(dl_iterate_phdr)
 AC_CHECK_FUNCS(dlopen)
 AC_CHECK_FUNCS(dladdr)
@@ -1990,15 +1992,19 @@ AC_CHECK_FUNCS(fsync)
 AC_CHECK_FUNCS(ftruncate)
 AC_CHECK_FUNCS(ftruncate64)		# used for Win32 platform
 AC_CHECK_FUNCS(getcwd)
+AC_CHECK_FUNCS(getgidx)
 AC_CHECK_FUNCS(getgrnam_r)
 AC_CHECK_FUNCS(getgroups)
 AC_CHECK_FUNCS(getpgid)
 AC_CHECK_FUNCS(getpgrp)
 AC_CHECK_FUNCS(getpriority)
 AC_CHECK_FUNCS(getpwnam_r)
+AC_CHECK_FUNCS(getresgid)
+AC_CHECK_FUNCS(getresuid)
 AC_CHECK_FUNCS(getrlimit)
 AC_CHECK_FUNCS(getsid)
 AC_CHECK_FUNCS(gettimeofday)		# for making ac_cv_func_gettimeofday
+AC_CHECK_FUNCS(getuidx)
 AC_CHECK_FUNCS(gmtime_r)
 AC_CHECK_FUNCS(initgroups)
 AC_CHECK_FUNCS(ioctl)
