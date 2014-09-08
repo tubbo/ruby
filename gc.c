@@ -1,14 +1,3 @@
-#define RGENGC_DEBUG               0
-#define RGENGC_CHECK_MODE          0
-#define GC_ENABLE_INCREMENTAL_MARK 1
-#define PRINT_ENTER_EXIT_TICK      0
-#define PRINT_MEASURE_LINE         0
-#define RGENGC_FORCE_MAJOR_GC      0
-
-#define USE_RINCGC 1
-#define USE_TICK_T                 (PRINT_ENTER_EXIT_TICK || PRINT_MEASURE_LINE)
-#define TICK_TYPE 1
-
 /**********************************************************************
 
   gc.c -
@@ -154,6 +143,19 @@ rb_gc_guarded_ptr_val(volatile VALUE *ptr, VALUE val)
 #define GC_OLDMALLOC_LIMIT_MAX (128 * 1024 * 1024 /* 128MB */)
 #endif
 
+#ifndef PRINT_MEASURE_LINE
+#define PRINT_MEASURE_LINE 0
+#endif
+#ifndef PRINT_ENTER_EXIT_TICK
+#define PRINT_ENTER_EXIT_TICK 0
+#endif
+#ifndef PRINT_ROOT_TICKS
+#define PRINT_ROOT_TICKS 0
+#endif
+
+#define USE_TICK_T                 (PRINT_ENTER_EXIT_TICK || PRINT_MEASURE_LINE)
+#define TICK_TYPE 1
+
 typedef struct {
     size_t heap_init_slots;
     size_t heap_free_slots;
@@ -247,7 +249,13 @@ static ruby_gc_params_t gc_params = {
 
 #else /* USE_RGENGC */
 
+#ifdef RGENGC_DEBUG
+#undef RGENGC_DEBUG
+#endif
 #define RGENGC_DEBUG       0
+#ifdef RGENGC_CHECK_MODE
+#undef RGENGC_CHECK_MODE
+#endif
 #define RGENGC_CHECK_MODE  0
 #define RGENGC_PROFILE     0
 #define RGENGC_ESTIMATE_OLDMALLOC 0
@@ -262,7 +270,7 @@ static ruby_gc_params_t gc_params = {
 #define GC_PROFILE_DETAIL_MEMORY 0
 #endif
 #ifndef GC_ENABLE_INCREMENTAL_MARK
-#define GC_ENABLE_INCREMENTAL_MARK 1
+#define GC_ENABLE_INCREMENTAL_MARK USE_RINCGC
 #endif
 #ifndef GC_ENABLE_LAZY_SWEEP
 #define GC_ENABLE_LAZY_SWEEP   1
@@ -459,6 +467,8 @@ typedef struct rb_objspace {
     enum gc_stat stat;
     size_t marked_objects;
 
+    int immediate_sweep;
+
     rb_heap_t eden_heap;
     rb_heap_t tomb_heap; /* heap for zombies and ghosts */
 
@@ -569,7 +579,6 @@ typedef struct rb_objspace {
 #if USE_RINCGC
     struct {
 	int during_incremental_marking;
-	int immediate_sweep;
     } rincgc;
 #endif
 } rb_objspace_t;
@@ -637,9 +646,11 @@ struct heap_page {
 
 /* getting bitmap */
 #define GET_HEAP_MARK_BITS(x)           (&GET_HEAP_PAGE(x)->mark_bits[0])
+#if USE_RGENGC
 #define GET_HEAP_LONG_LIVED_BITS(x)     (&GET_HEAP_PAGE(x)->long_lived_bits[0])
 #define GET_HEAP_WB_UNPROTECTED_BITS(x) (&GET_HEAP_PAGE(x)->wb_unprotected_bits[0])
 #define GET_HEAP_MARKING_BITS(x)        (&GET_HEAP_PAGE(x)->marking_bits[0])
+#endif
 
 /* Aliases */
 #if defined(ENABLE_VM_OBJSPACE) && ENABLE_VM_OBJSPACE
@@ -677,9 +688,17 @@ VALUE *ruby_initial_gc_stress_ptr = &rb_objspace.gc_stress;
 #define is_marking(objspace)             ((objspace)->stat == marking)
 #define is_sweeping(objspace)            ((objspace)->stat == sweeping)
 #define is_full_marking(objspace)        ((objspace)->rgengc.during_minor_gc == FALSE)
-#define is_incremental_marking(objspace) (GC_ENABLE_INCREMENTAL_MARK && (objspace)->rincgc.during_incremental_marking != FALSE)
+#if GC_ENABLE_INCREMENTAL_MARK
+#define is_incremental_marking(objspace) ((objspace)->rincgc.during_incremental_marking != FALSE)
+#else
+#define is_incremental_marking(objspace) 0
+#endif
 #define is_lazy_sweeping(heap)           (GC_ENABLE_LAZY_SWEEP       && (heap)->sweep_pages != 0)
-#define will_be_incremental_marking(objspace) (GC_ENABLE_INCREMENTAL_MARK && (objspace)->rgengc.need_major_gc != GPR_FLAG_NONE)
+#if GC_ENABLE_INCREMENTAL_MARK
+#define will_be_incremental_marking(objspace) ((objspace)->rgengc.need_major_gc != GPR_FLAG_NONE)
+#else
+#define will_be_incremental_marking(objspace) 0
+#endif
 
 #if SIZEOF_LONG == SIZEOF_VOIDP
 # define nonspecial_obj_id(obj) (VALUE)((SIGNED_VALUE)(obj)|FIXNUM_FLAG)
@@ -751,6 +770,8 @@ static int gc_mark_stacked_objects_incremental(rb_objspace_t *, size_t count);
 static int gc_mark_stacked_objects_all(rb_objspace_t *);
 static void gc_grey(rb_objspace_t *objspace, VALUE ptr);
 
+static inline int is_pointer_to_heap(rb_objspace_t *objspace, void *ptr);
+
 static void   push_mark_stack(mark_stack_t *, VALUE);
 static int    pop_mark_stack(mark_stack_t *, VALUE *);
 static size_t mark_stack_size(mark_stack_t *stack);
@@ -789,15 +810,6 @@ static const char *obj_info(VALUE obj);
     objspace->mark_func_data = (v);
 
 #define POP_MARK_FUNC_DATA() objspace->mark_func_data = prev_mark_func_data;} while (0)
-
-
-#ifndef PRINT_MEASURE_LINE
-#define PRINT_MEASURE_LINE 0
-#endif
-
-#ifndef USE_TICK_T
-#define USE_TICK_T 0
-#endif
 
 /*
  * 1 - TSC (H/W Time Stamp Counter)
@@ -887,22 +899,18 @@ tick(void)
 #define MEASURE_LINE(expr) expr
 #endif /* USE_TICK_T */
 
-#if USE_RGENGC
-static int rgengc_remembered(rb_objspace_t *objspace, VALUE obj);
-static int rgengc_remember(rb_objspace_t *objspace, VALUE obj);
-static void rgengc_mark_and_rememberset_clear(rb_objspace_t *objspace, rb_heap_t *heap);
-static void rgengc_rememberset_mark(rb_objspace_t *objspace, rb_heap_t *heap);
-
 #define FL_TEST2(x,f)         ((RGENGC_CHECK_MODE && SPECIAL_CONST_P(x)) ? (rb_bug("FL_TEST2: SPECIAL_CONST (%p)", (void *)(x)), 0) : FL_TEST_RAW((x),(f)) != 0)
 #define FL_SET2(x,f)          do {if (RGENGC_CHECK_MODE && SPECIAL_CONST_P(x)) rb_bug("FL_SET2: SPECIAL_CONST");   RBASIC(x)->flags |= (f);} while (0)
 #define FL_UNSET2(x,f)        do {if (RGENGC_CHECK_MODE && SPECIAL_CONST_P(x)) rb_bug("FL_UNSET2: SPECIAL_CONST"); RBASIC(x)->flags &= ~(f);} while (0)
 
 #define RVALUE_MARK_BITMAP(obj)           MARKED_IN_BITMAP(GET_HEAP_MARK_BITS(obj), (obj))
+#define RVALUE_PAGE_MARKED(page, obj)     MARKED_IN_BITMAP((page)->mark_bits, (obj))
+
+#if USE_RGENGC
 #define RVALUE_WB_UNPROTECTED_BITMAP(obj) MARKED_IN_BITMAP(GET_HEAP_WB_UNPROTECTED_BITS(obj), (obj))
 #define RVALUE_LONG_LIVED_BITMAP(obj)     MARKED_IN_BITMAP(GET_HEAP_LONG_LIVED_BITS(obj), (obj))
 #define RVALUE_MARKING_BITMAP(obj)        MARKED_IN_BITMAP(GET_HEAP_MARKING_BITS(obj), (obj))
 
-#define RVALUE_PAGE_MARKED(page, obj)         MARKED_IN_BITMAP((page)->mark_bits, (obj))
 #define RVALUE_PAGE_WB_UNPROTECTED(apge, obj) MARKED_IN_BITMAP((page)->wb_unprotected_bits, (obj))
 #define RVALUE_PAGE_LONG_LIVED(page, obj)     MARKED_IN_BITMAP((page)->long_lived_bits, (obj))
 #define RVALUE_PAGE_MARKING(page, obj)        MARKED_IN_BITMAP((page)->marking_bits, (obj))
@@ -910,13 +918,18 @@ static void rgengc_rememberset_mark(rb_objspace_t *objspace, rb_heap_t *heap);
 #define RVALUE_OLD_AGE   3
 #define RVALUE_AGE_SHIFT 5 /* FL_PROMOTED0 bit */
 
+static int rgengc_remembered(rb_objspace_t *objspace, VALUE obj);
+static int rgengc_remember(rb_objspace_t *objspace, VALUE obj);
+static void rgengc_mark_and_rememberset_clear(rb_objspace_t *objspace, rb_heap_t *heap);
+static void rgengc_rememberset_mark(rb_objspace_t *objspace, rb_heap_t *heap);
+
 static inline int
 RVALUE_FLAGS_AGE(VALUE flags)
 {
     return (flags & (FL_PROMOTED0 | FL_PROMOTED1)) >> RVALUE_AGE_SHIFT;
 }
 
-static inline int is_pointer_to_heap(rb_objspace_t *objspace, void *ptr);
+#endif /* USE_RGENGC */
 
 static inline VALUE
 check_rvalue_consistency(const VALUE obj)
@@ -975,6 +988,7 @@ RVALUE_MARKED(VALUE obj)
     return RVALUE_MARK_BITMAP(obj) != 0;
 }
 
+#if USE_RGENGC
 static inline int
 RVALUE_WB_UNPROTECTED(VALUE obj)
 {
@@ -1608,9 +1622,11 @@ newobj_of(VALUE klass, VALUE flags, VALUE v1, VALUE v2, VALUE v3)
     assert(RVALUE_WB_UNPROTECTED(obj) == FALSE);
 #endif
 
+#if USE_RGENGC
     if ((flags & FL_WB_PROTECTED) == 0) {
 	MARK_IN_BITMAP(GET_HEAP_WB_UNPROTECTED_BITS(obj), obj);
     }
+#endif
 
 #if GC_DEBUG
     RANY(obj)->file = rb_sourcefile();
@@ -3171,8 +3187,6 @@ gc_sweep_start(rb_objspace_t *objspace)
 
     objspace->stat = sweeping;
 
-    gc_report(1, objspace, "gc_sweep_start (%s)\n", objspace->rincgc.immediate_sweep ? "immediate" : "lazy");
-
     /* sweep unlinked method entries */
     if (GET_VM()->unlinked_method_entry_list) {
 	rb_sweep_method_entry(GET_VM());
@@ -3306,9 +3320,11 @@ gc_sweep_continue(rb_objspace_t *objspace, rb_heap_t *heap)
     if (RGENGC_CHECK_MODE) assert(dont_gc == FALSE);
 
     gc_enter(objspace, "sweep_continue");
+#if USE_RGENGC
     if (objspace->rgengc.need_major_gc == GPR_FLAG_NONE && heap_increment(objspace, heap)) {
 	gc_report(3, objspace, "gc_sweep_continue: success heap_increment().\n");
     }
+#endif
     gc_sweep_step(objspace, heap);
     gc_exit(objspace, "sweep_continue");
 }
@@ -3316,7 +3332,7 @@ gc_sweep_continue(rb_objspace_t *objspace, rb_heap_t *heap)
 static void
 gc_sweep(rb_objspace_t *objspace)
 {
-    int immediate_sweep = objspace->rincgc.immediate_sweep;
+    const int immediate_sweep = objspace->immediate_sweep;
 
     gc_report(1, objspace, "gc_sweep: immediate: %d\n", immediate_sweep);
 
@@ -3473,6 +3489,7 @@ pop_mark_stack(mark_stack_t *stack, VALUE *data)
     return TRUE;
 }
 
+#if GC_ENABLE_INCREMENTAL_MARK
 static int
 invalidate_mark_stack_chunk(stack_chunk_t *chunk, int limit, VALUE obj)
 {
@@ -3499,6 +3516,7 @@ invalidate_mark_stack(mark_stack_t *stack, VALUE obj)
     }
     rb_bug("invalid_mark_stack: unreachable");
 }
+#endif
 
 static void
 init_mark_stack(mark_stack_t *stack)
@@ -3851,6 +3869,7 @@ gc_mark_ptr(rb_objspace_t *objspace, VALUE obj)
     return 1;
 }
 
+#if USE_RGENGC
 static int
 gc_remember_unprotected(rb_objspace_t *objspace, VALUE obj)
 {
@@ -3867,6 +3886,7 @@ gc_remember_unprotected(rb_objspace_t *objspace, VALUE obj)
 	return FALSE;
     }
 }
+#endif
 
 static void
 rgengc_check_relation(rb_objspace_t *objspace, VALUE obj)
@@ -3910,30 +3930,34 @@ rgengc_check_relation(rb_objspace_t *objspace, VALUE obj)
 static void
 gc_grey(rb_objspace_t *objspace, VALUE obj)
 {
-    if (RGENGC_CHECK_MODE) {
-	if (RVALUE_MARKED(obj) == FALSE) rb_bug("gc_grey: %s is not marked.", obj_info(obj));
-	if (RVALUE_MARKING(obj) == TRUE) rb_bug("gc_grey: %s is marking/remembered.", obj_info(obj));
-    }
+#if RGENGC_CHECK_MODE
+    if (RVALUE_MARKED(obj) == FALSE) rb_bug("gc_grey: %s is not marked.", obj_info(obj));
+    if (RVALUE_MARKING(obj) == TRUE) rb_bug("gc_grey: %s is marking/remembered.", obj_info(obj));
+#endif
 
+#if GC_ENABLE_INCREMENTAL_MARK
     if (is_incremental_marking(objspace)) {
 	MARK_IN_BITMAP(GET_HEAP_MARKING_BITS(obj), obj);
     }
+#endif
+
     push_mark_stack(&objspace->mark_stack, obj);
 }
 
 static void
 gc_aging(rb_objspace_t *objspace, VALUE obj)
 {
+#if USE_RGENGC
     struct heap_page *page = GET_HEAP_PAGE(obj);
 
-    if (RGENGC_CHECK_MODE) {
-	assert(RVALUE_MARKING(obj) == FALSE);
-    }
+#if RGENGC_CHECK_MODE
+    assert(RVALUE_MARKING(obj) == FALSE);
+#endif
 
     objspace->marked_objects++;
 
     check_rvalue_consistency(obj);
-#if USE_RGENGC
+
     if (RVALUE_PAGE_WB_UNPROTECTED(page, obj) == 0) {
 	if (!RVALUE_OLD_P(obj)) {
 	    gc_report(3, objspace, "gc_aging: YOUNG: %s\n", obj_info(obj));
@@ -3945,8 +3969,8 @@ gc_aging(rb_objspace_t *objspace, VALUE obj)
 	    objspace->rgengc.old_object_count++;
 	}
     }
-#endif /* USE_RGENGC */
     check_rvalue_consistency(obj);
+#endif /* USE_RGENGC */
 }
 
 static void
@@ -4142,7 +4166,9 @@ gc_mark_stacked_objects(rb_objspace_t *objspace, int incremental, size_t count)
 {
     mark_stack_t *mstack = &objspace->mark_stack;
     VALUE obj;
+#if GC_ENABLE_INCREMENTAL_MARK
     size_t marked_objects_at_the_beggining = objspace->marked_objects;
+#endif
 
     while (pop_mark_stack(mstack, &obj)) {
 	if (obj == Qundef) continue; /* skip */
@@ -4152,6 +4178,7 @@ gc_mark_stacked_objects(rb_objspace_t *objspace, int incremental, size_t count)
 	}
         gc_mark_children(objspace, obj);
 
+#if GC_ENABLE_INCREMENTAL_MARK
 	if (incremental) {
 	    if (RGENGC_CHECK_MODE && !RVALUE_MARKING(obj)) {
 		rb_bug("gc_mark_stacked_objects: incremental, but marking bit is 0");
@@ -4165,6 +4192,7 @@ gc_mark_stacked_objects(rb_objspace_t *objspace, int incremental, size_t count)
 	else {
 	    /* just ignore marking bits */
 	}
+#endif
     }
 
     if (RGENGC_CHECK_MODE >= 3) {
@@ -4192,8 +4220,7 @@ gc_mark_stacked_objects_all(rb_objspace_t *objspace)
     return gc_mark_stacked_objects(objspace, FALSE, 0);
 }
 
-
-#if PRITNT_ROOT_TICKS
+#if PRINT_ROOT_TICKS
 #define MAX_TICKS 0x100
 static tick_t mark_ticks[MAX_TICKS];
 static const char *mark_ticks_categories[MAX_TICKS];
@@ -4223,7 +4250,9 @@ gc_mark_roots(rb_objspace_t *objspace, const char **categoryp)
     rb_thread_t *th = GET_THREAD();
     if (categoryp) *categoryp = "xxx";
 
+#if USE_RGENGC
     objspace->rgengc.parent_object = Qfalse;
+#endif
 
 #if PRINT_ROOT_TICKS
     tick_t start_tick = tick();
@@ -4235,7 +4264,7 @@ gc_mark_roots(rb_objspace_t *objspace, const char **categoryp)
     }
 #endif
 
-#if PRINT_ROOT_TICSK
+#if PRINT_ROOT_TICKS
 #define MARK_CHECKPOINT_PRINT_TICK(category) do { \
     if (prev_category) { \
 	tick_t t = tick(); \
@@ -4602,11 +4631,12 @@ verify_internal_consistency_i(void *page_start, void *page_end, size_t stride, v
 	    /* count objects */
 	    data->live_object_count++;
 
-	    /* check health of children */
-	    data->parent = obj;
 	    rb_objspace_reachable_objects_from(obj, check_children_i, (void *)data);
 
 #if USE_RGENGC
+	    /* check health of children */
+	    data->parent = obj;
+
 	    if (RVALUE_OLD_P(obj)) data->old_object_count++;
 	    if (RVALUE_WB_UNPROTECTED(obj) && RVALUE_LONG_LIVED(obj)) data->remembered_shady_count++;
 
@@ -4639,6 +4669,7 @@ verify_internal_consistency_i(void *page_start, void *page_end, size_t stride, v
 static int
 gc_verify_heap_page(rb_objspace_t *objspace, struct heap_page *page, VALUE obj)
 {
+#if USE_RGENGC
     int i;
     unsigned int has_remembered_shady = FALSE;
     unsigned int has_remembered_old = FALSE;
@@ -4672,6 +4703,9 @@ gc_verify_heap_page(rb_objspace_t *objspace, struct heap_page *page, VALUE obj)
     }
 
     return rememberd_old_objects;
+#else
+    return 0;
+#endif
 }
 
 static int
@@ -4785,9 +4819,10 @@ gc_marks_start(rb_objspace_t *objspace, int full_mark)
     /* start marking */
     gc_report(1, objspace, "gc_marks_start: (%s)\n", full_mark ? "full" : "minor");
     objspace->stat = marking;
-    objspace->rgengc.old_object_count_at_gc_start = objspace->rgengc.old_object_count;
 
 #if USE_RGENGC
+    objspace->rgengc.old_object_count_at_gc_start = objspace->rgengc.old_object_count;
+
     if (full_mark) {
 	objspace->rgengc.during_minor_gc = FALSE;
 	objspace->marked_objects = 0;
@@ -4809,6 +4844,7 @@ gc_marks_start(rb_objspace_t *objspace, int full_mark)
     gc_report(1, objspace, "gc_marks_start: (%s) end, stack in %d\n", full_mark ? "full" : "minor", (int)mark_stack_size(&objspace->mark_stack));
 }
 
+#if GC_ENABLE_INCREMENTAL_MARK
 static void
 gc_marks_wb_unprotected_objects(rb_objspace_t *objspace)
 {
@@ -4847,6 +4883,7 @@ gc_marks_wb_unprotected_objects(rb_objspace_t *objspace)
 
     gc_mark_stacked_objects_all(objspace);
 }
+#endif
 
 static struct heap_page *
 heap_move_pooled_pages_to_free_pages(rb_heap_t *heap)
@@ -4865,6 +4902,7 @@ heap_move_pooled_pages_to_free_pages(rb_heap_t *heap)
 static int
 gc_marks_finish(rb_objspace_t *objspace)
 {
+#if GC_ENABLE_INCREMENTAL_MARK
     /* finish incremental GC */
     if (is_incremental_marking(objspace)) {
 	if (heap_eden->pooled_pages) {
@@ -4894,30 +4932,37 @@ gc_marks_finish(rb_objspace_t *objspace)
 	/* check children of all marked wb-unprotected objects */
 	gc_marks_wb_unprotected_objects(objspace);
     }
+#endif /* GC_ENABLE_INCREMENTAL_MARK */
 
 #if RGENGC_CHECK_MODE >= 2
     gc_verify_internal_consistency(Qnil);
 #endif
 
+#if USE_RGENGC
     if (is_full_marking(objspace)) {
 	/* See the comment about RUBY_GC_HEAP_OLDOBJECT_LIMIT_FACTOR */
 	const double r = gc_params.oldobject_limit_factor;
 	objspace->rgengc.remembered_shady_object_limit = (size_t)(objspace->rgengc.remembered_shady_object_count * r);
 	objspace->rgengc.old_object_limit = (size_t)(objspace->rgengc.old_object_count * r);
     }
+#endif
 
 #if RGENGC_CHECK_MODE >= 4
     gc_marks_check(objspace, gc_check_after_marks_i, "after_marks");
 #endif
+
     {   /* decide full GC is needed or not */
 	rb_heap_t *heap = heap_eden;
 	size_t sweep_slots =
 	  (heap_pages_increment * HEAP_OBJ_LIMIT) +       /* allocatable slots in empty pages */
 	  (heap->total_slots - objspace->marked_objects); /* will be sweep slots */
 
-	if (RGENGC_CHECK_MODE) assert(heap->total_slots >= objspace->marked_objects);
+#if RGENGC_CHECK_MODE
+	assert(heap->total_slots >= objspace->marked_objects);
+#endif
 
 	if (sweep_slots < heap_pages_min_free_slots) {
+#if USE_RGENGC
 	    if (!is_full_marking(objspace) && objspace->profile.count - objspace->rgengc.last_major_gc > 3 /* magic number */) {
 		gc_report(1, objspace, "gc_marks_finish: next is full GC!!)\n");
 		objspace->rgengc.need_major_gc |= GPR_FLAG_MAJOR_BY_NOFREE;
@@ -4927,7 +4972,14 @@ gc_marks_finish(rb_objspace_t *objspace)
 		heap_set_increment(objspace, heap_extend_pages(objspace));
 		heap_increment(objspace, heap);
 	    }
+#else
+	    gc_report(1, objspace, "gc_marks_finish: heap_set_increment!!\n");
+	    heap_set_increment(objspace, heap_extend_pages(objspace));
+	    heap_increment(objspace, heap);
+#endif
 	}
+
+#if USE_RGENGC
 	if (objspace->rgengc.remembered_shady_object_count > objspace->rgengc.remembered_shady_object_limit) {
 	    objspace->rgengc.need_major_gc |= GPR_FLAG_MAJOR_BY_SHADY;
 	}
@@ -4938,6 +4990,7 @@ gc_marks_finish(rb_objspace_t *objspace)
 	gc_report(1, objspace, "gc_marks_finish (marks %d objects, old %d objects, total %d slots, sweep %d slots, increment: %d, next GC: %s)\n",
 		  (int)objspace->marked_objects, (int)objspace->rgengc.old_object_count, (int)heap->total_slots, (int)sweep_slots, (int)heap_pages_increment,
 		  objspace->rgengc.need_major_gc ? "major" : "minor");
+#endif
     }
 
     gc_event_hook(objspace, RUBY_INTERNAL_EVENT_GC_END_MARK, 0);
@@ -5245,16 +5298,6 @@ rgengc_mark_and_rememberset_clear(rb_objspace_t *objspace, rb_heap_t *heap)
 
 /* RGENGC: APIs */
 
-static void
-gc_mark_from(rb_objspace_t *objspace, VALUE obj, VALUE parent)
-{
-    gc_mark_set_parent(objspace, parent);
-    rgengc_check_relation(objspace, obj);
-    if (gc_mark_ptr(objspace, obj) == FALSE) return;
-    gc_aging(objspace, obj);
-    gc_grey(objspace, obj);
-}
-
 void
 rb_gc_writebarrier_generational(VALUE a, VALUE b)
 {
@@ -5270,6 +5313,18 @@ rb_gc_writebarrier_generational(VALUE a, VALUE b)
 	gc_report(1, objspace, "rb_gc_writebarrier_generational: %s -> %s\n", obj_info(a), obj_info(b));
 	rgengc_remember(objspace, a);
     }
+}
+
+#if GC_ENABLE_INCREMENTAL_MARK
+
+static void
+gc_mark_from(rb_objspace_t *objspace, VALUE obj, VALUE parent)
+{
+    gc_mark_set_parent(objspace, parent);
+    rgengc_check_relation(objspace, obj);
+    if (gc_mark_ptr(objspace, obj) == FALSE) return;
+    gc_aging(objspace, obj);
+    gc_grey(objspace, obj);
 }
 
 int
@@ -5314,6 +5369,7 @@ rb_gc_writebarrier_incremental(VALUE a, VALUE b)
 	return TRUE;
     }
 }
+#endif
 
 void
 rb_gc_writebarrier_unprotect(VALUE obj)
@@ -5418,9 +5474,11 @@ rb_gc_unprotect_logging(void *objptr, const char *filename, int line)
 void
 rb_copy_wb_protected_attribute(VALUE dest, VALUE obj)
 {
+#if USE_RGENGC
     if (RVALUE_WB_UNPROTECTED(obj)) {
 	MARK_IN_BITMAP(GET_HEAP_WB_UNPROTECTED_BITS(dest), dest);
     }
+#endif
 }
 
 /* RGENGC analysis information */
@@ -5428,7 +5486,11 @@ rb_copy_wb_protected_attribute(VALUE dest, VALUE obj)
 VALUE
 rb_obj_rgengc_writebarrier_protected_p(VALUE obj)
 {
+#if USE_RGENGC
     return RVALUE_WB_UNPROTECTED(obj) ? Qfalse : Qtrue;
+#else
+    return Qfalse;
+#endif
 }
 
 VALUE
@@ -5488,6 +5550,7 @@ rb_gc_force_recycle(VALUE obj)
     CLEAR_IN_BITMAP(GET_HEAP_LONG_LIVED_BITS(obj), obj);
     CLEAR_IN_BITMAP(GET_HEAP_WB_UNPROTECTED_BITS(obj), obj);
 
+#if GC_ENABLE_INCREMENTAL_MARK
     if (is_incremental_marking(objspace)) {
 	if (MARKED_IN_BITMAP(GET_HEAP_MARKING_BITS(obj), obj)) {
 	    invalidate_mark_stack(&objspace->mark_stack, obj);
@@ -5496,11 +5559,14 @@ rb_gc_force_recycle(VALUE obj)
 	CLEAR_IN_BITMAP(GET_HEAP_MARK_BITS(obj), obj);
     }
     else {
+#endif
 	if (is_old || !GET_HEAP_PAGE(obj)->flags.before_sweep) {
 	    CLEAR_IN_BITMAP(GET_HEAP_MARK_BITS(obj), obj);
 	}
 	CLEAR_IN_BITMAP(GET_HEAP_MARKING_BITS(obj), obj);
+#if GC_ENABLE_INCREMENTAL_MARK
     }
+#endif
 #endif
 
     objspace->profile.total_freed_object_num++;
@@ -5695,7 +5761,7 @@ static int
 gc_start(rb_objspace_t *objspace, const int full_mark, const int immediate_mark, const int immediate_sweep, int reason)
 {
     int do_full_mark = full_mark;
-    objspace->rincgc.immediate_sweep = immediate_sweep;
+    objspace->immediate_sweep = immediate_sweep;
 
     if (!heap_pages_used) return FALSE;      /* heap is not ready */
     if (!ready_to_gc(objspace)) return TRUE; /* GC is not allowed */
@@ -5718,7 +5784,7 @@ gc_start(rb_objspace_t *objspace, const int full_mark, const int immediate_mark,
 	    do_full_mark = TRUE;
 	}
 
-	objspace->rincgc.immediate_sweep = !(flag & (1<<gc_stress_no_immediate_sweep));
+	objspace->immediate_sweep = !(flag & (1<<gc_stress_no_immediate_sweep));
     }
     else {
 #if USE_RGENGC
@@ -5736,22 +5802,24 @@ gc_start(rb_objspace_t *objspace, const int full_mark, const int immediate_mark,
 	reason |= GPR_FLAG_MAJOR_BY_FORCE; /* GC by CAPI, METHOD, and so on. */
     }
 
+#if GC_ENABLE_INCREMENTAL_MARK
     if (!GC_ENABLE_INCREMENTAL_MARK || objspace->flags.dont_incremental || immediate_mark) {
 	objspace->rincgc.during_incremental_marking = FALSE;
     }
     else {
 	objspace->rincgc.during_incremental_marking = do_full_mark;
     }
+#endif
 
     if (!GC_ENABLE_LAZY_SWEEP || objspace->flags.dont_incremental) {
-	objspace->rincgc.immediate_sweep = TRUE;
+	objspace->immediate_sweep = TRUE;
     }
 
-    if (objspace->rincgc.immediate_sweep) reason |= GPR_FLAG_IMMEDIATE_SWEEP;
+    if (objspace->immediate_sweep) reason |= GPR_FLAG_IMMEDIATE_SWEEP;
 
     gc_report(1, objspace, "gc_start(%d, %d, %d, reason: %d) => %d, %d, %d\n",
 	      full_mark, immediate_mark, immediate_sweep, reason,
-	      do_full_mark, !is_incremental_marking(objspace), objspace->rincgc.immediate_sweep);
+	      do_full_mark, !is_incremental_marking(objspace), objspace->immediate_sweep);
 
     objspace->profile.count++;
     objspace->profile.latest_gc_info = reason;
@@ -5810,8 +5878,12 @@ gc_current_status_fill(rb_objspace_t *objspace, char *buff)
     int i = 0;
     if (is_marking(objspace)) {
 	buff[i++] = 'M';
+#if USE_RGENGC
 	if (is_full_marking(objspace))        buff[i++] = 'F';
+#if GC_ENABLE_INCREMENTAL_MARK
 	if (is_incremental_marking(objspace)) buff[i++] = 'I';
+#endif
+#endif
     }
     else if (is_sweeping(objspace)) {
 	buff[i++] = 'S';
@@ -5830,10 +5902,6 @@ gc_current_status(rb_objspace_t *objspace)
     gc_current_status_fill(objspace, buff);
     return buff;
 }
-
-#ifndef PRINT_ENTER_EXIT_TICK
-#define PRINT_ENTER_EXIT_TICK 1
-#endif
 
 #if PRINT_ENTER_EXIT_TICK
 

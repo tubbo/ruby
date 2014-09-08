@@ -710,6 +710,13 @@ VALUE rb_obj_setup(VALUE obj, VALUE klass, VALUE type);
 
 #ifndef USE_RGENGC
 #define USE_RGENGC 1
+#ifndef USE_RINCGC
+#define USE_RINCGC 1
+#endif
+#endif
+
+#if USE_RGENGC == 0
+#define USE_RINCGC 0
 #endif
 
 #ifndef RGENGC_WB_PROTECTED_ARRAY
@@ -1127,7 +1134,11 @@ struct RStruct {
 #define OBJ_PROMOTED(x)             (SPECIAL_CONST_P(x) ? 0 : OBJ_PROMOTED_RAW(x))
 #define OBJ_WB_UNPROTECT(x)         rb_obj_wb_unprotect(x, __FILE__, __LINE__)
 
+#if USE_RINCGC
 int rb_gc_writebarrier_incremental(VALUE a, VALUE b);
+#else
+#define rb_gc_writebarrier_incremental(a, b) 0
+#endif
 void rb_gc_writebarrier_generational(VALUE a, VALUE b);
 void rb_gc_writebarrier_unprotect(VALUE obj);
 
