@@ -1,3 +1,92 @@
+Sun Sep  7 12:47:06 2014  Tanaka Akira  <akr@fsij.org>
+
+	* process.c: PTHREAD_CANCEL_DISABLE is not defined on Android.
+
+Sat Sep  6 20:59:06 2014  Tanaka Akira  <akr@fsij.org>
+
+	* process.c (has_privilege): The gid zero is not a privilege.
+
+Sat Sep  6 20:19:16 2014  Tanaka Akira  <akr@fsij.org>
+
+	* process.c (struct child_handler_disabler_state): cancelstate field
+	  added.
+	  (disable_child_handler_before_fork): Record cancelstate.
+	  (disable_child_handler_fork_parent): Restore cancelstate.
+
+Sat Sep  6 19:27:10 2014  Tanaka Akira  <akr@fsij.org>
+
+	* process.c (struct child_handler_disabler_state): Defined.
+
+Sat Sep  6 18:31:32 2014  SHIBATA Hiroshi  <shibata.hiroshi@gmail.com>
+
+	* lib/rake.rb, lib/rake/*, test/rake/*: Update latest rake master(e47d023)
+
+Sat Sep  6 16:38:08 2014  Masaki Suketa <masaki.suketa@nifty.ne.jp>
+
+	* ext/win32ole/win32ole_variant.c (ole_val2variant_err,
+	  ole_val2variantdata, Init_win32ole_variant): support VT_ERROR
+	  variant with error code. add WIN32OLE_VARIANT::NoParam.
+	* test/win32ole/test_win32ole_variant.rb(test_c_noparam,
+	  test_vt_error_noparam): ditto.
+	* ext/win32ole/win32ole.c: ditto.
+
+Sat Sep  6 11:08:52 2014  Nobuyoshi Nakada  <nobu@ruby-lang.org>
+
+	* parse.y (arg_ambiguous_gen): fix warning message, "even" does
+	  not mean the number of spaces here.  state the place to put a
+	  space and the operator.  [ruby-core:64790] [Bug #10204]
+
+Sat Sep  6 08:44:40 2014  Zachary Scott  <e@zzak.io>
+
+	* lib/rdoc/generator/template/darkfish/js/jquery.js: Backport
+	  rdoc/rdoc@74f60fcb04fee1778fe2694d1a0ea6513f8e67b7
+
+Sat Sep  6 08:10:44 2014  Eric Wong  <e@80x24.org>
+
+	* test/ruby/test_io.rb (test_readpartial_locktmp): use IO#nonblock=
+	  Old fcntl invocation may drop necessary flags on some platforms.
+
+Sat Sep  6 07:46:51 2014  Eric Wong  <e@80x24.org>
+
+	* test/ruby/test_io.rb (test_readpartial_locktmp): avoid EBADF
+	  [ruby-core:64773] [ruby-core:64775]
+
+Sat Sep  6 01:34:31 2014  Tanaka Akira  <akr@fsij.org>
+
+	* process.c (rb_f_exec): Call before_exec_async_signal_safe and
+	  after_exec_async_signal_safe around rb_exec_async_signal_safe.
+	  (rb_exec_async_signal_safe): Don't call
+	  before_exec_async_signal_safe and after_exec_async_signal_safe.
+	  (rb_exec_without_timer_thread): Call before_exec and
+	  after_exec.
+	  (disable_child_handler_fork_child): Make SIGPIPE handler SIG_DFL.
+
+Sat Sep  6 00:49:41 2014  Tanaka Akira  <akr@fsij.org>
+
+	* signal.c (ruby_signal): Don't set SA_SIGINFO for SIG_IGN and
+	  SIG_DFL.
+
+Fri Sep  5 21:45:33 2014  Tanaka Akira  <akr@fsij.org>
+
+	* process.c (disable_child_handler_before_fork): New function.
+	  (disable_child_handler_fork_parent): Ditto.
+	  (disable_child_handler_fork_child): Ditto.
+	  (retry_fork_async_signal_safe): Call above functions to disable
+	  signal handlers in child process.
+
+Fri Sep  5 21:02:54 2014  Tanaka Akira  <akr@fsij.org>
+
+	* process.c (handle_fork_error): Make try_gc_p argument volatile to
+	  suppress "clobbered" warning.
+
+Fri Sep  5 20:48:06 2014  Tanaka Akira  <akr@fsij.org>
+
+	* process.c (handle_fork_error): Don't need state_p argument.
+
+Fri Sep  5 20:35:52 2014  Tanaka Akira  <akr@fsij.org>
+
+	* process.c (has_privilege): Fix a return value.
+
 Fri Sep  5 19:00:40 2014  SHIBATA Hiroshi  <shibata.hiroshi@gmail.com>
 
 	* lib/shellwords.rb: proofreading documentation.
@@ -23,7 +112,7 @@ Fri Sep  5 12:40:55 2014  Tanaka Akira  <akr@fsij.org>
 
 Fri Sep  5 12:28:21 2014  Tanaka Akira  <akr@fsij.org>
 
-	* process.c (has_privilege): Fix assignements.
+	* process.c (has_privilege): Fix assignments.
 
 Fri Sep  5 11:10:13 2014  SHIBATA Hiroshi  <shibata.hiroshi@gmail.com>
 
@@ -62,7 +151,7 @@ Thu Sep  4 23:39:52 2014  Tanaka Akira  <akr@fsij.org>
 
 Thu Sep  4 20:22:14 2014  Laurent Arnoud  <laurent@spkdev.net>
 
-	* test/pathname/test_pathname.rb: added testcase for Pathname#mountpoint.
+	* test/pathname/test_pathname.rb: added testcase for Pathname#mountpoint?.
 	  [fix GH-709]
 
 Thu Sep  4 20:09:21 2014  SHIBATA Hiroshi  <shibata.hiroshi@gmail.com>

@@ -2450,7 +2450,9 @@ rb_f_exec(int argc, const VALUE *argv)
 #if defined(__APPLE__) || defined(__HAIKU__)
     rb_exec_without_timer_thread(eargp, errmsg, sizeof(errmsg));
 #else
+    before_exec_async_signal_safe(); /* async-signal-safe */
     rb_exec_async_signal_safe(eargp, errmsg, sizeof(errmsg));
+    preserving_errno(after_exec_async_signal_safe()); /* async-signal-safe */
 #endif
     RB_GC_GUARD(execarg_obj);
     if (errmsg[0])
@@ -3055,8 +3057,6 @@ rb_exec_async_signal_safe(const struct rb_execarg *eargp, char *errmsg, size_t e
     struct rb_execarg *const sargp = NULL;
 #endif
 
-    before_exec_async_signal_safe(); /* async-signal-safe */
-
     if (rb_execarg_run_options(eargp, sargp, errmsg, errmsg_buflen) < 0) { /* hopefully async-signal-safe */
         goto failure;
     }
@@ -3075,7 +3075,6 @@ rb_exec_async_signal_safe(const struct rb_execarg *eargp, char *errmsg, size_t e
 #endif
 
 failure:
-    preserving_errno(after_exec_async_signal_safe()); /* async-signal-safe */
     return -1;
 }
 
@@ -3084,9 +3083,9 @@ static int
 rb_exec_without_timer_thread(const struct rb_execarg *eargp, char *errmsg, size_t errmsg_buflen)
 {
     int ret;
-    before_exec_non_async_signal_safe(); /* not async-signal-safe because it calls rb_thread_stop_timer_thread.  */
+    before_exec();
     ret = rb_exec_async_signal_safe(eargp, errmsg, errmsg_buflen); /* hopefully async-signal-safe */
-    preserving_errno(after_exec_non_async_signal_safe()); /* not async-signal-safe because it calls rb_thread_start_timer_thread.  */
+    preserving_errno(after_exec()); /* not async-signal-safe because it calls rb_thread_start_timer_thread.  */
     return ret;
 }
 #endif
@@ -3159,8 +3158,10 @@ pipe_nocrash(int filedes[2], VALUE fds)
 #endif
 
 static int
-handle_fork_error(int *status, int *ep, int *state_p, int *try_gc_p)
+handle_fork_error(int *status, int *ep, volatile int *try_gc_p)
 {
+    int state = 0;
+
     switch (errno) {
       case ENOMEM:
         if ((*try_gc_p)-- > 0 && !rb_during_gc()) {
@@ -3177,16 +3178,16 @@ handle_fork_error(int *status, int *ep, int *state_p, int *try_gc_p)
             return 0;
         }
         else {
-            rb_protect((VALUE (*)())rb_thread_sleep, 1, state_p);
-            if (status) *status = *state_p;
-            if (!*state_p) return 0;
+            rb_protect((VALUE (*)())rb_thread_sleep, 1, &state);
+            if (status) *status = state;
+            if (!state) return 0;
         }
         break;
     }
     if (ep) {
         preserving_errno((close(ep[0]), close(ep[1])));
     }
-    if (*state_p && !status) rb_jump_tag(*state_p);
+    if (state && !status) rb_jump_tag(state);
     return -1;
 }
 
@@ -3280,6 +3281,7 @@ recv_child_error(int fd, int *errp, char *errmsg, size_t errmsg_buflen)
     return size != 0;
 }
 
+#ifdef HAVE_WORKING_VFORK
 #if !defined(HAVE_GETRESUID) && defined(HAVE_GETUIDX)
 /* AIX 7.1 */
 static int
@@ -3350,10 +3352,8 @@ has_privilege(void)
             return 1;
     }
 #else
-    {
-        ruid = getuid();
-        euid = geteuid();
-    }
+    ruid = getuid();
+    euid = geteuid();
 #endif
 
     if (euid == 0 || euid != ruid)
@@ -3367,18 +3367,119 @@ has_privilege(void)
         if (ret == -1)
             rb_sys_fail("getresgid(2)");
         if (egid != sgid)
-            return 0;
+            return 1;
     }
 #else
-    {
-        rgid = getgid();
-        egid = getegid();
+    rgid = getgid();
+    egid = getegid();
+#endif
+
+    if (egid != rgid)
+        return 1;
+
+    return 0;
+}
+#endif
+
+struct child_handler_disabler_state
+{
+    sigset_t sigmask;
+    int cancelstate;
+};
+
+static void
+disable_child_handler_before_fork(struct child_handler_disabler_state *old)
+{
+    int ret;
+    sigset_t all;
+
+    ret = sigfillset(&all);
+    if (ret == -1)
+        rb_sys_fail("sigfillset");
+
+    ret = pthread_sigmask(SIG_SETMASK, &all, &old->sigmask); /* not async-signal-safe */
+    if (ret != 0) {
+        errno = ret;
+        rb_sys_fail("pthread_sigmask");
+    }
+
+#ifdef PTHREAD_CANCEL_DISABLE
+    ret = pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &old->cancelstate);
+    if (ret != 0) {
+        errno = ret;
+        rb_sys_fail("pthread_setcancelstate");
+    }
+#endif
+}
+
+static void
+disable_child_handler_fork_parent(struct child_handler_disabler_state *old)
+{
+    int ret;
+
+#ifdef PTHREAD_CANCEL_DISABLE
+    ret = pthread_setcancelstate(old->cancelstate, NULL);
+    if (ret != 0) {
+        errno = ret;
+        rb_sys_fail("pthread_setcancelstate");
     }
 #endif
 
-    if (egid == 0 || egid != rgid)
-        return 1;
+    ret = pthread_sigmask(SIG_SETMASK, &old->sigmask, NULL); /* not async-signal-safe */
+    if (ret != 0) {
+        errno = ret;
+        rb_sys_fail("pthread_sigmask");
+    }
+}
 
+/* This function should be async-signal-safe.  Actually it is. */
+static int
+disable_child_handler_fork_child(struct child_handler_disabler_state *old, char *errmsg, size_t errmsg_buflen)
+{
+    int sig;
+    int ret;
+    struct sigaction act, oact;
+
+    act.sa_handler = SIG_DFL;
+    act.sa_flags = 0;
+    ret = sigemptyset(&act.sa_mask); /* async-signal-safe */
+    if (ret == -1) {
+        ERRMSG("sigemptyset");
+        return -1;
+    }
+
+    for (sig = 1; sig < NSIG; sig++) {
+        int reset = 0;
+#ifdef SIGPIPE
+        if (sig == SIGPIPE)
+            reset = 1;
+#endif
+        if (!reset) {
+            ret = sigaction(sig, NULL, &oact); /* async-signal-safe */
+            if (ret == -1 && errno == EINVAL) {
+                continue; /* Ignore invalid signal number. */
+            }
+            if (ret == -1) {
+                ERRMSG("sigaction to obtain old action");
+                return -1;
+            }
+            reset = (oact.sa_flags & SA_SIGINFO) ||
+                    (oact.sa_handler != SIG_IGN && oact.sa_handler != SIG_DFL);
+        }
+        if (reset) {
+            ret = sigaction(sig, &act, NULL); /* async-signal-safe */
+            if (ret == -1) {
+                ERRMSG("sigaction to set default action");
+                return -1;
+            }
+        }
+    }
+
+    ret = sigprocmask(SIG_SETMASK, &old->sigmask, NULL); /* async-signal-safe */
+    if (ret != 0) {
+        ERRMSG("sigprocmask");
+        return -1;
+    }
     return 0;
 }
 
@@ -3388,11 +3489,12 @@ retry_fork_async_signal_safe(int *status, int *ep,
         char *errmsg, size_t errmsg_buflen)
 {
     rb_pid_t pid;
-    int state = 0;
-    int try_gc = 1;
+    volatile int try_gc = 1;
+    struct child_handler_disabler_state old;
 
     while (1) {
         prefork();
+        disable_child_handler_before_fork(&old);
 #ifdef HAVE_WORKING_VFORK
         if (!has_privilege())
             pid = vfork();
@@ -3404,8 +3506,11 @@ retry_fork_async_signal_safe(int *status, int *ep,
         if (pid == 0) {/* fork succeed, child process */
             int ret;
             close(ep[0]);
-            ret = chfunc(charg, errmsg, errmsg_buflen);
-            if (!ret) _exit(EXIT_SUCCESS);
+            ret = disable_child_handler_fork_child(&old, errmsg, errmsg_buflen); /* async-signal-safe */
+            if (ret == 0) {
+                ret = chfunc(charg, errmsg, errmsg_buflen);
+                if (!ret) _exit(EXIT_SUCCESS);
+            }
             send_child_error(ep[1], errmsg, errmsg_buflen);
 #if EXIT_SUCCESS == 127
             _exit(EXIT_FAILURE);
@@ -3413,10 +3518,11 @@ retry_fork_async_signal_safe(int *status, int *ep,
             _exit(127);
 #endif
         }
+        preserving_errno(disable_child_handler_fork_parent(&old));
         if (0 < pid) /* fork succeed, parent process */
             return pid;
         /* fork failed */
-        if (handle_fork_error(status, ep, &state, &try_gc))
+        if (handle_fork_error(status, ep, &try_gc))
             return -1;
     }
 }
@@ -3458,7 +3564,6 @@ static rb_pid_t
 retry_fork_ruby(int *status)
 {
     rb_pid_t pid;
-    int state = 0;
     int try_gc = 1;
 
     while (1) {
@@ -3471,7 +3576,7 @@ retry_fork_ruby(int *status)
         if (0 < pid) /* fork succeed, parent process */
             return pid;
         /* fork failed */
-        if (handle_fork_error(status, NULL, &state, &try_gc))
+        if (handle_fork_error(status, NULL, &try_gc))
             return -1;
     }
 }
