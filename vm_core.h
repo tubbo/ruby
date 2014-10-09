@@ -143,6 +143,8 @@ typedef struct rb_call_info_struct {
     int orig_argc;
     rb_iseq_t *blockiseq;
 
+    ID *keywords;
+
     /* inline cache: keys */
     rb_serial_t method_state;
     rb_serial_t class_serial;
