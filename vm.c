@@ -2503,6 +2503,10 @@ Init_VM(void)
     rb_undef_alloc_func(rb_cEnv);
     rb_undef_method(CLASS_OF(rb_cEnv), "new");
 
+    vm_get_uninitialized_keyword_indicator_object = rb_newobj_of(rb_cObject, T_OBJECT | FL_WB_PROTECTED);
+    rb_obj_freeze(vm_get_uninitialized_keyword_indicator_object);
+    rb_gc_register_mark_object(vm_get_uninitialized_keyword_indicator_object);
+
     /*
      * Document-class: Thread
      *

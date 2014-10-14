@@ -1050,7 +1050,7 @@ vm_caller_setup_args(const rb_thread_t *th, rb_control_frame_t *cfp, rb_call_inf
 
     /* expand top of stack? */
 
-    if (UNLIKELY(ci->flag & VM_CALL_ARGS_SPLAT)) {
+    if (UNLIKELY(ci->flag & VM_CALL_ARGS_SPLAT) && 0) {
 	VALUE ary = *(cfp->sp - 1);
 	const VALUE *ptr;
 	int i;
@@ -1227,22 +1227,56 @@ static VALUE vm_call_iseq_setup_2(rb_thread_t *th, rb_control_frame_t *cfp, rb_c
 static inline VALUE vm_call_iseq_setup_normal(rb_thread_t *th, rb_control_frame_t *cfp, rb_call_info_t *ci);
 static inline VALUE vm_call_iseq_setup_tailcall(rb_thread_t *th, rb_control_frame_t *cfp, rb_call_info_t *ci);
 
+#include "t.c"
+
+static inline void
+vm_caller_setup_arg_splat(rb_control_frame_t *cfp, rb_call_info_t *ci)
+{
+    VALUE *argv = cfp->sp - ci->argc;
+    VALUE ary = argv[ci->argc-1];
+
+    cfp->sp--;
+
+    if (!NIL_P(ary)) {
+	const VALUE *ptr = RARRAY_CONST_PTR(ary);
+	long len = RARRAY_LEN(ary), i;
+
+	CHECK_VM_STACK_OVERFLOW(cfp, len);
+
+	for (i = 0; i < len; i++) {
+	    *cfp->sp++ = ptr[i];
+	}
+	ci->argc += i-1;
+    }
+
+    /* TODO: support keyword */
+}
+
+#define IS_ARGS_SPLAT(ci) ((ci)->flag & VM_CALL_ARGS_SPLAT)
+#define IS_ARGS_KEYWORD(ci) ((ci)->keyword != NULL)
+
+#define CALLER_SETUP_ARG_SPLAT(cfp, ci) if (UNLIKELY(IS_ARGS_SPLAT(ci))) vm_caller_setup_arg_splat((cfp), (ci))
+
 static inline void
 vm_callee_setup_arg(rb_thread_t *th, rb_call_info_t *ci, const rb_iseq_t *iseq,
 		    VALUE *argv, int is_lambda)
 {
-    if (LIKELY(iseq->arg_simple & 0x01)) {
-	/* simple check */
+    if (LIKELY(iseq->arg_simple & 0x01)) {	/* simple check */
+	rb_control_frame_t *cfp = th->cfp;
+
+	CALLER_SETUP_ARG_SPLAT(cfp, ci);
+
 	if (ci->argc != iseq->argc) {
 	    VALUE arg0;
 	    long len;
+
 	    if (!(is_lambda > 1) ||
 		ci->argc != 1 ||
 		!RB_TYPE_P(arg0 = argv[0], T_ARRAY) ||
 		(len = RARRAY_LEN(arg0)) != (long)iseq->argc) {
 		argument_error(iseq, ci->argc, iseq->argc, iseq->argc);
 	    }
-	    CHECK_VM_STACK_OVERFLOW(th->cfp, len - 1);
+	    CHECK_VM_STACK_OVERFLOW(cfp, len - 1);
 	    MEMCPY(argv, RARRAY_CONST_PTR(arg0), VALUE, len);
 	    ci->argc = (int)len;
 	}
@@ -1251,12 +1285,12 @@ vm_callee_setup_arg(rb_thread_t *th, rb_call_info_t *ci, const rb_iseq_t *iseq,
 			(UNLIKELY(ci->flag & VM_CALL_TAILCALL) ?
 			 vm_call_iseq_setup_tailcall :
 			 vm_call_iseq_setup_normal),
-			(!is_lambda &&
-			 !(ci->flag & VM_CALL_ARGS_SPLAT) && /* argc may differ for each calls */
+			(!is_lambda && !IS_ARGS_SPLAT(ci) &&
 			 !(ci->me->flag & NOEX_PROTECTED)));
     }
     else {
-	ci->aux.opt_pc = vm_callee_setup_arg_complex(th, ci, iseq, argv, is_lambda > 1);
+	if (0) ci->aux.opt_pc = vm_callee_setup_arg_complex(th, ci, iseq, argv, is_lambda > 1);
+	ci->aux.opt_pc = setup_parameters_complex(th, iseq, ci, argv);
     }
 }
 
@@ -1727,6 +1761,7 @@ vm_call_method_missing(rb_thread_t *th, rb_control_frame_t *reg_cfp, rb_call_inf
     ci_entry.blockptr = ci->blockptr;
     ci_entry.recv = ci->recv;
     ci_entry.me = rb_method_entry(CLASS_OF(ci_entry.recv), idMethodMissing, &ci_entry.defined_class);
+    ci_entry.keywords = NULL;
 
     /* shift arguments: m(a, b, c) #=> method_missing(:m, a, b, c) */
     CHECK_VM_STACK_OVERFLOW(reg_cfp, 1);
@@ -1796,14 +1831,17 @@ vm_call_method(rb_thread_t *th, rb_control_frame_t *cfp, rb_call_info_t *ci)
 	      case VM_METHOD_TYPE_NOTIMPLEMENTED:
 	      case VM_METHOD_TYPE_CFUNC:
 		CI_SET_FASTPATH(ci, vm_call_cfunc, enable_fastpath);
+		CALLER_SETUP_ARG_SPLAT(cfp, ci);
 		return vm_call_cfunc(th, cfp, ci);
 	      case VM_METHOD_TYPE_ATTRSET:{
+		CALLER_SETUP_ARG_SPLAT(cfp, ci);
 		rb_check_arity(ci->argc, 1, 1);
 		ci->aux.index = 0;
 		CI_SET_FASTPATH(ci, vm_call_attrset, enable_fastpath && !(ci->flag & VM_CALL_ARGS_SPLAT));
 		return vm_call_attrset(th, cfp, ci);
 	      }
 	      case VM_METHOD_TYPE_IVAR:{
+		CALLER_SETUP_ARG_SPLAT(cfp, ci);
 		rb_check_arity(ci->argc, 0, 0);
 		ci->aux.index = 0;
 		CI_SET_FASTPATH(ci, vm_call_ivar, enable_fastpath && !(ci->flag & VM_CALL_ARGS_SPLAT));
@@ -1812,10 +1850,12 @@ vm_call_method(rb_thread_t *th, rb_control_frame_t *cfp, rb_call_info_t *ci)
 	      case VM_METHOD_TYPE_MISSING:{
 		ci->aux.missing_reason = 0;
 		CI_SET_FASTPATH(ci, vm_call_method_missing, enable_fastpath);
+		CALLER_SETUP_ARG_SPLAT(cfp, ci);
 		return vm_call_method_missing(th, cfp, ci);
 	      }
 	      case VM_METHOD_TYPE_BMETHOD:{
 		CI_SET_FASTPATH(ci, vm_call_bmethod, enable_fastpath);
+		CALLER_SETUP_ARG_SPLAT(cfp, ci);
 		return vm_call_bmethod(th, cfp, ci);
 	      }
 	      case VM_METHOD_TYPE_ZSUPER:{
@@ -1843,9 +1883,11 @@ vm_call_method(rb_thread_t *th, rb_control_frame_t *cfp, rb_call_info_t *ci)
 		switch (ci->me->def->body.optimize_type) {
 		  case OPTIMIZED_METHOD_TYPE_SEND:
 		    CI_SET_FASTPATH(ci, vm_call_opt_send, enable_fastpath);
+		    CALLER_SETUP_ARG_SPLAT(cfp, ci);
 		    return vm_call_opt_send(th, cfp, ci);
 		  case OPTIMIZED_METHOD_TYPE_CALL:
 		    CI_SET_FASTPATH(ci, vm_call_opt_call, enable_fastpath);
+		    CALLER_SETUP_ARG_SPLAT(cfp, ci);
 		    return vm_call_opt_call(th, cfp, ci);
 		  default:
 		    rb_bug("vm_call_method: unsupported optimized method type (%d)",
@@ -2350,6 +2392,7 @@ vm_yield_setup_args(rb_thread_t * const th, const rb_iseq_t *iseq,
 	ci_entry.flag = 0;
 	ci_entry.argc = argc;
 	ci_entry.blockptr = (rb_block_t *)blockptr;
+	ci_entry.keywords = NULL;
 	vm_callee_setup_arg(th, &ci_entry, iseq, argv, lambda);
 	return ci_entry.aux.opt_pc;
     }
@@ -2433,3 +2476,4 @@ vm_once_clear(VALUE data)
     is->once.running_thread = NULL;
     return Qnil;
 }
+
