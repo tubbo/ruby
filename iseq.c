@@ -67,6 +67,7 @@ iseq_free(void *ptr)
     RUBY_FREE_ENTER("iseq");
 
     if (ptr) {
+	int i;
 	iseq = ptr;
 	if (!iseq->orig) {
 	    /* It's possible that strings are freed */
@@ -79,6 +80,11 @@ iseq_free(void *ptr)
 	    RUBY_FREE_UNLESS_NULL(iseq->line_info_table);
 	    RUBY_FREE_UNLESS_NULL(iseq->local_table);
 	    RUBY_FREE_UNLESS_NULL(iseq->is_entries);
+	    for (i=0; i<iseq->callinfo_size; i++) {
+		/* TODO: revisit callinfo data structure */
+		ID *keywords = iseq->callinfo_entries[i].keywords;
+		RUBY_FREE_UNLESS_NULL(keywords);
+	    }
 	    RUBY_FREE_UNLESS_NULL(iseq->callinfo_entries);
 	    RUBY_FREE_UNLESS_NULL(iseq->catch_table);
 	    RUBY_FREE_UNLESS_NULL(iseq->arg_opt_table);

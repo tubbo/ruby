@@ -139,10 +139,12 @@ struct rb_control_frame_struct;
 typedef struct rb_call_info_struct {
     /* fixed at compile time */
     ID mid;
+
     unsigned int flag;
     int orig_argc;
     rb_iseq_t *blockiseq;
 
+    int keyword_len;
     ID *keywords;
 
     /* inline cache: keys */
@@ -800,7 +802,8 @@ enum vm_check_match_type {
 enum vm_special_object_type {
     VM_SPECIAL_OBJECT_VMCORE = 1,
     VM_SPECIAL_OBJECT_CBASE,
-    VM_SPECIAL_OBJECT_CONST_BASE
+    VM_SPECIAL_OBJECT_CONST_BASE,
+    VM_SPECIAL_OBJECT_UNINITIALIZED_KEYWORD
 };
 
 #define VM_FRAME_MAGIC_METHOD 0x11

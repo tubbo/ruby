@@ -877,11 +877,28 @@ static rb_call_info_t *
 new_callinfo(rb_iseq_t *iseq, ID mid, int argc, VALUE block, unsigned int flag, ID *keywords)
 {
     rb_call_info_t *ci = (rb_call_info_t *)compile_data_alloc(iseq, sizeof(rb_call_info_t));
+    int i;
+
     ci->mid = mid;
     ci->flag = flag;
     ci->orig_argc = argc;
     ci->argc = argc;
+
     ci->keywords = keywords;
+
+    /* TODO: fix length propagation */
+    if (keywords) {
+	for (i=0; keywords[i]; i++) {
+	    fprintf(stderr, "key: %s\n", rb_id2name(keywords[i]));
+	}
+	fprintf(stderr, "key len: %d\n", i);
+	ci->keyword_len = i;
+	ci->argc += i;
+	ci->orig_argc += i;
+    }
+    else {
+	ci->keyword_len = 0;
+    }
 
     if (block) {
 	GetISeqPtr(block, ci->blockiseq);
@@ -892,6 +909,7 @@ new_callinfo(rb_iseq_t *iseq, ID mid, int argc, VALUE block, unsigned int flag, 
 	    ci->flag |= VM_CALL_ARGS_SKIP_SETUP;
 	}
     }
+
     ci->method_state = 0;
     ci->class_serial = 0;
     ci->blockptr = 0;
@@ -2271,6 +2289,52 @@ compile_branch_condition(rb_iseq_t *iseq, LINK_ANCHOR *ret, NODE * cond,
     return COMPILE_OK;
 }
 
+static int
+compile_array_keyword_arg(rb_iseq_t *iseq, LINK_ANCHOR *ret, NODE * const root_node, ID ** const keywords_ptr)
+{
+    if (nd_type(root_node) == NODE_HASH && nd_type(root_node->nd_head) == NODE_ARRAY) {
+	NODE *node = root_node->nd_head;
+
+	while (node) {
+	    NODE *key_node = node->nd_head;
+
+	    assert(nd_type(node) == NODE_ARRAY);
+	    if (nd_type(key_node) == NODE_LIT && RB_TYPE_P(key_node->nd_lit, T_SYMBOL)) {
+		/* can be keywords */
+	    }
+	    else {
+		return FALSE;
+	    }
+	    node = node->nd_next; /* skip value node */
+	    node = node->nd_next;
+	}
+
+	/* may be keywords */
+	node = root_node->nd_head;
+	{
+	    int len = node->nd_alen / 2;
+	    ID *keywords = ALLOC_N(ID, len + 1);
+	    int i = 0;
+
+	    assert(keywords_ptr != NULL);
+	    *keywords_ptr = keywords;
+
+	    while (node) {
+		NODE *key_node = node->nd_head;
+		NODE *val_node = node->nd_next->nd_head;
+
+		keywords[i++] = SYM2ID(key_node->nd_lit);
+		COMPILE(ret, "keyword values", val_node);
+		node = node->nd_next->nd_next;
+	    }
+	    assert(i == len);
+	    keywords[i] = 0; /* zero-terminate */
+	    return TRUE;
+	}
+    }
+    return FALSE;
+}
+
 enum compile_array_type_t {
     COMPILE_ARRAY_TYPE_ARRAY,
     COMPILE_ARRAY_TYPE_HASH,
@@ -2279,7 +2343,7 @@ enum compile_array_type_t {
 
 static int
 compile_array_(rb_iseq_t *iseq, LINK_ANCHOR *ret, NODE* node_root,
-	       enum compile_array_type_t type, int poped)
+	       enum compile_array_type_t type, ID **keywords_ptr, int poped)
 {
     NODE *node = node_root;
     int line = (int)nd_line(node);
@@ -2321,7 +2385,12 @@ compile_array_(rb_iseq_t *iseq, LINK_ANCHOR *ret, NODE* node_root,
 		    opt_p = 0;
 		}
 
-		COMPILE_(anchor, "array element", node->nd_head, poped);
+		if (type == COMPILE_ARRAY_TYPE_ARGS && node->nd_next == NULL /* last node */ && compile_array_keyword_arg(iseq, anchor, node->nd_head, keywords_ptr)) {
+		    len--;
+		}
+		else {
+		    COMPILE_(anchor, "array element", node->nd_head, poped);
+		}
 	    }
 
 	    if (opt_p && type != COMPILE_ARRAY_TYPE_ARGS) {
@@ -2428,7 +2497,7 @@ compile_array_(rb_iseq_t *iseq, LINK_ANCHOR *ret, NODE* node_root,
 static VALUE
 compile_array(rb_iseq_t *iseq, LINK_ANCHOR *ret, NODE* node_root, enum compile_array_type_t type)
 {
-    return compile_array_(iseq, ret, node_root, type, 0);
+    return compile_array_(iseq, ret, node_root, type, NULL, 0);
 }
 
 static VALUE
@@ -3026,6 +3095,7 @@ setup_args(rb_iseq_t *iseq, LINK_ANCHOR *args, NODE *argn, unsigned int *flag, I
 	switch (nd_type(argn)) {
 	  case NODE_SPLAT: {
 	    COMPILE(args, "args (splat)", argn->nd_head);
+	    ADD_INSN1(args, nd_line(argn), splatarray, Qfalse);
 	    argc = INT2FIX(1);
 	    nsplat++;
 	    *flag |= VM_CALL_ARGS_SPLAT;
@@ -3038,16 +3108,11 @@ setup_args(rb_iseq_t *iseq, LINK_ANCHOR *args, NODE *argn, unsigned int *flag, I
 
 	    INIT_ANCHOR(tmp);
 	    COMPILE(tmp, "args (cat: splat)", argn->nd_body);
-	    if (next_is_array && nsplat == 0) {
-		/* none */
+	    if (nd_type(argn) == NODE_ARGSCAT) {
+		ADD_INSN1(tmp, nd_line(argn), splatarray, Qfalse);
 	    }
 	    else {
-		if (nd_type(argn) == NODE_ARGSCAT) {
-		    ADD_INSN1(tmp, nd_line(argn), splatarray, Qfalse);
-		}
-		else {
-		    ADD_INSN1(tmp, nd_line(argn), newarray, INT2FIX(1));
-		}
+		ADD_INSN1(tmp, nd_line(argn), newarray, INT2FIX(1));
 	    }
 	    INSERT_LIST(args_splat, tmp);
 	    nsplat++;
@@ -3062,10 +3127,11 @@ setup_args(rb_iseq_t *iseq, LINK_ANCHOR *args, NODE *argn, unsigned int *flag, I
 	    }
 	    break;
 	  }
-	  case NODE_ARRAY: {
-	    argc = INT2FIX(compile_array(iseq, args, argn, COMPILE_ARRAY_TYPE_ARGS));
-	    break;
-	  }
+	  case NODE_ARRAY:
+	    {
+		argc = INT2FIX(compile_array_(iseq, args, argn, COMPILE_ARRAY_TYPE_ARGS, keywords, FALSE));
+		break;
+	    }
 	  default: {
 	    rb_bug("setup_arg: unknown node: %s\n", ruby_node_name(nd_type(argn)));
 	  }
@@ -4493,7 +4559,7 @@ iseq_compile_each(rb_iseq_t *iseq, LINK_ANCHOR *ret, NODE * node, int poped)
 	break;
       }
       case NODE_ARRAY:{
-	compile_array_(iseq, ret, node, COMPILE_ARRAY_TYPE_ARRAY, poped);
+	compile_array_(iseq, ret, node, COMPILE_ARRAY_TYPE_ARRAY, NULL, poped);
 	break;
       }
       case NODE_ZARRAY:{
@@ -5184,43 +5250,41 @@ iseq_compile_each(rb_iseq_t *iseq, LINK_ANCHOR *ret, NODE * node, int poped)
 	}
 	break;
       }
-      case NODE_KW_ARG:{
-	LABEL *default_label = NEW_LABEL(line);
-	LABEL *end_label = 0;
-	int idx, lv, ls;
-	ID id = node->nd_body->nd_vid;
+      case NODE_KW_ARG:
+	{
+	    LABEL *end_label = NEW_LABEL(nd_line(node));
+	    int idx, lv, ls;
+	    ID id = node->nd_body->nd_vid;
 
-	ADD_INSN(ret, line, dup);
-	ADD_INSN1(ret, line, putobject, ID2SYM(id));
-	ADD_SEND(ret, line, rb_intern("key?"), INT2FIX(1));
-	ADD_INSNL(ret, line, branchunless, default_label);
-	ADD_INSN(ret, line, dup);
-	ADD_INSN1(ret, line, putobject, ID2SYM(id));
-	ADD_SEND(ret, line, rb_intern("delete"), INT2FIX(1));
-	switch (nd_type(node->nd_body)) {
-	  case NODE_LASGN:
-	    idx = iseq->local_iseq->local_size - get_local_var_idx(iseq, id);
-	    ADD_INSN2(ret, line, setlocal, INT2FIX(idx), INT2FIX(get_lvar_level(iseq)));
-	    break;
-	  case NODE_DASGN:
-	  case NODE_DASGN_CURR:
-	    idx = get_dyna_var_idx(iseq, id, &lv, &ls);
-	    ADD_INSN2(ret, line, setlocal, INT2FIX(ls - idx), INT2FIX(lv));
-	    break;
-	  default:
-	    rb_bug("iseq_compile_each (NODE_KW_ARG): unknown node: %s", ruby_node_name(nd_type(node->nd_body)));
-	}
-	if (node->nd_body->nd_value != (NODE *)-1) {
-	    end_label = NEW_LABEL(nd_line(node));
-	    ADD_INSNL(ret, nd_line(node), jump, end_label);
-	}
-	ADD_LABEL(ret, default_label);
-	if (node->nd_body->nd_value != (NODE *)-1) {
-	    COMPILE_POPED(ret, "keyword default argument", node->nd_body);
+	    /* if kw == uninitialized_keyword
+	     *   kw = default_value
+	     * end
+	     */
+
+	    switch (nd_type(node->nd_body)) {
+	      case NODE_LASGN:
+		idx = iseq->local_iseq->local_size - get_local_var_idx(iseq, id);
+		ADD_INSN2(ret, line, getlocal, INT2FIX(idx), INT2FIX(get_lvar_level(iseq)));
+		break;
+	      case NODE_DASGN:
+	      case NODE_DASGN_CURR:
+		idx = get_dyna_var_idx(iseq, id, &lv, &ls);
+		ADD_INSN2(ret, line, getlocal, INT2FIX(ls - idx), INT2FIX(lv));
+		break;
+	      default:
+		rb_bug("iseq_compile_each (NODE_KW_ARG): unknown node: %s", ruby_node_name(nd_type(node->nd_body)));
+	    }
+	    ADD_INSN1(ret, line, putspecialobject, INT2FIX(VM_SPECIAL_OBJECT_UNINITIALIZED_KEYWORD));
+	    ADD_SEND(ret, line, idEq, INT2FIX(1));
+	    ADD_INSNL(ret, line, branchunless, end_label);
+
+	    if (node->nd_body->nd_value != (NODE *)-1) {
+		COMPILE_POPED(ret, "keyword default argument", node->nd_body);
+	    }
+
 	    ADD_LABEL(ret, end_label);
+	    break;
 	}
-	break;
-      }
       case NODE_DSYM:{
 	compile_dstr(iseq, ret, node);
 	if (!poped) {

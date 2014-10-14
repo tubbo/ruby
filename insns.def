@@ -323,6 +323,9 @@ putspecialobject
       case VM_SPECIAL_OBJECT_CONST_BASE:
 	val = vm_get_const_base(GET_ISEQ(), GET_EP());
 	break;
+      case VM_SPECIAL_OBJECT_UNINITIALIZED_KEYWORD:
+	val = vm_get_uninitialized_keyword_indicator();
+	break;
       default:
 	rb_bug("putspecialobject insn: unknown value_type");
     }
