@@ -787,7 +787,7 @@ invoke_block_from_c(rb_thread_t *th, const rb_block_t *block,
 	}
 
 	opt_pc = vm_yield_setup_args(th, iseq, argc, cfp->sp, blockptr,
-				     (type == VM_FRAME_MAGIC_LAMBDA) ? splattable+1 : 0);
+				     (type == VM_FRAME_MAGIC_LAMBDA ? (splattable ? arg_setup_lambda : arg_setup_method) : arg_setup_block));
 
 	if (me != 0) {
 	    /* bmethod */
@@ -2461,6 +2461,12 @@ static VALUE usage_analysis_insn_stop(VALUE self);
 static VALUE usage_analysis_operand_stop(VALUE self);
 static VALUE usage_analysis_register_stop(VALUE self);
 #endif
+
+VALUE
+rb_vm_get_uninitialized_keyword_indicator(void)
+{
+    return vm_get_uninitialized_keyword_indicator();
+}
 
 void
 Init_VM(void)

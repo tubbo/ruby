@@ -135,6 +135,11 @@ union iseq_inline_storage_entry {
 struct rb_thread_struct;
 struct rb_control_frame_struct;
 
+typedef struct rb_call_info_kw_arg_struct {
+    int keyword_len;
+    ID keywords[1];
+} rb_call_info_kw_arg_t;
+
 /* rb_call_info_t contains calling information including inline cache */
 typedef struct rb_call_info_struct {
     /* fixed at compile time */
@@ -143,9 +148,7 @@ typedef struct rb_call_info_struct {
     unsigned int flag;
     int orig_argc;
     rb_iseq_t *blockiseq;
-
-    int keyword_len;
-    ID *keywords;
+    rb_call_info_kw_arg_t *kw_arg;
 
     /* inline cache: keys */
     rb_serial_t method_state;
@@ -277,6 +280,7 @@ struct rb_iseq_struct {
     int arg_keywords;
     int arg_keyword_required;
     ID *arg_keyword_table;
+    VALUE *arg_keyword_default_values;
 
     /* catch table */
     struct iseq_catch_table *catch_table;
