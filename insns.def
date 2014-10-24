@@ -1029,6 +1029,7 @@ opt_send_simple
 (...)
 (VALUE val) // inc += -ci->orig_argc;
 {
+    ci->argc = ci->orig_argc;
     vm_search_method(ci, ci->recv = TOPN(ci->argc));
     CALL_METHOD(ci);
 }

@@ -82,8 +82,8 @@ iseq_free(void *ptr)
 	    RUBY_FREE_UNLESS_NULL(iseq->is_entries);
 	    for (i=0; i<iseq->callinfo_size; i++) {
 		/* TODO: revisit callinfo data structure */
-		ID *keywords = iseq->callinfo_entries[i].keywords;
-		RUBY_FREE_UNLESS_NULL(keywords);
+		rb_call_info_kw_arg_t *kw_arg = iseq->callinfo_entries[i].kw_arg;
+		RUBY_FREE_UNLESS_NULL(kw_arg);
 	    }
 	    RUBY_FREE_UNLESS_NULL(iseq->callinfo_entries);
 	    RUBY_FREE_UNLESS_NULL(iseq->catch_table);
