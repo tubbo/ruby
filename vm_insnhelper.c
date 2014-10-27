@@ -986,7 +986,7 @@ vm_base_ptr(rb_control_frame_t *cfp)
 
 /* method call processes with call_info */
 
-#include "vm_call.c"
+#include "vm_args.c"
 
 static VALUE vm_call_iseq_setup_2(rb_thread_t *th, rb_control_frame_t *cfp, rb_call_info_t *ci);
 static inline VALUE vm_call_iseq_setup_normal(rb_thread_t *th, rb_control_frame_t *cfp, rb_call_info_t *ci);
