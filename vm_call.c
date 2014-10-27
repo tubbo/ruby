@@ -702,6 +702,9 @@ vm_caller_setup_arg_block(const rb_thread_t *th, rb_control_frame_t *cfp, rb_cal
 	    ci->blockptr = &po->block;
 	    RUBY_VM_GET_BLOCK_PTR_IN_CFP(cfp)->proc = proc;
 	}
+	else {
+	    ci->blockptr = NULL;
+	}
     }
     else if (ci->blockiseq != 0) { /* likely */
 	ci->blockptr = RUBY_VM_GET_BLOCK_PTR_IN_CFP(cfp);
