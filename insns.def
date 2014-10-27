@@ -1046,11 +1046,9 @@ invokesuper
 {
     ci->argc = ci->orig_argc;
 
-    if (!(ci->flag & VM_CALL_ARGS_BLOCKARG)) {
+    vm_caller_setup_arg_block(th, reg_cfp, ci);
+    if (ci->blockptr == NULL) {
 	ci->blockptr = GET_BLOCK_PTR();
-    }
-    else {
-	vm_caller_setup_arg_block(th, reg_cfp, ci);
     }
 
     ci->recv = GET_SELF();

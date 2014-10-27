@@ -165,7 +165,7 @@ class DBM < ::DBM
     #
     # Returns true if specified +value+ is found in the database.
     def has_value?( val )
-        each_value { |v| return true if v == val }
+        each_value { |v| p [v, val]; return true if v == val }
         return false
     end
 
