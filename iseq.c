@@ -1245,6 +1245,9 @@ rb_insn_operand_intern(const rb_iseq_t *iseq,
 
 	    rb_ary_push(ary, rb_sprintf("argc:%d", ci->orig_argc));
 
+	    if (ci->kw_arg) {
+		rb_ary_push(ary, rb_sprintf("kw:%d", ci->kw_arg->keyword_len));
+	    }
 	    if (ci->blockiseq) {
 		if (child) {
 		    rb_ary_push(child, ci->blockiseq->self);
