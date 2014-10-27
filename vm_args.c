@@ -1,3 +1,13 @@
+/**********************************************************************
+
+  vm_args.c - process method call arguments.
+
+  $Author$
+
+  Copyright (C) 2014- Yukihiro Matsumoto
+
+**********************************************************************/
+
 static VALUE vm_get_uninitialized_keyword_indicator_object;
 #define vm_get_uninitialized_keyword_indicator() vm_get_uninitialized_keyword_indicator_object
 
