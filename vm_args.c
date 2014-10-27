@@ -687,13 +687,13 @@ vm_caller_setup_arg_kw(rb_control_frame_t *cfp, rb_call_info_t *ci)
 } while (0)
 
 static void
-vm_caller_setup_arg_block(const rb_thread_t *th, rb_control_frame_t *cfp, rb_call_info_t *ci)
+vm_caller_setup_arg_block(const rb_thread_t *th, rb_control_frame_t *reg_cfp, rb_call_info_t *ci, const int is_super)
 {
     if (ci->flag & VM_CALL_ARGS_BLOCKARG) {
 	rb_proc_t *po;
 	VALUE proc;
 
-	proc = *(--cfp->sp);
+	proc = *(--reg_cfp->sp);
 
 	if (proc != Qnil) {
 	    if (!rb_obj_is_proc(proc)) {
@@ -710,19 +710,24 @@ vm_caller_setup_arg_block(const rb_thread_t *th, rb_control_frame_t *cfp, rb_cal
 	    }
 	    GetProcPtr(proc, po);
 	    ci->blockptr = &po->block;
-	    RUBY_VM_GET_BLOCK_PTR_IN_CFP(cfp)->proc = proc;
+	    RUBY_VM_GET_BLOCK_PTR_IN_CFP(reg_cfp)->proc = proc;
 	}
 	else {
 	    ci->blockptr = NULL;
 	}
     }
     else if (ci->blockiseq != 0) { /* likely */
-	ci->blockptr = RUBY_VM_GET_BLOCK_PTR_IN_CFP(cfp);
+	ci->blockptr = RUBY_VM_GET_BLOCK_PTR_IN_CFP(reg_cfp);
 	ci->blockptr->iseq = ci->blockiseq;
 	ci->blockptr->proc = 0;
     }
     else {
-	ci->blockptr = NULL;
+	if (is_super) {
+	    ci->blockptr = GET_BLOCK_PTR();
+	}
+	else {
+	    ci->blockptr = NULL;
+	}
     }
 }
 

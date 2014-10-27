@@ -998,7 +998,7 @@ send
 (VALUE val) // inc += - (int)(ci->orig_argc + ((ci->flag & VM_CALL_ARGS_BLOCKARG) ? 1 : 0));
 {
     ci->argc = ci->orig_argc;
-    vm_caller_setup_arg_block(th, reg_cfp, ci);
+    vm_caller_setup_arg_block(th, reg_cfp, ci, FALSE);
     vm_search_method(ci, ci->recv = TOPN(ci->argc));
     CALL_METHOD(ci);
 }
@@ -1045,12 +1045,7 @@ invokesuper
 (VALUE val) // inc += - (int)(ci->orig_argc + ((ci->flag & VM_CALL_ARGS_BLOCKARG) ? 1 : 0));
 {
     ci->argc = ci->orig_argc;
-
-    vm_caller_setup_arg_block(th, reg_cfp, ci);
-    if (ci->blockptr == NULL) {
-	ci->blockptr = GET_BLOCK_PTR();
-    }
-
+    vm_caller_setup_arg_block(th, reg_cfp, ci, TRUE);
     ci->recv = GET_SELF();
     vm_search_super_method(th, GET_CFP(), ci);
     CALL_METHOD(ci);
