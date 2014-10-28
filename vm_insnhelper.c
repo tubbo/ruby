@@ -992,44 +992,100 @@ static VALUE vm_call_iseq_setup_2(rb_thread_t *th, rb_control_frame_t *cfp, rb_c
 static inline VALUE vm_call_iseq_setup_normal(rb_thread_t *th, rb_control_frame_t *cfp, rb_call_info_t *ci);
 static inline VALUE vm_call_iseq_setup_tailcall(rb_thread_t *th, rb_control_frame_t *cfp, rb_call_info_t *ci);
 
-static inline void
-vm_callee_setup_arg(rb_thread_t *th, rb_call_info_t *ci, const rb_iseq_t *iseq, VALUE *argv, const enum arg_setup_type arg_setup_type)
-{
-    if (LIKELY(iseq->arg_simple & 0x01) && /* simple check */
-	arg_setup_type == arg_setup_method /* TODO */) {
-	rb_control_frame_t *cfp = th->cfp;
 
-	CALLER_SETUP_ARG(cfp, ci);
+static inline VALUE
+vm_callee_setup_block_arg_arg0_check(VALUE *argv)
+{
+    VALUE ary, arg0 = argv[0];
+    ary = rb_check_array_type(arg0);
+    argv[0] = arg0;
+    return ary;
+}
+
+static inline int
+vm_callee_setup_block_arg_arg0_splat(rb_control_frame_t *cfp, const rb_iseq_t *iseq, VALUE *argv, VALUE ary)
+{
+    int i;
+    long len = RARRAY_LEN(ary);
+
+    CHECK_VM_STACK_OVERFLOW(cfp, iseq->argc);
+    for (i=0; i<len && i<iseq->argc; i++) argv[i] = RARRAY_AREF(ary, i);
+    return i;
+}
+
+static inline void
+vm_callee_setup_block_arg(rb_thread_t *th, rb_call_info_t *ci, const rb_iseq_t *iseq, VALUE *argv, const enum arg_setup_type arg_setup_type)
+{
+    if (LIKELY(iseq->arg_simple & 0x01)) {
+	rb_control_frame_t *cfp = th->cfp;
+	VALUE arg0;
+
+	CALLER_SETUP_ARG(cfp, ci); /* splat arg */
+
+	if (arg_setup_type == arg_setup_block &&
+	    ci->argc == 1 &&
+	    iseq->argc > 0 && !(iseq->arg_simple & 0x02) &&
+	    !NIL_P(arg0 = vm_callee_setup_block_arg_arg0_check(argv))) {
+	    ci->argc = vm_callee_setup_block_arg_arg0_splat(cfp, iseq, argv, arg0);
+	}
 
 	if (ci->argc != iseq->argc) {
-	    VALUE arg0;
-	    long len;
-
-	    if ((arg_setup_type == arg_setup_method) ||
-		ci->argc != 1 ||
-		!RB_TYPE_P(arg0 = argv[0], T_ARRAY) ||
-		(len = RARRAY_LEN(arg0)) != (long)iseq->argc) {
+	    if (arg_setup_type == arg_setup_block) {
+		if (ci->argc < iseq->argc) {
+		    int i;
+		    CHECK_VM_STACK_OVERFLOW(cfp, iseq->argc);
+		    for (i=ci->argc; i<iseq->argc; i++) argv[i] = Qnil;
+		    ci->argc = iseq->argc; /* fill rest parameters */
+		}
+		else if (ci->argc > iseq->argc) {
+		    ci->argc = iseq->argc; /* simply truncate arguments */
+		}
+	    }
+	    else if (arg_setup_type == arg_setup_lambda &&
+		     ci->argc == 1 &&
+		     !NIL_P(arg0 = vm_callee_setup_block_arg_arg0_check(argv)) &&
+		     RARRAY_LEN(arg0) == iseq->argc) {
+		ci->argc = vm_callee_setup_block_arg_arg0_splat(cfp, iseq, argv, arg0);
+	    }
+	    else {
 		argument_error(iseq, ci->argc, iseq->argc, iseq->argc);
 	    }
-	    CHECK_VM_STACK_OVERFLOW(cfp, len - 1);
-	    MEMCPY(argv, RARRAY_CONST_PTR(arg0), VALUE, len);
-	    ci->argc = (int)len;
 	}
 
 	ci->aux.opt_pc = 0;
-	CI_SET_FASTPATH(ci,
-			(UNLIKELY(ci->flag & VM_CALL_TAILCALL) ? vm_call_iseq_setup_tailcall : vm_call_iseq_setup_normal),
-			(!IS_ARGS_SPLAT(ci) && (!IS_ARGS_KEYWORD(ci)) && ci->me != NULL && !(ci->me->flag & NOEX_PROTECTED)));
     }
     else {
 	ci->aux.opt_pc = setup_parameters_complex(th, iseq, ci, argv, arg_setup_type);
     }
 }
 
+static inline void
+vm_callee_setup_arg(rb_thread_t *th, rb_call_info_t *ci, const rb_iseq_t *iseq, VALUE *argv)
+{
+    if (LIKELY(iseq->arg_simple & 0x01)) {
+	rb_control_frame_t *cfp = th->cfp;
+
+	CALLER_SETUP_ARG(cfp, ci); /* splat arg */
+
+	if (ci->argc != iseq->argc) {
+	    argument_error(iseq, ci->argc, iseq->argc, iseq->argc);
+	}
+
+	ci->aux.opt_pc = 0;
+
+	CI_SET_FASTPATH(ci,
+			(UNLIKELY(ci->flag & VM_CALL_TAILCALL) ? vm_call_iseq_setup_tailcall : vm_call_iseq_setup_normal),
+			(!IS_ARGS_SPLAT(ci) && !IS_ARGS_KEYWORD(ci) && !(ci->me->flag & NOEX_PROTECTED)));
+    }
+    else {
+	ci->aux.opt_pc = setup_parameters_complex(th, iseq, ci, argv, arg_setup_method);
+    }
+}
+
 static VALUE
 vm_call_iseq_setup(rb_thread_t *th, rb_control_frame_t *cfp, rb_call_info_t *ci)
 {
-    vm_callee_setup_arg(th, ci, ci->me->def->body.iseq, cfp->sp - ci->argc, FALSE);
+    vm_callee_setup_arg(th, ci, ci->me->def->body.iseq, cfp->sp - ci->argc);
     return vm_call_iseq_setup_2(th, cfp, ci);
 }
 
@@ -1939,7 +1995,7 @@ vm_yield_with_cfunc(rb_thread_t *th, const rb_block_t *block,
 static int
 vm_yield_callee_setup_arg(rb_thread_t *th, rb_call_info_t *ci, const rb_iseq_t *iseq, VALUE *argv, enum arg_setup_type arg_setup_type)
 {
-    vm_callee_setup_arg(th, ci, iseq, argv, arg_setup_type);
+    vm_callee_setup_block_arg(th, ci, iseq, argv, arg_setup_type);
     return ci->aux.opt_pc;
 }
 
@@ -1974,9 +2030,10 @@ vm_invoke_block(rb_thread_t *th, rb_control_frame_t *reg_cfp, rb_call_info_t *ci
 	const int arg_size = iseq->arg_size;
 	int is_lambda = block_proc_is_lambda(block->proc);
 	VALUE * const rsp = GET_SP() - ci->argc;
-	SET_SP(rsp);
 
 	opt_pc = vm_yield_callee_setup_arg(th, ci, iseq, rsp, is_lambda ? arg_setup_lambda : arg_setup_block);
+
+	SET_SP(rsp);
 
 	vm_push_frame(th, iseq,
 		      is_lambda ? VM_FRAME_MAGIC_LAMBDA : VM_FRAME_MAGIC_BLOCK,

@@ -29,7 +29,7 @@ enum arg_setup_type {
     arg_setup_lambda
 };
 
-static int
+static inline int
 args_argc(struct args_info *args) {
     if (args->rest == Qfalse) {
 	return args->argc;
@@ -39,7 +39,7 @@ args_argc(struct args_info *args) {
     }
 }
 
-static void
+static inline void
 args_extend(struct args_info *args, const int min_argc)
 {
     int i;
@@ -58,7 +58,7 @@ args_extend(struct args_info *args, const int min_argc)
     }
 }
 
-static void
+static inline void
 args_reduce(struct args_info *args, int over_argc)
 {
     if (args->rest) {
@@ -79,7 +79,7 @@ args_reduce(struct args_info *args, int over_argc)
     args->argc -= over_argc;
 }
 
-static int
+static inline int
 args_check_block_arg0(struct args_info *args, rb_thread_t *th, const int msl)
 {
     VALUE ary = Qnil;
@@ -106,7 +106,7 @@ args_check_block_arg0(struct args_info *args, rb_thread_t *th, const int msl)
     return FALSE;
 }
 
-static void
+static inline void
 args_copy(struct args_info *args)
 {
     if (args->rest != Qfalse) {
@@ -148,13 +148,13 @@ args_copy(struct args_info *args)
     }
 }
 
-static const VALUE *
+static inline const VALUE *
 args_rest_argv(struct args_info *args)
 {
     return RARRAY_CONST_PTR(args->rest) + args->rest_index;
 }
 
-static VALUE
+static inline VALUE
 args_rest_array(struct args_info *args)
 {
     VALUE ary;
@@ -271,7 +271,7 @@ args_stored_kw_argv_to_hash(struct args_info *args)
     }
 }
 
-static void
+static inline void
 args_setup_lead_parameters(struct args_info *args, int argc, VALUE *locals)
 {
     if (args->argc >= argc) {
@@ -291,7 +291,7 @@ args_setup_lead_parameters(struct args_info *args, int argc, VALUE *locals)
     }
 }
 
-static void
+static inline void
 args_setup_post_parameters(struct args_info *args, int argc, VALUE *locals)
 {
     long len;
@@ -301,7 +301,7 @@ args_setup_post_parameters(struct args_info *args, int argc, VALUE *locals)
     rb_ary_resize(args->rest, len - argc);
 }
 
-static int
+static inline int
 args_setup_opt_parameters(struct args_info *args, int opt_max, VALUE *locals)
 {
     int i;
@@ -334,7 +334,7 @@ args_setup_opt_parameters(struct args_info *args, int opt_max, VALUE *locals)
     return i;
 }
 
-static void
+static inline void
 args_setup_rest_parameter(struct args_info *args, VALUE *locals)
 {
     args_copy(args);
@@ -423,7 +423,7 @@ args_setup_kw_parameters(VALUE * const passed_values, const int passed_keyword_l
     }
 }
 
-static void
+static inline void
 args_setup_block_parameter(rb_thread_t *th, rb_call_info_t *ci, VALUE *locals)
 {
     VALUE blockval = Qnil;
