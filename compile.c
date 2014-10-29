@@ -1152,6 +1152,7 @@ iseq_set_arguments(rb_iseq_t *iseq, LINK_ANCHOR *optargs, NODE *node_args)
 		}
 		rb_ary_push(keywords, ID2SYM(node->nd_body->nd_vid));
 		rb_ary_push(default_values, dv);
+		iseq_add_mark_object(iseq, dv);
 		node = node->nd_next;
 		i += 1;
 	    }
