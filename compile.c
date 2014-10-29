@@ -894,9 +894,11 @@ new_callinfo(rb_iseq_t *iseq, ID mid, int argc, VALUE block, unsigned int flag, 
     }
     else {
 	ci->blockiseq = 0;
-	if (!(ci->flag & (VM_CALL_ARGS_SPLAT | VM_CALL_ARGS_BLOCKARG))) {
-	    ci->flag |= VM_CALL_ARGS_SKIP_SETUP;
-	}
+    }
+
+    if (!(ci->flag & (VM_CALL_ARGS_SPLAT | VM_CALL_ARGS_BLOCKARG)) &&
+	ci->blockiseq == NULL && ci->kw_arg == NULL) {
+	ci->flag |= VM_CALL_ARGS_SIMPLE;
     }
 
     ci->method_state = 0;
@@ -1836,7 +1838,7 @@ iseq_peephole_optimize(rb_iseq_t *iseq, LINK_ELEMENT *list, const int do_tailcal
 	INSN *piobj = (INSN *)get_prev_insn((INSN *)list);
 	enum ruby_vminsn_type previ = piobj->insn_id;
 
-	if (previ == BIN(send) || previ == BIN(opt_send_simple) || previ == BIN(invokesuper)) {
+	if (previ == BIN(send) || previ == BIN(opt_send_without_block) || previ == BIN(invokesuper)) {
 	    rb_call_info_t *ci = (rb_call_info_t *)piobj->operands[0];
 	    if (ci->blockiseq == 0) {
 		ci->flag |= VM_CALL_TAILCALL;
@@ -1873,7 +1875,7 @@ iseq_specialized_instruction(rb_iseq_t *iseq, INSN *iobj)
 	rb_call_info_t *ci = (rb_call_info_t *)OPERAND_AT(iobj, 0);
 
 #define SP_INSN(opt) insn_set_specialized_instruction(iseq, iobj, BIN(opt_##opt))
-	if (ci->blockiseq == 0 && (ci->flag & ~VM_CALL_ARGS_SKIP_SETUP) == 0 && ci->kw_arg == NULL) {
+	if (ci->flag & VM_CALL_ARGS_SIMPLE) {
 	    switch (ci->orig_argc) {
 	      case 0:
 		switch (ci->mid) {
@@ -1908,8 +1910,9 @@ iseq_specialized_instruction(rb_iseq_t *iseq, INSN *iobj)
 		break;
 	    }
 	}
-	if (ci->flag & VM_CALL_ARGS_SKIP_SETUP) {
-	    iobj->insn_id = BIN(opt_send_simple);
+
+	if ((ci->flag & VM_CALL_ARGS_BLOCKARG) == 0 && ci->blockiseq == NULL) {
+	    iobj->insn_id = BIN(opt_send_without_block);
 	}
     }
 #undef SP_INSN

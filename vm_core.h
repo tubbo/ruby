@@ -801,7 +801,7 @@ enum vm_check_match_type {
 #define VM_CALL_TAILCALL        (0x01 << 5) /* located at tail position */
 #define VM_CALL_SUPER           (0x01 << 6) /* super */
 #define VM_CALL_OPT_SEND        (0x01 << 7) /* internal flag */
-#define VM_CALL_ARGS_SKIP_SETUP (0x01 << 8) /* (flag & (SPLAT|BLOCKARG)) && blockiseq == 0 */
+#define VM_CALL_ARGS_SIMPLE     (0x01 << 8) /* (ci->flag & (SPLAT|BLOCKARG)) && ci->blockiseq == NULL && ci->kw_arg == NULL */
 
 enum vm_special_object_type {
     VM_SPECIAL_OBJECT_VMCORE = 1,

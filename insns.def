@@ -1019,11 +1019,11 @@ opt_str_freeze
 
 /**
   @c optimize
-  @e Invoke method without block, splat
-  @j Invoke method without block, splat
+  @e Invoke method without block
+  @j Invoke method without block
  */
 DEFINE_INSN
-opt_send_simple
+opt_send_without_block
 (CALL_INFO ci)
 (...)
 (VALUE val) // inc += -ci->orig_argc;
