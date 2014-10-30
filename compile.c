@@ -2318,7 +2318,7 @@ compile_array_keyword_arg(rb_iseq_t *iseq, LINK_ANCHOR *ret, const NODE * const 
 	/* may be keywords */
 	node = root_node->nd_head;
 	{
-	    int len = node->nd_alen / 2;
+	    int len = (int)node->nd_alen / 2;
 	    rb_call_info_kw_arg_t *kw_arg  = (rb_call_info_kw_arg_t *)ruby_xmalloc(sizeof(rb_call_info_kw_arg_t) + sizeof(VALUE) * (len - 1));
 	    ID *keywords = kw_arg->keywords;
 	    int i = 0;

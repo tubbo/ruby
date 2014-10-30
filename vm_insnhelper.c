@@ -1009,7 +1009,11 @@ vm_callee_setup_block_arg_arg0_splat(rb_control_frame_t *cfp, const rb_iseq_t *i
     long len = RARRAY_LEN(ary);
 
     CHECK_VM_STACK_OVERFLOW(cfp, iseq->argc);
-    for (i=0; i<len && i<iseq->argc; i++) argv[i] = RARRAY_AREF(ary, i);
+
+    for (i=0; i<len && i<iseq->argc; i++) {
+	argv[i] = RARRAY_AREF(ary, i);
+    }
+
     return i;
 }
 
@@ -2003,9 +2007,9 @@ static int
 vm_yield_setup_args(rb_thread_t *th, const rb_iseq_t *iseq, const int argc, VALUE *argv, const rb_block_t *blockptr, enum arg_setup_type arg_setup_type)
 {
     rb_call_info_t ci_entry;
-    ci_entry.flag = 0;
     ci_entry.argc = argc;
     ci_entry.blockptr = (rb_block_t *)blockptr;
+    ci_entry.flag = 0;
     ci_entry.kw_arg = NULL;
     ci_entry.me = NULL;
 

@@ -30,12 +30,13 @@ enum arg_setup_type {
 };
 
 static inline int
-args_argc(struct args_info *args) {
+args_argc(struct args_info *args)
+{
     if (args->rest == Qfalse) {
 	return args->argc;
     }
     else {
-	return args->argc + RARRAY_LEN(args->rest) - args->rest_index;
+	return args->argc + RARRAY_LENINT(args->rest) - args->rest_index;
     }
 }
 
@@ -47,7 +48,7 @@ args_extend(struct args_info *args, const int min_argc)
     if (args->rest) {
 	args->rest = rb_ary_dup(args->rest);
 	assert(args->rest_index == 0);
-	for (i=args->argc + RARRAY_LEN(args->rest); i<min_argc; i++) {
+	for (i=args->argc + RARRAY_LENINT(args->rest); i<min_argc; i++) {
 	    rb_ary_push(args->rest, Qnil);
 	}
     }
@@ -317,7 +318,7 @@ args_setup_opt_parameters(struct args_info *args, int opt_max, VALUE *locals)
 	args->argc = 0;
 
 	if (args->rest) {
-	    int len = RARRAY_LEN(args->rest);
+	    int len = RARRAY_LENINT(args->rest);
 	    const VALUE *argv = RARRAY_CONST_PTR(args->rest);
 
 	    for (; i<opt_max && args->rest_index < len; i++, args->rest_index++) {
@@ -524,7 +525,7 @@ setup_parameters_complex(rb_thread_t * const th, const rb_iseq_t * const iseq, r
     if (ci->flag & VM_CALL_ARGS_SPLAT) {
 	args->rest = locals[--args->argc];
 	args->rest_index = 0;
-	given_argc += RARRAY_LEN(args->rest) - 1;
+	given_argc += RARRAY_LENINT(args->rest) - 1;
     }
     else {
 	args->rest = Qfalse;
@@ -609,7 +610,7 @@ setup_parameters_complex(rb_thread_t * const th, const rb_iseq_t * const iseq, r
 	    args_setup_kw_parameters(args->kw_argv, args->ci->kw_arg->keyword_len, args->ci->kw_arg->keywords, iseq, klocals);
 	}
 	else if (!NIL_P(keyword_hash)) {
-	    int kw_len = RHASH_SIZE(keyword_hash);
+	    int kw_len = rb_long2int(RHASH_SIZE(keyword_hash));
 	    struct fill_values_arg arg;
 	    /* copy kw_argv */
 	    arg.keys = args->kw_argv = ALLOCA_N(VALUE, kw_len * 2);
