@@ -75,6 +75,12 @@ test_methods = %Q{
   foo_complex_kw4
   foo_complex_kw5
   foo_complex_kw6
+  foo_complex_kw6 k1: 1
+  foo_complex_kw6 k1: 1, k2: 2
+  foo_complex_kw6 k1: 1, k2: 2, k3: 3
+  foo_complex_kw6 k1: 1, k2: 2, k3: 3, k4: 4
+  foo_complex_kw6 k1: 1, k2: 2, k3: 3, k4: 4, k5: 5
+  foo_complex_kw6 k1: 1, k2: 2, k3: 3, k4: 4, k5: 5, k6: 6
   iter0{}
   iter1{}
   iter1{|a|}
