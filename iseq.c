@@ -88,7 +88,6 @@ iseq_free(void *ptr)
 	    RUBY_FREE_UNLESS_NULL(iseq->callinfo_entries);
 	    RUBY_FREE_UNLESS_NULL(iseq->catch_table);
 	    RUBY_FREE_UNLESS_NULL(iseq->arg_opt_table);
-	    RUBY_FREE_UNLESS_NULL(iseq->arg_keyword_table);
 	    compile_data_free(iseq->compile_data);
 	    RUBY_FREE_UNLESS_NULL(iseq->iseq);
 	}

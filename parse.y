@@ -174,6 +174,15 @@ vtable_add(struct vtable *tbl, ID id)
     tbl->tbl[tbl->pos++] = id;
 }
 
+#ifndef RIPPER
+static void
+vtable_pop(struct vtable *tbl, int n)
+{
+    if (tbl->pos < n) rb_bug("vtable_pop: unreachable");
+    tbl->pos -= n;
+}
+#endif
+
 static int
 vtable_included(const struct vtable * tbl, ID id)
 {
@@ -9592,10 +9601,45 @@ new_args_tail_gen(struct parser_params *parser, NODE *k, ID kr, ID b)
     args->kw_args        = k;
 
     if (k) {
-	ID kw_bits = internal_id();
+	/*
+	 * def foo(k1: 1, kr1:, k2: 2, **krest, &b)
+	 * variable order: k1, kr1, k2, &b, internal_id, krest
+	 * #=> <reorder>
+	 * variable order: kr1, k1, k2, internal_id, krest, &b
+	 */
+	ID kw_bits;
+	NODE *kwn = k;
+	struct vtable *required_kw_vars = vtable_alloc(NULL);
+	struct vtable *kw_vars = vtable_alloc(NULL);
+	int i;
+
+	while (kwn) {
+	    NODE *val_node = kwn->nd_body->nd_value;
+	    ID vid = kwn->nd_body->nd_vid;
+
+	    if (val_node == (NODE *)-1) {
+		vtable_add(required_kw_vars, vid);
+	    }
+	    else {
+		vtable_add(kw_vars, vid);
+	    }
+
+	    kwn = kwn->nd_next;
+	}
+
+	vtable_pop(lvtbl->args, vtable_size(required_kw_vars) + vtable_size(kw_vars) + (b != 0));
+
+	for (i=0; i<vtable_size(required_kw_vars); i++) arg_var(required_kw_vars->tbl[i]);
+	for (i=0; i<vtable_size(kw_vars); i++) arg_var(kw_vars->tbl[i]);
+	vtable_free(required_kw_vars);
+	vtable_free(kw_vars);
+
+	kw_bits = internal_id();
 	arg_var(kw_bits);
-	args->kw_rest_arg = NEW_DVAR(kw_bits);
 	if (kr) arg_var(kr);
+	if (b) arg_var(b);
+
+	args->kw_rest_arg = NEW_DVAR(kw_bits);
 	args->kw_rest_arg->nd_cflag = kr;
     }
     else if (kr) {

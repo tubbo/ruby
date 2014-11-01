@@ -386,7 +386,7 @@ args_setup_kw_parameters(VALUE* const passed_values, const int passed_keyword_le
     const int key_num = iseq->arg_keyword_num;
     const VALUE * const default_values = iseq->arg_keyword_default_values;
     VALUE missing = 0;
-    int i, found = 0;
+    int i, di, found = 0;
     int unspecified_bits = 0;
     VALUE unspecified_bits_value = Qnil;
 
@@ -403,16 +403,16 @@ args_setup_kw_parameters(VALUE* const passed_values, const int passed_keyword_le
 
     if (missing) rb_keyword_error("missing", missing);
 
-    for (; i<key_num; i++) {
+    for (di=0; i<key_num; i++, di++) {
 	if (args_setup_kw_parameters_lookup(acceptable_keywords[i], &locals[i], passed_keywords, passed_values, passed_keyword_len)) {
 	    found++;
 	}
 	else {
-	    if (default_values[i] == Qundef) {
+	    if (default_values[di] == Qundef) {
 		locals[i] = Qnil;
 
 		if (LIKELY(i < 32)) { /* TODO: 32 -> Fixnum's max bits */
-		    unspecified_bits |= 0x01 << i;
+		    unspecified_bits |= 0x01 << di;
 		}
 		else {
 		    if (NIL_P(unspecified_bits_value)) {
@@ -426,17 +426,17 @@ args_setup_kw_parameters(VALUE* const passed_values, const int passed_keyword_le
 			    }
 			}
 		    }
-		    rb_hash_aset(unspecified_bits_value, INT2FIX(i), Qtrue);
+		    rb_hash_aset(unspecified_bits_value, INT2FIX(di), Qtrue);
 		}
 	    }
 	    else {
-		locals[i] = default_values[i];
+		locals[i] = default_values[di];
 	    }
 	}
     }
 
     if (iseq->arg_keyword_rest >= 0) {
-	const int rest_hash_index = key_num + 1 + (iseq->arg_block != -1);
+	const int rest_hash_index = key_num + 1;
 	locals[rest_hash_index] = make_unused_kw_hash(passed_keywords, passed_keyword_len, passed_values, FALSE);
     }
     else {
@@ -449,7 +449,7 @@ args_setup_kw_parameters(VALUE* const passed_values, const int passed_keyword_le
     if (NIL_P(unspecified_bits_value)) {
 	unspecified_bits_value = INT2FIX(unspecified_bits);
     }
-    locals[key_num + (iseq->arg_block != -1)] = unspecified_bits_value;
+    locals[key_num] = unspecified_bits_value;
 }
 
 static inline void
@@ -641,7 +641,7 @@ setup_parameters_complex(rb_thread_t * const th, const rb_iseq_t * const iseq, r
     }
 
     if (iseq->arg_keyword_bits >= 0) {
-	VALUE * const klocals = locals + iseq->arg_keyword_bits - iseq->arg_keyword_num - (iseq->arg_block != -1);
+	VALUE * const klocals = locals + iseq->arg_keyword_bits - iseq->arg_keyword_num;
 
 	if (args->kw_argv != NULL) {
 	    args_setup_kw_parameters(args->kw_argv, args->ci->kw_arg->keyword_len, args->ci->kw_arg->keywords, iseq, klocals);
@@ -667,6 +667,7 @@ setup_parameters_complex(rb_thread_t * const th, const rb_iseq_t * const iseq, r
     }
 
     if (iseq->arg_block >= 0) {
+	bp();
 	args_setup_block_parameter(th, ci, locals + iseq->arg_block);
     }
 

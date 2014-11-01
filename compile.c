@@ -1126,44 +1126,50 @@ iseq_set_arguments(rb_iseq_t *iseq, LINK_ANCHOR *optargs, NODE *node_args)
 
 	if (args->kw_args) {
 	    NODE *node = args->kw_args;
-	    VALUE keywords = rb_ary_tmp_new(1);
-	    VALUE default_values = rb_ary_tmp_new(1);
-	    const VALUE uninit_key = Qundef;
-	    int i = 0, j, r = 0;
+	    const VALUE default_values = rb_ary_tmp_new(1);
+	    const VALUE complex_mark = rb_str_tmp_new(0);
+	    int kw = 0, rkw = 0, di = 0, i;
 
 	    iseq->arg_keyword_bits = get_dyna_var_idx_at_raw(iseq, args->kw_rest_arg->nd_vid);
 
 	    while (node) {
 		NODE *val_node = node->nd_body->nd_value;
-		VALUE dv = uninit_key;
+		VALUE dv;
+
 		if (val_node == (NODE *)-1) {
-		    ++r;
+		    ++rkw;
 		}
 		else {
 		    if (nd_type(val_node) == NODE_LIT) {
 			dv = val_node->nd_lit;
+			iseq_add_mark_object(iseq, dv);
 		    }
 		    else if (nd_type(val_node) == NODE_NIL) {
 			dv = Qnil;
 		    }
 		    else {
 			COMPILE_POPED(optargs, "kwarg", node); /* nd_type(node) == NODE_KW_ARG */
+			dv = complex_mark;
 		    }
-		}
-		rb_ary_push(keywords, ID2SYM(node->nd_body->nd_vid));
-		rb_ary_push(default_values, dv);
-		iseq_add_mark_object(iseq, dv);
-		node = node->nd_next;
-		iseq->arg_keyword_num = (i += 1);
-	    }
-	    iseq->arg_keyword_rest = args->kw_rest_arg->nd_cflag != 0 ? get_dyna_var_idx_at_raw(iseq, args->kw_rest_arg->nd_cflag) : -1;
-	    iseq->arg_keyword_required = r;
-	    iseq->arg_keyword_table = ALLOC_N(ID, i);
-	    iseq->arg_keyword_default_values = ALLOC_N(VALUE, i);
 
-	    for (j = 0; j < i; j++) {
-		iseq->arg_keyword_table[j] = SYM2ID(RARRAY_AREF(keywords, j));
-		iseq->arg_keyword_default_values[j] = RARRAY_AREF(default_values, j);
+		    iseq->arg_keyword_num = ++di;
+		    rb_ary_push(default_values, dv);
+		}
+
+		kw++;
+		node = node->nd_next;
+	    }
+
+	    iseq->arg_keyword_num = kw;
+	    iseq->arg_keyword_rest = args->kw_rest_arg->nd_cflag != 0 ? get_dyna_var_idx_at_raw(iseq, args->kw_rest_arg->nd_cflag) : -1;
+	    iseq->arg_keyword_required = rkw;
+	    iseq->arg_keyword_table = &iseq->local_table[iseq->arg_keyword_bits - iseq->arg_keyword_num];
+	    iseq->arg_keyword_default_values = ALLOC_N(VALUE, RARRAY_LEN(default_values));
+
+	    for (i = 0; i < RARRAY_LEN(default_values); i++) {
+		VALUE dv = RARRAY_AREF(default_values, i);
+		if (dv == complex_mark) dv = Qundef;
+		iseq->arg_keyword_default_values[i] = dv;
 	    }
 	}
 	else if (args->kw_rest_arg) {
@@ -1207,14 +1213,14 @@ iseq_set_arguments(rb_iseq_t *iseq, LINK_ANCHOR *optargs, NODE *node_args)
 	    iseq->arg_simple = 0;
 
 	    /* set arg_size: size of arguments */
-	    if (iseq->arg_keyword_rest != -1) {
+	    if (iseq->arg_block != -1) {
+		iseq->arg_size = iseq->arg_block + 1;
+	    }
+	    else if (iseq->arg_keyword_rest != -1) {
 		iseq->arg_size = iseq->arg_keyword_rest + 1;
 	    }
 	    else if (iseq->arg_keyword_bits != -1) {
 		iseq->arg_size = iseq->arg_keyword_bits + 1;
-	    }
-	    else if (iseq->arg_block != -1) {
-		iseq->arg_size = iseq->arg_block + 1;
 	    }
 	    else if (iseq->arg_post_num) {
 		iseq->arg_size = iseq->arg_post_start + iseq->arg_post_num;

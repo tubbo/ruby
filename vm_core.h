@@ -275,9 +275,9 @@ struct rb_iseq_struct {
     int arg_post_start;
     int arg_size;
     VALUE *arg_opt_table;
+    int arg_keyword_num;
     int arg_keyword_bits;
     int arg_keyword_rest;
-    int arg_keyword_num;
     int arg_keyword_required;
     ID *arg_keyword_table;
     VALUE *arg_keyword_default_values;
