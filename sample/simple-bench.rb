@@ -29,6 +29,12 @@ end
     def foo_kw#{i}(#{kws.join(', ')})
     end
   }
+
+  kws = (1..i).map{|e| "k#{e}:"}
+  eval %Q{
+    def foo_required_kw#{i}(#{kws.join(', ')})
+    end
+  }
 }
 
 (1..6).each{|i|
@@ -69,6 +75,12 @@ test_methods = %Q{
   foo_kw6 k1: 1, k2: 2, k3: 3, k4: 4
   foo_kw6 k1: 1, k2: 2, k3: 3, k4: 4, k5: 5
   foo_kw6 k1: 1, k2: 2, k3: 3, k4: 4, k5: 5, k6: 6
+  foo_required_kw1 k1: 1
+  foo_required_kw2 k1: 1, k2: 2
+  foo_required_kw3 k1: 1, k2: 2, k3: 3
+  foo_required_kw4 k1: 1, k2: 2, k3: 3, k4: 4
+  foo_required_kw5 k1: 1, k2: 2, k3: 3, k4: 4, k5: 5
+  foo_required_kw6 k1: 1, k2: 2, k3: 3, k4: 4, k5: 5, k6: 6
   foo_complex_kw1
   foo_complex_kw2
   foo_complex_kw3
