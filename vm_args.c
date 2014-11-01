@@ -8,9 +8,6 @@
 
 **********************************************************************/
 
-static VALUE vm_get_uninitialized_keyword_indicator_object;
-#define vm_get_uninitialized_keyword_indicator() vm_get_uninitialized_keyword_indicator_object
-
 struct args_info {
     /* basic args info */
     rb_call_info_t *ci;
@@ -187,7 +184,8 @@ keyword_hash_p(VALUE *kw_hash_ptr, VALUE *rest_hash_ptr, rb_thread_t *th, const 
 }
 
 static VALUE
-args_pop_keyword_hash(struct args_info *args, VALUE *kw_hash_ptr, rb_thread_t *th, const int msl) {
+args_pop_keyword_hash(struct args_info *args, VALUE *kw_hash_ptr, rb_thread_t *th, const int msl)
+{
     VALUE rest_hash;
 
     if (args->rest == Qfalse) {
@@ -380,15 +378,17 @@ args_setup_kw_parameters_lookup(const ID key, VALUE *ptr, const ID * const passe
 }
 
 static void
-args_setup_kw_parameters(VALUE * const passed_values, const int passed_keyword_len, const ID * const passed_keywords,
+args_setup_kw_parameters(VALUE* const passed_values, const int passed_keyword_len, const ID * const passed_keywords,
 			 const rb_iseq_t * const iseq, VALUE * const locals)
 {
     const ID *acceptable_keywords = iseq->arg_keyword_table;
     const int req_key_num = iseq->arg_keyword_required;
-    const int key_num = iseq->arg_keywords;
+    const int key_num = iseq->arg_keyword_num;
     const VALUE * const default_values = iseq->arg_keyword_default_values;
     VALUE missing = 0;
     int i, found = 0;
+    int unspecified_bits = 0;
+    VALUE unspecified_bits_value = Qnil;
 
     for (i=0; i<req_key_num; i++) {
 	ID key = acceptable_keywords[i];
@@ -408,20 +408,54 @@ args_setup_kw_parameters(VALUE * const passed_values, const int passed_keyword_l
 	    found++;
 	}
 	else {
-	    locals[i] = default_values[i];
+	    if (default_values[i] == Qundef) {
+		locals[i] = Qnil;
+
+		if (LIKELY(i < 32)) { /* TODO: 32 -> Fixnum's max bits */
+		    unspecified_bits |= 0x01 << i;
+		}
+		else {
+		    if (NIL_P(unspecified_bits_value)) {
+			/* fixnum -> hash */
+			int j;
+			unspecified_bits_value = rb_hash_new();
+
+			for (j=0; j<32; j++) {
+			    if (unspecified_bits & (0x01 << j)) {
+				rb_hash_aset(unspecified_bits_value, INT2FIX(j), Qtrue);
+			    }
+			}
+		    }
+		    rb_hash_aset(unspecified_bits_value, INT2FIX(i), Qtrue);
+		}
+	    }
+	    else {
+		locals[i] = default_values[i];
+	    }
 	}
     }
 
-    if (iseq->arg_keyword_check) {
+    if (iseq->arg_keyword_rest >= 0) {
+	const int rest_hash_index = key_num + 1 + (iseq->arg_block != -1);
+	locals[rest_hash_index] = make_unused_kw_hash(passed_keywords, passed_keyword_len, passed_values, FALSE);
+    }
+    else {
 	if (found != passed_keyword_len) {
 	    VALUE keys = make_unused_kw_hash(passed_keywords, passed_keyword_len, passed_values, TRUE);
 	    rb_keyword_error("unknown", keys);
 	}
     }
-    else {
-	const int rest_hash_index = key_num + (iseq->arg_block != -1);
-	locals[rest_hash_index] = make_unused_kw_hash(passed_keywords, passed_keyword_len, passed_values, FALSE);
+
+    if (NIL_P(unspecified_bits_value)) {
+	unspecified_bits_value = INT2FIX(unspecified_bits);
     }
+    locals[key_num + (iseq->arg_block != -1)] = unspecified_bits_value;
+}
+
+static inline void
+args_setup_kw_rest_parameter(VALUE keyword_hash, VALUE *locals)
+{
+    locals[0] = NIL_P(keyword_hash) ? rb_hash_new() : rb_hash_dup(keyword_hash);
 }
 
 static inline void
@@ -488,7 +522,7 @@ static int
 setup_parameters_complex(rb_thread_t * const th, const rb_iseq_t * const iseq, rb_call_info_t * const ci,
 			 VALUE * const locals, const enum arg_setup_type arg_setup_type)
 {
-    const int min_argc = iseq->argc + iseq->arg_post_len;
+    const int min_argc = iseq->argc + iseq->arg_post_num;
     const int max_argc = (iseq->arg_rest == -1) ? min_argc + (iseq->arg_opts - (iseq->arg_opts > 0)) : UNLIMITED_ARGUMENTS;
     int opt_pc = 0;
     int given_argc;
@@ -505,7 +539,7 @@ setup_parameters_complex(rb_thread_t * const th, const rb_iseq_t * const iseq, r
     args->argv = locals;
 
     if (ci->kw_arg) {
-	if (iseq->arg_keyword >= 0) {
+	if (iseq->arg_keyword_bits >= 0) {
 	    int kw_len = ci->kw_arg->keyword_len;
 	    /* copy kw_argv */
 	    args->kw_argv = ALLOCA_N(VALUE, kw_len);
@@ -536,7 +570,8 @@ setup_parameters_complex(rb_thread_t * const th, const rb_iseq_t * const iseq, r
 	break; /* do nothing special */
       case arg_setup_block:
 	if (given_argc == 1 &&
-	    (min_argc > 0 || iseq->arg_opts > 2 || iseq->arg_keyword != -1) &&
+	    (min_argc > 0 ||
+	     iseq->arg_opts > 2 || iseq->arg_keyword_bits >= 0 || iseq->arg_keyword_rest >= 0) && /* TODO: can be shrink with flags */
 	    !(iseq->arg_simple & 0x02) &&
 	    args_check_block_arg0(args, th, msl)) {
 	    given_argc = RARRAY_LEN(args->rest);
@@ -569,7 +604,9 @@ setup_parameters_complex(rb_thread_t * const th, const rb_iseq_t * const iseq, r
 	}
     }
 
-    if (given_argc > min_argc && iseq->arg_keyword >= 0 && args->kw_argv == NULL) {
+    if (given_argc > min_argc &&
+	(iseq->arg_keyword_bits >= 0 || iseq->arg_keyword_rest >= 0) &&
+	args->kw_argv == NULL) {
 	if (args_pop_keyword_hash(args, &keyword_hash, th, msl)) {
 	    given_argc--;
 	}
@@ -590,8 +627,8 @@ setup_parameters_complex(rb_thread_t * const th, const rb_iseq_t * const iseq, r
 	args_setup_lead_parameters(args, iseq->argc, locals + 0);
     }
 
-    if (iseq->arg_post_len > 0) {
-	args_setup_post_parameters(args, iseq->arg_post_len, locals + iseq->arg_post_start);
+    if (iseq->arg_post_num > 0) {
+	args_setup_post_parameters(args, iseq->arg_post_num, locals + iseq->arg_post_start);
     }
 
     if (iseq->arg_opts > 0) {
@@ -603,8 +640,8 @@ setup_parameters_complex(rb_thread_t * const th, const rb_iseq_t * const iseq, r
 	args_setup_rest_parameter(args, locals + iseq->arg_rest);
     }
 
-    if (iseq->arg_keyword >= 0) {
-	VALUE * const klocals = locals + iseq->arg_keyword - iseq->arg_keywords - (iseq->arg_block != -1);
+    if (iseq->arg_keyword_bits >= 0) {
+	VALUE * const klocals = locals + iseq->arg_keyword_bits - iseq->arg_keyword_num - (iseq->arg_block != -1);
 
 	if (args->kw_argv != NULL) {
 	    args_setup_kw_parameters(args->kw_argv, args->ci->kw_arg->keyword_len, args->ci->kw_arg->keywords, iseq, klocals);
@@ -625,17 +662,22 @@ setup_parameters_complex(rb_thread_t * const th, const rb_iseq_t * const iseq, r
 	    args_setup_kw_parameters(NULL, 0, NULL, iseq, klocals);
 	}
     }
+    else if (iseq->arg_keyword_rest >= 0) {
+	args_setup_kw_rest_parameter(keyword_hash, locals + iseq->arg_keyword_rest);
+    }
 
     if (iseq->arg_block >= 0) {
 	args_setup_block_parameter(th, ci, locals + iseq->arg_block);
     }
 
-    if (0) {
+#if 0
+    {
 	int i;
 	for (i=0; i<iseq->arg_size; i++) {
 	    fprintf(stderr, "local[%d] = %p\n", i, (void *)locals[i]);
 	}
     }
+#endif
 
     th->mark_stack_len = 0;
 

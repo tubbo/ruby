@@ -9583,25 +9583,25 @@ new_args_tail_gen(struct parser_params *parser, NODE *k, ID kr, ID b)
 {
     int saved_line = ruby_sourceline;
     struct rb_args_info *args;
-    NODE *kw_rest_arg = 0;
     NODE *node;
-    int check = 0;
 
     args = ZALLOC(struct rb_args_info);
     node = NEW_NODE(NODE_ARGS, 0, 0, args);
 
     args->block_arg      = b;
     args->kw_args        = k;
-    if (k && !kr) {
-	check = 1;
-	kr = internal_id();
+
+    if (k) {
+	ID kw_bits = internal_id();
+	arg_var(kw_bits);
+	args->kw_rest_arg = NEW_DVAR(kw_bits);
+	if (kr) arg_var(kr);
+	args->kw_rest_arg->nd_cflag = kr;
     }
-    if (kr) {
+    else if (kr) {
 	arg_var(kr);
-	kw_rest_arg  = NEW_DVAR(kr);
-	kw_rest_arg->nd_cflag = check;
+	args->kw_rest_arg = NEW_DVAR(kr);
     }
-    args->kw_rest_arg    = kw_rest_arg;
 
     ruby_sourceline = saved_line;
     return node;

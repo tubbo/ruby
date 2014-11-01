@@ -247,23 +247,23 @@ struct rb_iseq_struct {
      *        *c,                                 # rest
      *        d1, d2, ..., dO,                    # post
      *        e1:(...), e2:(...), ..., eK:(...),  # keyword
-     *        **f,                                # keyword rest
+     *        **f,                                # keyword_rest
      *        &g)                                 # block
      * =>
      *
-     *  argc           = M                 // or  0 if no mandatory arg
-     *  arg_opts       = N+1               // or  0 if no optional arg
-     *  arg_rest       = M+N               // or -1 if no rest arg
-     *  arg_opt_table  = [ (arg_opts entries) ]
-     *  arg_post_start = M+N+(*1)          // or 0 if no post arguments
-     *  arg_post_len   = O                 // or 0 if no post arguments
-     *  arg_keywords   = K                 // or 0 if no keyword arg
-     *  arg_block      = M+N+(*1)+O+K      // or -1 if no block arg
-     *  arg_keyword    = M+N+(*1)+O+K+(&1) // or -1 if no keyword arg/rest
-     *  arg_simple     = 0 if not simple arguments.
-     *                 = 1 if no opt, rest, post, block.
-     *                 = 2 if ambiguous block parameter ({|a|}).
-     *  arg_size       = M+N+O+(*1)+K+(&1)+(**1) argument size.
+     *  argc             = M                 // or  0 if no mandatory arg
+     *  arg_opts         = N+1               // or  0 if no optional arg
+     *  arg_rest         = M+N               // or -1 if no rest arg
+     *  arg_opt_table    = [ (arg_opts entries) ]
+     *  arg_post_start   = M+N+(*1)          // or 0 if no post arguments
+     *  arg_post_num     = O                 // or 0 if no post arguments
+     *  arg_keyword_num  = K                 // or 0 if no keyword arg
+     *  arg_block        = M+N+(*1)+O+K      // or -1 if no block arg
+     *  arg_keyword_bits = M+N+(*1)+O+K+(&1) // or -1 if no keyword arg/rest
+     *  arg_simple       = 0 if not simple arguments.
+     *                   = 1 if no opt, rest, post, block.
+     *                   = 2 if ambiguous block parameter ({|a|}).
+     *  arg_size         = M+N+O+(*1)+K+(&1)+(**1) argument size.
      */
 
     int argc;
@@ -271,13 +271,13 @@ struct rb_iseq_struct {
     int arg_rest;
     int arg_block;
     int arg_opts;
-    int arg_post_len;
+    int arg_post_num;
     int arg_post_start;
     int arg_size;
     VALUE *arg_opt_table;
-    int arg_keyword;
-    int arg_keyword_check; /* if this is true, raise an ArgumentError when unknown keyword argument is passed */
-    int arg_keywords;
+    int arg_keyword_bits;
+    int arg_keyword_rest;
+    int arg_keyword_num;
     int arg_keyword_required;
     ID *arg_keyword_table;
     VALUE *arg_keyword_default_values;
@@ -807,7 +807,6 @@ enum vm_special_object_type {
     VM_SPECIAL_OBJECT_VMCORE = 1,
     VM_SPECIAL_OBJECT_CBASE,
     VM_SPECIAL_OBJECT_CONST_BASE,
-    VM_SPECIAL_OBJECT_UNINITIALIZED_KEYWORD
 };
 
 #define VM_FRAME_MAGIC_METHOD 0x11

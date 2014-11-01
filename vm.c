@@ -2462,12 +2462,6 @@ static VALUE usage_analysis_operand_stop(VALUE self);
 static VALUE usage_analysis_register_stop(VALUE self);
 #endif
 
-VALUE
-rb_vm_get_uninitialized_keyword_indicator(void)
-{
-    return vm_get_uninitialized_keyword_indicator();
-}
-
 void
 Init_VM(void)
 {
@@ -2508,10 +2502,6 @@ Init_VM(void)
     rb_cEnv = rb_define_class_under(rb_cRubyVM, "Env", rb_cObject);
     rb_undef_alloc_func(rb_cEnv);
     rb_undef_method(CLASS_OF(rb_cEnv), "new");
-
-    vm_get_uninitialized_keyword_indicator_object = rb_newobj_of(rb_cObject, T_OBJECT | FL_WB_PROTECTED);
-    rb_obj_freeze(vm_get_uninitialized_keyword_indicator_object);
-    rb_gc_register_mark_object(vm_get_uninitialized_keyword_indicator_object);
 
     /*
      * Document-class: Thread

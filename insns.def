@@ -323,9 +323,6 @@ putspecialobject
       case VM_SPECIAL_OBJECT_CONST_BASE:
 	val = vm_get_const_base(GET_ISEQ(), GET_EP());
 	break;
-      case VM_SPECIAL_OBJECT_UNINITIALIZED_KEYWORD:
-	val = vm_get_uninitialized_keyword_indicator();
-	break;
       default:
 	rb_bug("putspecialobject insn: unknown value_type");
     }
@@ -832,6 +829,30 @@ checkmatch
 	if (RTEST(check_match(pattern, target, checkmatch_type))) {
 	    result = Qtrue;
 	}
+    }
+}
+
+/**
+  @c setting
+  @e check keywords are specified or not.
+  @j キーワードが指定されているかどうかチェックする
+ */
+DEFINE_INSN
+checkkeyword
+(lindex_t kw_bits_index, rb_num_t keyword_index)
+()
+(VALUE ret)
+{
+    const VALUE *ep = GET_EP();
+    const VALUE kw_bits = *(ep - kw_bits_index);
+
+    if (FIXNUM_P(kw_bits)) {
+	int bits = FIX2INT(kw_bits);
+	ret = (bits & (0x01 << keyword_index)) ? Qfalse : Qtrue;
+    }
+    else {
+	assert(RB_TYPE_P(kw_bits, T_HASH));
+	ret = rb_hash_has_key(kw_bits, INT2FIX(keyword_index)) ? Qfalse : Qtrue;
     }
 }
 

@@ -1059,8 +1059,6 @@ get_dyna_var_idx(rb_iseq_t *iseq, ID id, int *level, int *ls)
     return idx;
 }
 
-VALUE rb_vm_get_uninitialized_keyword_indicator();
-
 static int
 iseq_set_arguments(rb_iseq_t *iseq, LINK_ANCHOR *optargs, NODE *node_args)
 {
@@ -1090,7 +1088,7 @@ iseq_set_arguments(rb_iseq_t *iseq, LINK_ANCHOR *optargs, NODE *node_args)
 
 	if (args->first_post_arg) {
 	    iseq->arg_post_start = get_dyna_var_idx_at_raw(iseq, args->first_post_arg);
-	    iseq->arg_post_len = args->post_args_num;
+	    iseq->arg_post_num = args->post_args_num;
 	}
 
 	if (args->opt_args) {
@@ -1130,10 +1128,10 @@ iseq_set_arguments(rb_iseq_t *iseq, LINK_ANCHOR *optargs, NODE *node_args)
 	    NODE *node = args->kw_args;
 	    VALUE keywords = rb_ary_tmp_new(1);
 	    VALUE default_values = rb_ary_tmp_new(1);
-	    const VALUE uninit_key = rb_vm_get_uninitialized_keyword_indicator();
+	    const VALUE uninit_key = Qundef;
 	    int i = 0, j, r = 0;
 
-	    iseq->arg_keyword = get_dyna_var_idx_at_raw(iseq, args->kw_rest_arg->nd_vid);
+	    iseq->arg_keyword_bits = get_dyna_var_idx_at_raw(iseq, args->kw_rest_arg->nd_vid);
 
 	    while (node) {
 		NODE *val_node = node->nd_body->nd_value;
@@ -1156,10 +1154,9 @@ iseq_set_arguments(rb_iseq_t *iseq, LINK_ANCHOR *optargs, NODE *node_args)
 		rb_ary_push(default_values, dv);
 		iseq_add_mark_object(iseq, dv);
 		node = node->nd_next;
-		i += 1;
+		iseq->arg_keyword_num = (i += 1);
 	    }
-	    iseq->arg_keyword_check = args->kw_rest_arg->nd_cflag != 0;
-	    iseq->arg_keywords = i;
+	    iseq->arg_keyword_rest = args->kw_rest_arg->nd_cflag != 0 ? get_dyna_var_idx_at_raw(iseq, args->kw_rest_arg->nd_cflag) : -1;
 	    iseq->arg_keyword_required = r;
 	    iseq->arg_keyword_table = ALLOC_N(ID, i);
 	    iseq->arg_keyword_default_values = ALLOC_N(VALUE, i);
@@ -1170,12 +1167,12 @@ iseq_set_arguments(rb_iseq_t *iseq, LINK_ANCHOR *optargs, NODE *node_args)
 	    }
 	}
 	else if (args->kw_rest_arg) {
-	    iseq->arg_keyword = get_dyna_var_idx_at_raw(iseq, args->kw_rest_arg->nd_vid);
-	    COMPILE(optargs, "kwarg", args->kw_rest_arg);
-	    ADD_INSN(optargs, nd_line(args->kw_rest_arg), pop);
+	    iseq->arg_keyword_bits = -1;
+	    iseq->arg_keyword_rest = get_dyna_var_idx_at_raw(iseq, args->kw_rest_arg->nd_vid);
 	}
 	else {
-	    iseq->arg_keyword = -1;
+	    iseq->arg_keyword_bits = -1;
+	    iseq->arg_keyword_rest = -1;
 	}
 
 	if (args->pre_init) { /* m_init */
@@ -1201,20 +1198,26 @@ iseq_set_arguments(rb_iseq_t *iseq, LINK_ANCHOR *optargs, NODE *node_args)
 	    iseq->arg_block = get_dyna_var_idx_at_raw(iseq, block_id);
 	}
 
-	if (iseq->arg_opts != 0 || iseq->arg_post_len != 0 ||
-	    iseq->arg_rest != -1 || iseq->arg_block != -1 ||
-	    iseq->arg_keyword != -1) {
+	if (iseq->arg_opts != 0 ||
+	    iseq->arg_post_num != 0 ||
+	    iseq->arg_rest != -1 ||
+	    iseq->arg_block != -1 ||
+	    iseq->arg_keyword_bits != -1 ||
+	    iseq->arg_keyword_rest != -1) {
 	    iseq->arg_simple = 0;
 
 	    /* set arg_size: size of arguments */
-	    if (iseq->arg_keyword != -1) {
-		iseq->arg_size = iseq->arg_keyword + 1;
+	    if (iseq->arg_keyword_rest != -1) {
+		iseq->arg_size = iseq->arg_keyword_rest + 1;
+	    }
+	    else if (iseq->arg_keyword_bits != -1) {
+		iseq->arg_size = iseq->arg_keyword_bits + 1;
 	    }
 	    else if (iseq->arg_block != -1) {
 		iseq->arg_size = iseq->arg_block + 1;
 	    }
-	    else if (iseq->arg_post_len) {
-		iseq->arg_size = iseq->arg_post_start + iseq->arg_post_len;
+	    else if (iseq->arg_post_num) {
+		iseq->arg_size = iseq->arg_post_start + iseq->arg_post_num;
 	    }
 	    else if (iseq->arg_rest != -1) {
 		iseq->arg_size = iseq->arg_rest + 1;
@@ -1232,8 +1235,14 @@ iseq_set_arguments(rb_iseq_t *iseq, LINK_ANCHOR *optargs, NODE *node_args)
 	}
 
 	if (iseq->type == ISEQ_TYPE_BLOCK) {
-	    if (iseq->arg_opts == 0 && iseq->arg_post_len == 0 &&
-		iseq->arg_rest == -1 && iseq->arg_keyword == -1) {
+	    if (iseq->arg_opts == 0 &&
+		iseq->arg_post_num == 0 &&
+		iseq->arg_rest == -1 &&
+		iseq->arg_keyword_bits == -1 &&
+		iseq->arg_keyword_rest == -1) {
+
+		/* TODO: why not check block? */
+
 		if (iseq->argc == 1 && last_comma == 0) {
 		    /* {|a|} */
 		    iseq->arg_simple |= 0x02;
@@ -4503,9 +4512,9 @@ iseq_compile_each(rb_iseq_t *iseq, LINK_ANCHOR *ret, NODE * node, int poped)
 		    flag |= VM_CALL_ARGS_SPLAT;
 		}
 
-		if (liseq->arg_post_len) {
+		if (liseq->arg_post_num > 0) {
 		    /* post arguments */
-		    int post_len = liseq->arg_post_len;
+		    int post_len = liseq->arg_post_num;
 		    int post_start = liseq->arg_post_start;
 
 		    if (liseq->arg_rest != -1) {
@@ -4528,22 +4537,22 @@ iseq_compile_each(rb_iseq_t *iseq, LINK_ANCHOR *ret, NODE * node, int poped)
 		    }
 		}
 
-		if (liseq->arg_keyword >= 0) { /* TODO: support keywords */
+		if (liseq->arg_keyword_bits >= 0) { /* TODO: support keywords */
 		    int local_size = liseq->local_size;
-		    int idx = local_size - liseq->arg_keyword;
 		    argc++;
+
 		    ADD_INSN1(args, line, putspecialobject, INT2FIX(VM_SPECIAL_OBJECT_VMCORE));
 
-		    if (liseq->arg_keyword_check == TRUE) {
-			ADD_INSN1(args, line, newhash, INT2FIX(0));
-		    }
-		    else {
-			ADD_INSN2(args, line, getlocal, INT2FIX(idx), INT2FIX(lvar_level));
+		    if (liseq->arg_keyword_rest > 0) {
+			ADD_INSN2(args, line, getlocal, INT2FIX(liseq->local_size - liseq->arg_keyword_rest), INT2FIX(lvar_level));
 			ADD_SEND (args, line, rb_intern("dup"), INT2FIX(0));
 		    }
-		    for (i = 0; i < liseq->arg_keywords; ++i) {
+		    else {
+			ADD_INSN1(args, line, newhash, INT2FIX(0));
+		    }
+		    for (i = 0; i < liseq->arg_keyword_num; ++i) {
 			ID id = liseq->arg_keyword_table[i];
-			idx = local_size - get_local_var_idx(liseq, id);
+			int idx = local_size - get_local_var_idx(liseq, id);
 			ADD_INSN1(args, line, putobject, ID2SYM(id));
 			ADD_INSN2(args, line, getlocal, INT2FIX(idx), INT2FIX(lvar_level));
 		    }
@@ -4552,6 +4561,17 @@ iseq_compile_each(rb_iseq_t *iseq, LINK_ANCHOR *ret, NODE * node, int poped)
 			ADD_INSN1(args, line, newarray, INT2FIX(1));
 			ADD_INSN (args, line, concatarray);
 			--argc;
+		    }
+		}
+		else if (liseq->arg_keyword_rest >= 0) {
+		    ADD_INSN2(args, line, getlocal, INT2FIX(liseq->local_size - liseq->arg_keyword_rest), INT2FIX(lvar_level));
+		    ADD_SEND (args, line, rb_intern("dup"), INT2FIX(0));
+		    if (liseq->arg_rest != -1) {
+			ADD_INSN1(args, line, newarray, INT2FIX(1));
+			ADD_INSN (args, line, concatarray);
+		    }
+		    else {
+			argc++;
 		    }
 		}
 	    }
@@ -5263,8 +5283,6 @@ iseq_compile_each(rb_iseq_t *iseq, LINK_ANCHOR *ret, NODE * node, int poped)
       case NODE_KW_ARG:
 	{
 	    LABEL *end_label = NEW_LABEL(nd_line(node));
-	    int idx, lv, ls;
-	    ID id = node->nd_body->nd_vid;
 	    NODE *default_value = node->nd_body->nd_value;
 
 	    if (default_value == (NODE *)-1) {
@@ -5275,26 +5293,15 @@ iseq_compile_each(rb_iseq_t *iseq, LINK_ANCHOR *ret, NODE * node, int poped)
 		rb_bug("unreachable");
 	    }
 	    else {
-		/* if kw == uninitialized_keyword
+		/* if keywordcheck(_kw_bits, nth_keyword)
 		 *   kw = default_value
 		 * end
 		 */
-		switch (nd_type(node->nd_body)) {
-		  case NODE_LASGN:
-		    idx = iseq->local_iseq->local_size - get_local_var_idx(iseq, id);
-		    ADD_INSN2(ret, line, getlocal, INT2FIX(idx), INT2FIX(get_lvar_level(iseq)));
-		    break;
-		  case NODE_DASGN:
-		  case NODE_DASGN_CURR:
-		    idx = get_dyna_var_idx(iseq, id, &lv, &ls);
-		    ADD_INSN2(ret, line, getlocal, INT2FIX(ls - idx), INT2FIX(lv));
-		    break;
-		  default:
-		    rb_bug("iseq_compile_each (NODE_KW_ARG): unknown node: %s", ruby_node_name(nd_type(node->nd_body)));
-		}
-		ADD_INSN1(ret, line, putspecialobject, INT2FIX(VM_SPECIAL_OBJECT_UNINITIALIZED_KEYWORD));
-		ADD_SEND(ret, line, idEq, INT2FIX(1));
-		ADD_INSNL(ret, line, branchunless, end_label);
+		int kw_bits_idx = iseq->local_size - iseq->arg_keyword_bits;
+		int keyword_idx = iseq->arg_keyword_num;
+
+		ADD_INSN2(ret, line, checkkeyword, INT2FIX(kw_bits_idx), INT2FIX(keyword_idx));
+		ADD_INSNL(ret, line, branchif, end_label);
 		COMPILE_POPED(ret, "keyword default argument", node->nd_body);
 		ADD_LABEL(ret, end_label);
 	    }
@@ -5883,7 +5890,7 @@ rb_iseq_build_from_ary(rb_iseq_t *iseq, VALUE locals, VALUE args,
 	int i = 0;
 	VALUE argc = CHECK_INTEGER(rb_ary_entry(args, i++));
 	VALUE arg_opt_labels = CHECK_ARRAY(rb_ary_entry(args, i++));
-	VALUE arg_post_len = CHECK_INTEGER(rb_ary_entry(args, i++));
+	VALUE arg_post_num = CHECK_INTEGER(rb_ary_entry(args, i++));
 	VALUE arg_post_start = CHECK_INTEGER(rb_ary_entry(args, i++));
 	VALUE arg_rest = CHECK_INTEGER(rb_ary_entry(args, i++));
 	VALUE arg_block = CHECK_INTEGER(rb_ary_entry(args, i++));
@@ -5891,7 +5898,7 @@ rb_iseq_build_from_ary(rb_iseq_t *iseq, VALUE locals, VALUE args,
 
 	iseq->argc = FIX2INT(argc);
 	iseq->arg_rest = FIX2INT(arg_rest);
-	iseq->arg_post_len = FIX2INT(arg_post_len);
+	iseq->arg_post_num = FIX2INT(arg_post_num);
 	iseq->arg_post_start = FIX2INT(arg_post_start);
 	iseq->arg_block = FIX2INT(arg_block);
 	iseq->arg_opts = RARRAY_LENINT(arg_opt_labels);
@@ -5900,8 +5907,8 @@ rb_iseq_build_from_ary(rb_iseq_t *iseq, VALUE locals, VALUE args,
 	if (iseq->arg_block != -1) {
 	    iseq->arg_size = iseq->arg_block + 1;
 	}
-	else if (iseq->arg_post_len) {
-	    iseq->arg_size = iseq->arg_post_start + iseq->arg_post_len;
+	else if (iseq->arg_post_num) {
+	    iseq->arg_size = iseq->arg_post_start + iseq->arg_post_num;
 	}
 	else if (iseq->arg_rest != -1) {
 	    iseq->arg_size = iseq->arg_rest + 1;
