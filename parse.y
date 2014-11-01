@@ -9643,7 +9643,9 @@ new_args_tail_gen(struct parser_params *parser, NODE *k, ID kr, ID b)
 	args->kw_rest_arg->nd_cflag = kr;
     }
     else if (kr) {
+	if (b) vtable_pop(lvtbl->args, 1); /* reorder */
 	arg_var(kr);
+	if (b) arg_var(b);
 	args->kw_rest_arg = NEW_DVAR(kr);
     }
 

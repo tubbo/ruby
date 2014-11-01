@@ -667,7 +667,6 @@ setup_parameters_complex(rb_thread_t * const th, const rb_iseq_t * const iseq, r
     }
 
     if (iseq->arg_block >= 0) {
-	bp();
 	args_setup_block_parameter(th, ci, locals + iseq->arg_block);
     }
 
