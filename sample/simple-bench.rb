@@ -113,6 +113,7 @@ Benchmark.bm(max_size){|x|
         i = 0
         while i<#{N}
           #{line}
+          i+=1
         end
       }
     }
