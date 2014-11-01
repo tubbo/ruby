@@ -52,7 +52,8 @@ ary1 = [1]
 ary2 = [[1, 2, 3, 4, 5]]
 
 test_methods = %Q{
-  # empty
+  # empty 1
+  # empty 2
   foo0
   foo3 1, 2, 3
   foo6 1, 2, 3, 4, 5, 6
@@ -109,9 +110,10 @@ Benchmark.bm(max_size){|x|
     next if line.empty?
     %Q{
       x.report(#{line.dump}){
-        N.times{
+        i = 0
+        while i<#{N}
           #{line}
-        }
+        end
       }
     }
   }.join("\n")
