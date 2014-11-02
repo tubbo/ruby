@@ -2365,7 +2365,10 @@ static VALUE
 method_proc(VALUE method)
 {
     VALUE procval;
+    struct METHOD *meth;
     rb_proc_t *proc;
+    rb_env_t *env;
+
     /*
      * class Method
      *   def to_proc
@@ -2375,9 +2378,16 @@ method_proc(VALUE method)
      *   end
      * end
      */
+    TypedData_Get_Struct(method, struct METHOD, &method_data_type, meth);
     procval = rb_iterate(mlambda, 0, bmcall, method);
     GetProcPtr(procval, proc);
     proc->is_from_method = 1;
+    proc->block.self = meth->recv;
+    proc->block.klass = meth->defined_class;
+    GetEnvPtr(proc->envval, env);
+    env->block.self = meth->recv;
+    env->block.klass = meth->defined_class;
+    env->block.iseq = method_get_iseq(meth->me->def);
     return procval;
 }
 
@@ -2450,10 +2460,12 @@ proc_binding(VALUE self)
     rb_proc_t *proc;
     VALUE bindval;
     rb_binding_t *bind;
+    rb_iseq_t *iseq;
 
     GetProcPtr(self, proc);
-    if (RB_TYPE_P((VALUE)proc->block.iseq, T_NODE)) {
-	if (!IS_METHOD_PROC_NODE((NODE *)proc->block.iseq)) {
+    iseq = proc->block.iseq;
+    if (RB_TYPE_P((VALUE)iseq, T_NODE)) {
+	if (!IS_METHOD_PROC_NODE((NODE *)iseq)) {
 	    rb_raise(rb_eArgError, "Can't create Binding from C level Proc");
 	}
     }
@@ -2462,9 +2474,9 @@ proc_binding(VALUE self)
     GetBindingPtr(bindval, bind);
     bind->env = proc->envval;
     bind->blockprocval = proc->blockprocval;
-    if (RUBY_VM_NORMAL_ISEQ_P(proc->block.iseq)) {
-	bind->path = proc->block.iseq->location.path;
-	bind->first_lineno = FIX2INT(rb_iseq_first_lineno(proc->block.iseq->self));
+    if (RUBY_VM_NORMAL_ISEQ_P(iseq)) {
+	bind->path = iseq->location.path;
+	bind->first_lineno = FIX2INT(rb_iseq_first_lineno(iseq->self));
     }
     else {
 	bind->path = Qnil;

@@ -10,6 +10,8 @@ Q1 = $(V:1=)
 Q = $(Q1:0=@)
 ECHO = $(ECHO1:0=@echo)
 
+UNICODE_VERSION = 7.0.0
+
 RUBYLIB       = $(PATH_SEPARATOR)
 RUBYOPT       = -
 RUN_OPTS      = --disable-gems
@@ -183,7 +185,7 @@ configure-ext: $(EXTS_MK)
 
 build-ext: $(EXTS_MK)
 	$(Q)$(MAKE) -f $(EXTS_MK) $(MFLAGS) libdir="$(libdir)" LIBRUBY_EXTS=$(LIBRUBY_EXTS) \
-	    ENCOBJS="$(ENCOBJS)" ALWAYS_UPDATE_UNICODE=no $(EXTSTATIC)
+	    ENCOBJS="$(ENCOBJS)" UPDATE_LIBRARIES=no $(EXTSTATIC)
 
 prog: program wprogram
 
@@ -920,7 +922,7 @@ common-srcs: {$(VPATH)}parse.c {$(VPATH)}lex.c {$(VPATH)}newline.c {$(VPATH)}id.
 srcs: common-srcs srcs-enc
 
 EXT_SRCS = $(srcdir)/ext/ripper/ripper.c $(srcdir)/ext/json/parser/parser.c \
-	   $(srcdir)/ext/dl/callback/callback.c  $(srcdir)/ext/rbconfig/sizeof/sizes.c
+	   $(srcdir)/ext/rbconfig/sizeof/sizes.c
 
 srcs-ext: $(EXT_SRCS)
 
@@ -1009,11 +1011,6 @@ $(srcdir)/ext/json/parser/parser.c: $(srcdir)/ext/json/parser/parser.rl
 	$(Q) $(CHDIR) $(@D) && $(exec) $(MAKE) -f prereq.mk $(MFLAGS) \
 		Q=$(Q) ECHO=$(ECHO) top_srcdir=../../.. srcdir=. VPATH=../../.. BASERUBY="$(BASERUBY)"
 
-$(srcdir)/ext/dl/callback/callback.c: $(srcdir)/ext/dl/callback/mkcallback.rb $(srcdir)/ext/dl/dl.h
-	$(ECHO) generating $@
-	$(Q) $(CHDIR) $(@D) && $(exec) $(MAKE) -f depend $(MFLAGS) \
-		Q=$(Q) ECHO=$(ECHO) top_srcdir=../.. srcdir=. VPATH=../.. RUBY="$(BASERUBY)"
-
 $(srcdir)/ext/rbconfig/sizeof/sizes.c: $(srcdir)/ext/rbconfig/sizeof/depend \
 		$(srcdir)/tool/generic_erb.rb $(srcdir)/template/sizes.c.tmpl $(srcdir)/configure.in
 	$(ECHO) generating $@
@@ -1099,35 +1096,44 @@ update-gems: PHONY
 	    -e 'Downloader::RubyGems.download(gem)' \
 	    bundled_gems
 
+UPDATE_LIBRARIES = yes
+
 ### set the following environment variable or uncomment the line if
 ### the Unicode data files are updated every minute.
 # ALWAYS_UPDATE_UNICODE = yes
 
-UNICODE_FILES = $(srcdir)/enc/unicode/data/UnicodeData.txt \
-		$(srcdir)/enc/unicode/data/CompositionExclusions.txt \
-		$(srcdir)/enc/unicode/data/NormalizationTest.txt
+UNICODE_FILES = $(srcdir)/enc/unicode/data/$(UNICODE_VERSION)/UnicodeData.txt \
+		$(srcdir)/enc/unicode/data/$(UNICODE_VERSION)/CompositionExclusions.txt \
+		$(srcdir)/enc/unicode/data/$(UNICODE_VERSION)/NormalizationTest.txt
 
 update-unicode: $(UNICODE_FILES) PHONY
-$(UNICODE_FILES): ./.update-unicode.time
 
-UPDATE_UNICODE_FILES_DEPS = $(ALWAYS_UPDATE_UNICODE:yes=PHONY)
+UNICODE_FILES_DEPS0 = $(UPDATE_LIBRARIES:yes=download-unicode-data)
+UNICODE_FILES_DEPS = $(UNICODE_FILES_DEPS0:no=)
+$(UNICODE_FILES): $(UNICODE_FILES_DEPS)
 
-./.update-unicode.time: $(UPDATE_UNICODE_FILES_DEPS:no=)
-	$(ECHO) Downloading Unicode data files...
-	$(Q) $(MAKEDIRS) "$(srcdir)/enc/unicode/data"
-	$(Q) $(BASERUBY) -C "$(srcdir)/enc/unicode/data" \
-	    ../../../tool/downloader.rb -e $(ALWAYS_UPDATE_UNICODE:yes=-a) unicode \
-	    UnicodeData.txt CompositionExclusions.txt NormalizationTest.txt
-	@exit > .update-unicode.time
+download-unicode-data: ./.unicode-$(UNICODE_VERSION).time
+./.unicode-$(UNICODE_VERSION).time: PHONY
+	$(ECHO) Downloading Unicode $(UNICODE_VERSION) data files...
+	$(Q) $(MAKEDIRS) "$(srcdir)/enc/unicode/data/$(UNICODE_VERSION)"
+	$(Q) $(BASERUBY) -C "$(srcdir)" tool/downloader.rb \
+	    -d enc/unicode/data/$(UNICODE_VERSION) \
+	    -e $(ALWAYS_UPDATE_UNICODE:yes=-a) unicode \
+	    $(UNICODE_VERSION)/ucd/UnicodeData.txt \
+	    $(UNICODE_VERSION)/ucd/CompositionExclusions.txt \
+	    $(UNICODE_VERSION)/ucd/NormalizationTest.txt
+	@exit > $@
 
 $(srcdir)/lib/unicode_normalize/tables.rb: ./.unicode-tables.time
 
 ./.unicode-tables.time: $(srcdir)/tool/generic_erb.rb \
-		$(srcdir)/template/unicode_norm_gen.tmpl $(UNICODE_FILES)
+		$(UNICODE_FILES) $(UNICODE_FILES_DEPS) \
+		$(srcdir)/template/unicode_norm_gen.tmpl
 	$(Q) $(BASERUBY) $(srcdir)/tool/generic_erb.rb \
 		-c -t$@ -o $(srcdir)/lib/unicode_normalize/tables.rb \
 		-I $(srcdir) \
-		$(srcdir)/template/unicode_norm_gen.tmpl enc/unicode/data lib/unicode_normalize
+		$(srcdir)/template/unicode_norm_gen.tmpl \
+		enc/unicode/data/$(UNICODE_VERSION) lib/unicode_normalize
 
 info: info-program info-libruby_a info-libruby_so info-arch
 info-program: PHONY

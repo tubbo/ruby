@@ -62,6 +62,7 @@ end
 # * #minor(*param)
 # * #first_minor(row, column)
 # * #cofactor(row, column)
+# * #adjugate
 # * #laplace_expansion(row_or_column: num)
 # * #cofactor_expansion(row_or_column: num)
 #
@@ -687,6 +688,20 @@ class Matrix
 
     det_of_minor = first_minor(row, column).determinant
     det_of_minor * (-1) ** (row + column)
+  end
+
+  #
+  # Returns the adjugate of the matrix.
+  #
+  #   Matrix[ [7,6],[3,9] ].adjugate
+  #     => 9 -6
+  #        -3 7
+  #
+  def adjugate
+    Matrix.Raise ErrDimensionMismatch unless square?
+    Matrix.build(row_count, column_count) do |row, column|
+      cofactor(column, row)
+    end
   end
 
   #
@@ -1684,8 +1699,8 @@ end
 # * #-@
 #
 # Vector functions:
-# * #inner_product(v)
-# * #cross_product(v)
+# * #inner_product(v), dot(v)
+# * #cross_product(v), cross(v)
 # * #collect
 # * #magnitude
 # * #map
@@ -1944,17 +1959,41 @@ class Vector
     }
     p
   end
+  alias_method :dot, :inner_product
 
   #
-  # Returns the cross product of this vector with the other.
+  # Returns the cross product of this vector with the others.
   #   Vector[1, 0, 0].cross_product Vector[0, 1, 0]   => Vector[0, 0, 1]
   #
-  def cross_product(v)
-    Vector.Raise ErrDimensionMismatch unless size == v.size && v.size == 3
-    Vector[ v[2]*@elements[1] - v[1]*@elements[2],
-            v[0]*@elements[2] - v[2]*@elements[0],
-            v[1]*@elements[0] - v[0]*@elements[1] ]
+  # It is generalized to other dimensions to return a vector perpendicular
+  # to the arguments.
+  #   Vector[1, 2].cross_product # => Vector[-2, 1]
+  #   Vector[1, 0, 0, 0].cross_product(
+  #      Vector[0, 1, 0, 0],
+  #      Vector[0, 0, 1, 0]
+  #   )  #=> Vector[0, 0, 0, 1]
+  #
+  def cross_product(*vs)
+    raise ErrOperationNotDefined, "cross product is not defined on vectors of dimension #{size}" unless size >= 2
+    raise ArgumentError, "wrong number of arguments (#{vs.size} for #{size - 2})" unless vs.size == size - 2
+    vs.each do |v|
+      raise TypeError, "expected Vector, got #{v.class}" unless v.is_a? Vector
+      Vector.Raise ErrDimensionMismatch unless v.size == size
+    end
+    case size
+    when 2
+      Vector[-@elements[1], @elements[0]]
+    when 3
+      v = vs[0]
+      Vector[ v[2]*@elements[1] - v[1]*@elements[2],
+        v[0]*@elements[2] - v[2]*@elements[0],
+        v[1]*@elements[0] - v[0]*@elements[1] ]
+    else
+      rows = self, *vs, Array.new(size) {|i| Vector.basis(size: size, index: i) }
+      Matrix.rows(rows).laplace_expansion(row: size - 1)
+    end
   end
+  alias_method :cross, :cross_product
 
   #
   # Like Array#collect.

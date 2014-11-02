@@ -240,88 +240,90 @@ AQjjxMXhwULlmuR/K+WwlaZPiLIBYalLAZQ7ZbOPeVkJ8ePao0eLAgEC
       ssl.close rescue nil
     end
 
-    def server_loop(ctx, ssls, server_proc, threads)
+    def server_loop(ctx, ssls, stop_pipe_r, ignore_listener_error, server_proc, threads)
       loop do
         ssl = nil
         begin
+          readable, = IO.select([ssls, stop_pipe_r])
+          if readable.include? stop_pipe_r
+            return
+          end
           ssl = ssls.accept
         rescue OpenSSL::SSL::SSLError
-          retry
+          if ignore_listener_error
+            retry
+          else
+            raise
+          end
         end
 
         th = Thread.start do
-          Thread.current.abort_on_exception = true
           server_proc.call(ctx, ssl)
         end
         threads << th
       end
     rescue Errno::EBADF, IOError, Errno::EINVAL, Errno::ECONNABORTED, Errno::ENOTSOCK, Errno::ECONNRESET
+      if !ignore_listener_error
+        raise
+      end
     end
 
     def start_server(port0, verify_mode, start_immediately, args = {}, &block)
-      ctx_proc = args[:ctx_proc]
-      server_proc = args[:server_proc]
-      server_proc ||= method(:readwrite_loop)
-      threads = []
+      IO.pipe {|stop_pipe_r, stop_pipe_w|
+        ctx_proc = args[:ctx_proc]
+        server_proc = args[:server_proc]
+        ignore_listener_error = args.fetch(:ignore_listener_error, true)
+        server_proc ||= method(:readwrite_loop)
 
-      store = OpenSSL::X509::Store.new
-      store.add_cert(@ca_cert)
-      store.purpose = OpenSSL::X509::PURPOSE_SSL_CLIENT
-      ctx = OpenSSL::SSL::SSLContext.new
-      ctx.cert_store = store
-      #ctx.extra_chain_cert = [ ca_cert ]
-      ctx.cert = @svr_cert
-      ctx.key = @svr_key
-      ctx.tmp_dh_callback = proc { OpenSSL::TestUtils::TEST_KEY_DH1024 }
-      ctx.verify_mode = verify_mode
-      ctx_proc.call(ctx) if ctx_proc
+        store = OpenSSL::X509::Store.new
+        store.add_cert(@ca_cert)
+        store.purpose = OpenSSL::X509::PURPOSE_SSL_CLIENT
+        ctx = OpenSSL::SSL::SSLContext.new
+        ctx.cert_store = store
+        #ctx.extra_chain_cert = [ ca_cert ]
+        ctx.cert = @svr_cert
+        ctx.key = @svr_key
+        ctx.tmp_dh_callback = proc { OpenSSL::TestUtils::TEST_KEY_DH1024 }
+        ctx.verify_mode = verify_mode
+        ctx_proc.call(ctx) if ctx_proc
 
-      Socket.do_not_reverse_lookup = true
-      tcps = nil
-      port = port0
-      begin
-        tcps = TCPServer.new("127.0.0.1", port)
-      rescue Errno::EADDRINUSE
-        port += 1
-        retry
-      end
-
-      ssls = OpenSSL::SSL::SSLServer.new(tcps, ctx)
-      ssls.start_immediately = start_immediately
-
-      begin
-        server = Thread.new do
-          Thread.current.abort_on_exception = true
-          server_loop(ctx, ssls, server_proc, threads)
+        Socket.do_not_reverse_lookup = true
+        tcps = nil
+        port = port0
+        begin
+          tcps = TCPServer.new("127.0.0.1", port)
+        rescue Errno::EADDRINUSE
+          port += 1
+          retry
         end
 
-        $stderr.printf("%s started: pid=%d port=%d\n", SSL_SERVER, $$, port) if $DEBUG
+        ssls = OpenSSL::SSL::SSLServer.new(tcps, ctx)
+        ssls.start_immediately = start_immediately
 
-        block.call(server, port.to_i)
-      ensure
+        threads = []
         begin
-          begin
-            tcps.shutdown
-          rescue Errno::ENOTCONN
-            # when `Errno::ENOTCONN: Socket is not connected' on some platforms,
-            # call #close instead of #shutdown.
-            tcps.close
-            tcps = nil
-          end if (tcps)
-          if (server)
-            server.join(5)
-            if server.alive?
-              server.join
-              flunk("TCPServer was closed and SSLServer is still alive") unless $!
+          server = Thread.new do
+            begin
+              server_loop(ctx, ssls, stop_pipe_r, ignore_listener_error, server_proc, threads)
+            ensure
+              tcps.close
             end
           end
+          threads.unshift server
+
+          $stderr.printf("%s started: pid=%d port=%d\n", SSL_SERVER, $$, port) if $DEBUG
+
+          client = Thread.new do
+            begin
+              block.call(server, port.to_i)
+            ensure
+              stop_pipe_w.close
+            end
+          end
+          threads.unshift client
         ensure
-          tcps.close if (tcps)
+          assert_join_threads(threads)
         end
-      end
-    ensure
-      threads.each {|th|
-        th.join
       }
     end
 

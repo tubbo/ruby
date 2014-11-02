@@ -140,25 +140,83 @@ class TestSyntax < Test::Unit::TestCase
   def test_keyword_self_reference
     bug9593 = '[ruby-core:61299] [Bug #9593]'
     o = Object.new
-    def o.foo(var: defined?(var)) var end
+    assert_warn(/circular argument reference - var/) do
+      o.instance_eval("def foo(var: defined?(var)) var end")
+    end
     assert_equal(42, o.foo(var: 42))
     assert_equal("local-variable", o.foo, bug9593)
 
     o = Object.new
-    def o.foo(var: var) var end
+    assert_warn(/circular argument reference - var/) do
+      o.instance_eval("def foo(var: var) var end")
+    end
     assert_nil(o.foo, bug9593)
+
+    o = Object.new
+    assert_warn(/circular argument reference - var/) do
+      o.instance_eval("def foo(var: bar(var)) var end")
+    end
+
+    o = Object.new
+    assert_warn(/circular argument reference - var/) do
+      o.instance_eval("def foo(var: bar {var}) var end")
+    end
+
+    o = Object.new
+    assert_warn("") do
+      o.instance_eval("def foo(var: bar {|var| var}) var end")
+    end
+
+    o = Object.new
+    assert_warn("") do
+      o.instance_eval("def foo(var: def bar(var) var; end) var end")
+    end
+
+    o = Object.new
+    assert_warn("") do
+      o.instance_eval("proc {|var: 1| var}")
+    end
   end
 
   def test_optional_self_reference
     bug9593 = '[ruby-core:61299] [Bug #9593]'
     o = Object.new
-    def o.foo(var = defined?(var)) var end
+    assert_warn(/circular argument reference - var/) do
+      o.instance_eval("def foo(var = defined?(var)) var end")
+    end
     assert_equal(42, o.foo(42))
     assert_equal("local-variable", o.foo, bug9593)
 
     o = Object.new
-    def o.foo(var = var) var end
+    assert_warn(/circular argument reference - var/) do
+      o.instance_eval("def foo(var = var) var end")
+    end
     assert_nil(o.foo, bug9593)
+
+    o = Object.new
+    assert_warn(/circular argument reference - var/) do
+      o.instance_eval("def foo(var = bar(var)) var end")
+    end
+
+    o = Object.new
+    assert_warn(/circular argument reference - var/) do
+      o.instance_eval("def foo(var = bar {var}) var end")
+    end
+
+    o = Object.new
+    assert_warn("") do
+      o.instance_eval("def foo(var = bar {|var| var}) var end")
+    end
+
+    o = Object.new
+    assert_warn("") do
+      o.instance_eval("def foo(var = def bar(var) var; end) var end")
+    end
+
+    o = Object.new
+    assert_warn("") do
+      o.instance_eval("proc {|var = 1| var}")
+    end
   end
 
   def test_warn_grouped_expression

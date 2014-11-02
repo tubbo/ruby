@@ -1,3 +1,216 @@
+Sun Nov  2 01:30:32 2014  Tanaka Akira  <akr@fsij.org>
+
+	* test/openssl/test_ssl.rb: Don't ignore errors on listener threads,
+	  as much as possible.
+
+	* test/openssl/test_ssl_session.rb: Ditto.
+
+	* test/openssl/test_partial_record_read.rb: Ditto.
+
+Sat Nov  1 23:11:05 2014  Tanaka Akira  <akr@fsij.org>
+
+	* test/openssl/utils.rb (start_server): Don't close sockets before
+	  threads finished.
+
+Sat Nov  1 22:06:24 2014  Tanaka Akira  <akr@fsij.org>
+
+	* test/openssl/test_ssl_session.rb (test_ctx_client_session_cb): Don't
+	  ignore errors of SSL accept.
+	  (test_ctx_server_session_cb): Ditto.
+
+	* test/openssl/utils.rb (server_loop): Add ignore_ssl_accept_error
+	  argument.
+	  (start_server): Refine threads waits.
+
+	* test/ruby/envutil.rb (assert_join_threads): Show a thread before
+	  backtrace.
+
+Sat Nov  1 20:40:18 2014  Tanaka Akira  <akr@fsij.org>
+
+	* test/openssl/utils.rb (start_server, server_loop): Use a
+	  pipe to stop server instead of shutdown/close a listening socket.
+
+Sat Nov  1 19:24:59 2014  Tanaka Akira  <akr@fsij.org>
+
+	* test/ruby/envutil.rb (assert_join_threads): New assertion to
+	  join multiple threads without exceptions.
+
+Sat Nov  1 17:09:32 2014  Tanaka Akira  <akr@fsij.org>
+
+	* bignum.c (bary_mul_balance_with_mulfunc): Fix free work area
+	  location.
+	  [ruby-dev:48723] [Bug #10464]
+	  [ruby-core:66044] [Bug #10465]
+	  Reported by Kohji Nishihama.
+
+Sat Nov  1 15:45:15 2014  Nobuyoshi Nakada  <nobu@ruby-lang.org>
+
+	* parse.y (parse_atmark): mere atmark and two atmarks without
+	  succeeding identifiers are invalid as instance/class variable
+	  names.
+
+Sat Nov  1 06:31:41 2014  Masaki Suketa <masaki.suketa@nifty.ne.jp>
+
+	* ext/win32ole/win32ole_variant.c: use typed data.
+
+Fri Oct 31 13:55:28 2014  Aaron Patterson <aaron@tenderlovemaking.com>
+
+	* ext/dl/*: remove DL as it is replaced by Fiddle.
+	  [Feature #5458] Thanks to Jonan Scheffler <jonanscheffler@gmail.com>
+	  for this patch
+
+	* test/dl/*: ditto.
+
+Fri Oct 31 15:26:02 2014  Charles Oliver Nutter  <headius@headius.com>
+
+	* test/openssl/test_ssl.rb: Add certificate verification chain
+	  test from JRuby community.
+
+Fri Oct 31 18:58:02 2014  Charles Oliver Nutter  <headius@headius.com>
+
+	* test/psych/test_emitter.rb: Fix line_width test...initial value
+	  is impl-specific and attr assignment always returns LHS.
+
+Fri Oct 31 22:19:30 2014  Akinori MUSHA  <knu@iDaemons.org>
+
+	* ext/digest/lib/digest.rb (Digest()): This function should now be
+	  thread-safe.  If you have a problem with regard to on-demand
+	  loading under a multi-threaded environment, preload "digest/*"
+	  modules on boot or use this method instead of directly
+	  referencing Digest::*. [Bug #9494]
+	  cf. https://github.com/aws/aws-sdk-ruby/issues/525
+
+Fri Oct 31 21:33:17 2014  Akinori MUSHA  <knu@iDaemons.org>
+
+	* test/digest/test_digest.rb: Drop #!.  This no longer runs
+	  stand-alone because it depends on ruby/envutil.
+
+Fri Oct 31 17:22:19 2014  NAKAMURA Usaku  <usa@ruby-lang.org>
+
+	* win32/setup.mak: $(APPEND) with some arguments insert a space before
+	  the arguments, so it causes error if the arguments are expected to be
+	  a macro definition.  this fix resolve the build error introduced at
+	  r48210.
+
+Fri Oct 31 16:47:35 2014  Akinori MUSHA  <knu@iDaemons.org>
+
+	* ext/syslog/lib/syslog/logger.rb (Syslog::Logger::VERSION): Bump
+	  the VERSION to 2.1.0. [ruby-core:64483] [Bug #10159]
+
+Fri Oct 31 16:33:46 2014  Akinori MUSHA  <knu@iDaemons.org>
+
+	* lib/net/imap.rb (Net::IMAP#fetch): [DOC] Document that
+	  Net::IMAP#fetch will return nil instead of an emtpy array.
+
+Fri Oct 31 12:54:43 2014  Nobuyoshi Nakada  <nobu@ruby-lang.org>
+
+	* common.mk (.unicode-tables.time): needs Unicode files always,
+	  and should update after downloading these files.
+	  [ruby-core:66026] [Bug #10461]
+
+Fri Oct 31 10:16:42 2014  SHIBATA Hiroshi  <shibata.hiroshi@gmail.com>
+
+	* .travis.yml: reverted r48199, it's unrelated configuration.
+
+Fri Oct 31 09:58:14 2014  SHIBATA Hiroshi  <shibata.hiroshi@gmail.com>
+
+	* test/test_unicode_normalize.rb: added unicode version number to
+	  test data location.
+
+Fri Oct 31 09:56:41 2014  SHIBATA Hiroshi  <shibata.hiroshi@gmail.com>
+
+	* .gitignore: ignored unicode data with version directories.
+
+Fri Oct 31 09:35:30 2014  SHIBATA Hiroshi  <shibata.hiroshi@gmail.com>
+
+	* .travis.yml: tweak build scripts for unicode_normalize.rb.
+
+Thu Oct 30 18:47:04 2014  NARUSE, Yui  <naruse@ruby-lang.org>
+
+	* common.mk: fix for the case ALWAYS_UPDATE_UNICODE=no
+
+Thu Oct 30 13:23:23 2014  Martin Duerst <duerst@it.aoyama.ac.jp>
+
+	* tool/downloader.rb: changed Unicode data download location
+	  from latest Unicode version to Unicode 7.0.0.
+
+Thu Oct 30 11:16:13 2014  Nobuyoshi Nakada  <nobu@ruby-lang.org>
+
+	* vm_insnhelper.c (vm_callee_setup_arg{_complex,}): try conversion
+	  by to_ary for a lambda, as well as a proc.
+	  [ruby-core:65887] [Bug #9605]
+
+Wed Oct 29 21:13:23 2014  Nobuyoshi Nakada  <nobu@ruby-lang.org>
+
+	* parse.y (gettable_gen): warn circular argument reference, for
+	  transition from 2.1 and earlier.  [ruby-core:65990] [Bug #10314]
+
+Wed Oct 29 20:41:01 2014  Nobuyoshi Nakada  <nobu@ruby-lang.org>
+
+	* parse.y (parser_params): remove unused member `cur_mid`.
+	  this has been taken over by `in_def` since 1.6.
+
+Wed Oct 29 14:44:27 2014  Nobuyoshi Nakada  <nobu@ruby-lang.org>
+
+	* load.c (rb_f_load): path name needs to be transcoded to OS path
+	  encoding.  [ruby-list:49994]
+
+Wed Oct 29 11:48:23 2014  Nobuyoshi Nakada  <nobu@ruby-lang.org>
+
+	* configure.in (__builtin_setjmp): disable with gcc/clang earlier
+	  than 4.3 on Mac OS X.  [ruby-core:65174] [Bug #10272]
+
+Wed Oct 29 11:43:43 2014  Marc-Andre Lafortune  <ruby-core@marc-andre.ca>
+
+	* lib/matrix.rb: Generalize Vector#cross_product to arbitrary
+	  dimensions
+	  based on a patch by gogo tanaka [#10074]
+
+Wed Oct 29 11:43:11 2014  Marc-Andre Lafortune  <ruby-core@marc-andre.ca>
+
+	* lib/matrix.rb: Add Matrix#adjucate
+	  patch by gogo tanaka [#10056]
+
+Wed Oct 29 11:42:33 2014  Marc-Andre Lafortune  <ruby-core@marc-andre.ca>
+
+	* lib/matrix.rb: Add aliases for Vector#cross & dot
+	  patch by gogo tanaka [#10352]
+
+Wed Oct 29 10:00:18 2014  SHIBATA Hiroshi  <shibata.hiroshi@gmail.com>
+
+	* gems/bundled_gems: Update latest version of bundled gems.
+
+Tue Oct 28 16:52:07 2014  Eric Wong  <e@80x24.org>
+
+	* signal.c (install_sighandler): remove rb_disable_interrupt and
+	  rb_enable_interrupt calls
+	  (init_sigchld): ditto
+	  (Init_signal): disable and enable interrupt once around all
+	  install_sighandler and init_sigchld to reduce syscalls at start
+	  [Feature #9345] [ruby-core:59480]
+
+Tue Oct 28 16:22:41 2014  Nobuyoshi Nakada  <nobu@ruby-lang.org>
+
+	* ruby.c (process_options, load_file_internal2): should not
+	  require other files when dump option is given.
+	  [ruby-dev:48712] [Bug #10435]
+
+Tue Oct 28 14:51:38 2014  NARUSE, Yui  <naruse@ruby-lang.org>
+
+	* configure.in: remove apple-gcc4.2 from CC candidates.
+
+Mon Oct 27 20:13:37 2014  NAKAMURA Usaku  <usa@ruby-lang.org>
+
+	* lib/rexml/entity.rb: keep the entity size within the limitation.
+	  reported by Willis Vandevanter <will@silentrobots.com> and
+	  patched by nahi.
+
+Mon Oct 27 17:17:24 2014  Nobuyoshi Nakada  <nobu@ruby-lang.org>
+
+	* proc.c (method_proc): the receiver of binding from method should
+	  be same as the receiver of the method.
+	  [ruby-core:65917] [Bug #10432]
+
 Mon Oct 27 16:26:37 2014  Koichi Sasada  <ko1@atdot.net>
 
 	* test/ruby/test_super.rb: add a test to check block passing.
@@ -5,7 +218,7 @@ Mon Oct 27 16:26:37 2014  Koichi Sasada  <ko1@atdot.net>
 Mon Oct 27 15:59:26 2014  Koichi Sasada  <ko1@atdot.net>
 
 	* gc.c: is_incremental_marking(), will_be_incremental_marking():
-	  use `&&' with GC_ENABLE_INCREMENTAL_MARK intead of using
+	  use `&&' with GC_ENABLE_INCREMENTAL_MARK instead of using
 	  #if/#else/#endif.
 
 Mon Oct 27 13:40:11 2014  Nobuyoshi Nakada  <nobu@ruby-lang.org>
