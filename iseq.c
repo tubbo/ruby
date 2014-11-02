@@ -23,7 +23,7 @@
 #include "insns_info.inc"
 
 #define ISEQ_MAJOR_VERSION 2
-#define ISEQ_MINOR_VERSION 1
+#define ISEQ_MINOR_VERSION 2
 
 VALUE rb_cISeq;
 
@@ -1044,14 +1044,8 @@ VALUE iseq_data_to_ary(rb_iseq_t *iseq);
  *    An array containing the names of all arguments and local variables as
  *    symbols.
  *
- *  [args]
- *    The arity if the method or block only has required arguments.
- *
- *    Otherwise an array of:
- *
- *      [required_argc, [optional_arg_labels, ...],
- *       splat_index, post_splat_argc, post_splat_index,
- *       block_index, simple]
+ *  [params]
+ *    An Hash object containing parameter information.
  *
  *    More info about these values can be found in +vm_core.h+.
  *
@@ -1062,6 +1056,8 @@ VALUE iseq_data_to_ary(rb_iseq_t *iseq);
  *  [bytecode]
  *    An array of arrays containing the instruction names and operands that
  *    make up the body of the instruction sequence.
+ *
+ *  Note that this format is MRI specific and version dependent.
  *
  */
 static VALUE
@@ -1659,7 +1655,7 @@ iseq_data_to_ary(rb_iseq_t *iseq)
     VALUE val = rb_ary_new();
     VALUE type; /* Symbol */
     VALUE locals = rb_ary_new();
-    VALUE args = rb_ary_new();
+    VALUE params = rb_hash_new();
     VALUE body = rb_ary_new(); /* [[:insn1, ...], ...] */
     VALUE nbody;
     VALUE exception = rb_ary_new(); /* [[....]] */
@@ -1719,28 +1715,38 @@ iseq_data_to_ary(rb_iseq_t *iseq)
 	}
     }
 
-    /* args */
+    /* params */
     {
-	/*
-	 * [argc,                 # argc
-	 *  [label1, label2, ...] # opts
-	 *  rest index,
-	 *  post_len
-	 *  post_start
-	 *  block index,
-	 *  simple,
-         * ]
-	 */
 	VALUE arg_opt_labels = rb_ary_new();
 	int j;
 
 	for (j=0; j<iseq->param.opt_num; j++) {
-	    rb_ary_push(arg_opt_labels,
-			register_label(labels_table, iseq->param.opt_table[j]));
+	    rb_ary_push(arg_opt_labels, register_label(labels_table, iseq->param.opt_table[j]));
 	}
 
 	/* commit */
-	rb_bug("unsupported now");
+	if (iseq->param.flags.has_lead) rb_hash_aset(params, ID2SYM(rb_intern("lead_num")), INT2FIX(iseq->param.lead_num));
+	if (iseq->param.flags.has_opt) rb_hash_aset(params, ID2SYM(rb_intern("opt")),  arg_opt_labels);
+	if (iseq->param.flags.has_post) rb_hash_aset(params, ID2SYM(rb_intern("post_num")), INT2FIX(iseq->param.post_num));
+	if (iseq->param.flags.has_post) rb_hash_aset(params, ID2SYM(rb_intern("post_start")), INT2FIX(iseq->param.post_start));
+	if (iseq->param.flags.has_rest) rb_hash_aset(params, ID2SYM(rb_intern("rest_start")), INT2FIX(iseq->param.rest_start));
+	if (iseq->param.flags.has_block) rb_hash_aset(params, ID2SYM(rb_intern("block_start")), INT2FIX(iseq->param.block_start));
+	if (iseq->param.flags.has_kw) {
+	    VALUE keywords = rb_ary_new();
+	    int i, j;
+	    for (i=0; i<iseq->param.keyword->required_num; i++) {
+		rb_ary_push(keywords, ID2SYM(iseq->param.keyword->table[i]));
+	    }
+	    for (j=0; i<iseq->param.keyword->num; i++, j++) {
+		VALUE key = rb_ary_new_from_args(1, ID2SYM(iseq->param.keyword->table[i]));
+		if (iseq->param.keyword->default_values[j] != Qundef) {
+		    rb_ary_push(key, iseq->param.keyword->default_values[j]);
+		}
+		rb_ary_push(keywords, key);
+	    }
+	    rb_hash_aset(params, ID2SYM(rb_intern("keyword")), keywords);
+	}
+	else if (iseq->param.flags.has_kwrest) rb_hash_aset(params, ID2SYM(rb_intern("kwrest")), INT2FIX(iseq->param.keyword->rest_start));
     }
 
     /* body */
@@ -1897,7 +1903,7 @@ iseq_data_to_ary(rb_iseq_t *iseq)
     rb_ary_push(val, iseq->location.first_lineno);
     rb_ary_push(val, type);
     rb_ary_push(val, locals);
-    rb_ary_push(val, args);
+    rb_ary_push(val, params);
     rb_ary_push(val, exception);
     rb_ary_push(val, body);
     return val;
