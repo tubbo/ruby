@@ -1132,7 +1132,7 @@ iseq_set_arguments(rb_iseq_t *iseq, LINK_ANCHOR *optargs, NODE *node_args)
 	    int kw = 0, rkw = 0, di = 0, i;
 
 	    iseq->param.flags.has_kw = TRUE;
-	    iseq->param.keyword = ALLOC_N(struct rb_iseq_param_keyword, 1);
+	    iseq->param.keyword = ZALLOC_N(struct rb_iseq_param_keyword, 1);
 	    iseq->param.keyword->bits_start = get_dyna_var_idx_at_raw(iseq, args->kw_rest_arg->nd_vid);
 
 	    while (node) {
@@ -1181,7 +1181,7 @@ iseq_set_arguments(rb_iseq_t *iseq, LINK_ANCHOR *optargs, NODE *node_args)
 	}
 	else if (args->kw_rest_arg) {
 	    iseq->param.flags.has_kwrest = TRUE;
-	    iseq->param.keyword = ALLOC_N(struct rb_iseq_param_keyword, 1);
+	    iseq->param.keyword = ZALLOC_N(struct rb_iseq_param_keyword, 1);
 	    iseq->param.keyword->rest_start = get_dyna_var_idx_at_raw(iseq, args->kw_rest_arg->nd_vid);
 	}
 
