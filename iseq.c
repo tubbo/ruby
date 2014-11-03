@@ -1720,7 +1720,7 @@ iseq_data_to_ary(rb_iseq_t *iseq)
 	VALUE arg_opt_labels = rb_ary_new();
 	int j;
 
-	for (j=0; j < iseq->param.opt_num + 1; j++) {
+	for (j=0; j < iseq->param.opt_num; j++) {
 	    rb_ary_push(arg_opt_labels, register_label(labels_table, iseq->param.opt_table[j]));
 	}
 
