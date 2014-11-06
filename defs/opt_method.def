@@ -1,0 +1,90 @@
+# byte align the bitmap for now, maybe some arches do better with long or int
+# we may also use a larger size (in the unlikely case) we need more than
+# 7 optimized classes per mid.   Currently this caps us to 256 optimized
+# (mid, klass) combinations (tested with OM_SHIFT=4, giving us 64K)
+OM_SHIFT = 3
+OM_ALIGN = 1 << OM_SHIFT
+OM_ALIGN_MASK = ~(OM_ALIGN - 1)
+OPT_METHODS = [
+  %w(idPLUS Fixnum Float String Array),
+  %w(idMINUS Fixnum Float),
+  %w(idMULT Fixnum Float String),
+  %w(idDIV Fixnum Float),
+  %w(idMOD Fixnum Float String),
+  %w(idEq Fixnum Float String),
+  %w(idNeq Fixnum Float String),
+  # id, mask classes
+  [ 'idEqq', %w(Bignum Fixnum Float Symbol), *%w(String) ],
+  %w(idLT Fixnum Float),
+  %w(idLE Fixnum Float),
+  %w(idGT Fixnum Float),
+  %w(idGE Fixnum Float),
+  %w(idLTLT Array String),
+  %w(idAREF Array Hash),
+  %w(idASET Array Hash),
+  %w(idLength Array Hash String),
+  %w(idSize Array Hash String),
+  %w(idEmptyP Array Hash String),
+  %w(idSucc Fixnum String Time),
+  %w(idEqTilde Regexp String),
+  %w(idFreeze String),
+  %w(idGsub String),
+  %w(idGsub_bang String),
+  %w(idSub String),
+  %w(idSub_bang String),
+  %w(idTr String),
+  %w(idTr_bang String),
+  %w(idTr_s String),
+  %w(idTr_s_bang String),
+  [ "idDelete", %w(Array Hash String) ],
+  [ "idIncludeP", %w(Array Hash String) ],
+  %w(idMemberP Hash),
+  %w(idHas_keyP Hash),
+  %w(idKeyP Hash),
+  %w(idFetch Hash),
+  %w(idStrftime Time),
+  %w(idUnpack String),
+  %w(idPack Array),
+  %w(idSplit String),
+  %w(idJoin Array),
+  %w(idCount String),
+  %w(idChomp String),
+  %w(idChomp_bang String),
+  %w(idSqueeze String),
+  %w(idSqueeze_bang String),
+  %w(idDelete_bang String),
+  %w(idEncode String),
+  %w(idEncode_bang String),
+  %w(idForce_encoding String),
+  %w(idIndex String),
+  %w(idRindex String),
+  %w(idMatch String),
+  %w(idCasecmp String),
+  %w(idInsert String),
+  %w(idStart_withP String),
+  %w(idEnd_withP String),
+  %w(idPartition String),
+  %w(idRpartition String),
+]
+
+# for checking optimized classes,
+# speeds up method definitions of non-core classes
+def opt_classes
+  rv = {}
+  OPT_METHODS.each do |(_, *classes)|
+    classes.flatten.each { |c| rv[c] = true }
+  end
+  rv
+end
+
+def om(mid, klass)
+  if Array === klass
+    "OM_#{mid}__#{klass.join('_')}"
+  else
+    "OM_#{mid}__#{klass}"
+  end
+end
+
+IS_T_DATA = {
+  "Time" => true
+}
