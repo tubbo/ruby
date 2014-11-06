@@ -58,6 +58,43 @@ firstline, predefined = __LINE__+1, %[\
   core#hash_merge_ary
   core#hash_merge_ptr
   core#hash_merge_kwd
+  gsub
+  gsub!
+  sub
+  sub!
+  tr
+  tr!
+  tr_s
+  tr_s!
+  delete
+  delete!
+  include?
+  member?
+  has_key?
+  key?
+  fetch
+  count
+  chomp
+  chomp!
+  squeeze
+  squeeze!
+  strftime
+  pack
+  unpack
+  split
+  join
+  encode
+  encode!
+  force_encoding
+  index
+  rindex
+  match
+  casecmp
+  insert
+  start_with?
+  end_with?
+  partition
+  rpartition
 ]
 
 class KeywordError < RuntimeError
@@ -84,6 +121,7 @@ predefined.split(/^/).each_with_index do |line, num|
     token = "_#{token.gsub(/\W+/, '_')}"
   else
     token = token.sub(/\?/, 'P').sub(/\A[a-z]/) {$&.upcase}
+    token.sub!(/!\z/, "_bang")
     token.sub!(/\A\$/, "_G_")
     token.sub!(/\A@@/, "_C_")
     token.sub!(/\A@/, "_I_")

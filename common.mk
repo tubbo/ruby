@@ -642,7 +642,7 @@ PROBES_H_INCLUDES  = {$(VPATH)}probes.h
 VM_CORE_H_INCLUDES = {$(VPATH)}vm_core.h {$(VPATH)}thread_$(THREAD_MODEL).h \
 		     {$(VPATH)}node.h {$(VPATH)}method.h {$(VPATH)}ruby_atomic.h \
 	             {$(VPATH)}vm_debug.h {$(VPATH)}id.h {$(VPATH)}thread_native.h \
-	             $(CCAN_LIST_INCLUDES)
+	             $(CCAN_LIST_INCLUDES) {$(VPATH)}opt_method.h
 
 ###
 
@@ -829,7 +829,7 @@ vm.$(OBJEXT): {$(VPATH)}vm.c {$(VPATH)}gc.h {$(VPATH)}iseq.h {$(VPATH)}vm_args.c
   $(VM_CORE_H_INCLUDES) {$(VPATH)}vm_method.c {$(VPATH)}vm_eval.c \
   {$(VPATH)}vm_insnhelper.c {$(VPATH)}vm_insnhelper.h {$(VPATH)}vm_exec.c \
   {$(VPATH)}vm_exec.h {$(VPATH)}insns.def {$(VPATH)}vmtc.inc \
-  {$(VPATH)}vm.inc {$(VPATH)}insns.inc \
+  {$(VPATH)}vm.inc {$(VPATH)}insns.inc {$(VPATH)}opt_method.inc \
   {$(VPATH)}internal.h {$(VPATH)}vm.h {$(VPATH)}constant.h \
   $(PROBES_H_INCLUDES) {$(VPATH)}probes_helper.h {$(VPATH)}vm_opts.h
 vm_dump.$(OBJEXT): {$(VPATH)}vm_dump.c $(RUBY_H_INCLUDES) \
@@ -940,6 +940,20 @@ incs: $(INSNS) {$(VPATH)}node_name.inc {$(VPATH)}encdb.h {$(VPATH)}transdb.h {$(
       {$(VPATH)}id.h {$(VPATH)}probes.dmyh
 
 insns: $(INSNS)
+
+opt_method.h: $(srcdir)/tool/generic_erb.rb \
+		$(srcdir)/template/opt_method.h.tmpl \
+		$(srcdir)/defs/opt_method.def
+	$(ECHO) generating $@
+	$(Q) $(BASERUBY) $(srcdir)/tool/generic_erb.rb --output=$@ \
+		$(srcdir)/template/opt_method.h.tmpl
+
+opt_method.inc: $(srcdir)/tool/generic_erb.rb \
+		$(srcdir)/template/opt_method.inc.tmpl \
+		$(srcdir)/defs/opt_method.def
+	$(ECHO) generating $@
+	$(Q) $(BASERUBY) $(srcdir)/tool/generic_erb.rb --output=$@ \
+		$(srcdir)/template/opt_method.inc.tmpl
 
 id.h: $(srcdir)/tool/generic_erb.rb $(srcdir)/template/id.h.tmpl $(srcdir)/defs/id.def
 	$(ECHO) generating $@

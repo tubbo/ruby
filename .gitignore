@@ -74,6 +74,7 @@ y.tab.c
 /newdate.rb
 /newline.c
 /newver.rb
+/opt_method.h
 /parse.c
 /parse.h
 /patches

@@ -229,5 +229,32 @@ enum vm_regan_acttype {
 static VALUE make_no_method_exception(VALUE exc, const char *format,
 				      VALUE obj, int argc, const VALUE *argv);
 
+static inline int
+rb_basic_op_unredefined_p(enum ruby_optimized_method om)
+{
+    unsigned int i = om / OM_ALIGN_;
+    rb_om_bitmap_t mask = (rb_om_bitmap_t)(1U << (om % OM_ALIGN_));
+
+    return LIKELY((GET_VM()->redefined_flag[i] & mask) == 0);
+}
+
+static inline int
+rb_basic_mask_unredefined_p(enum ruby_optimized_method om)
+{
+    unsigned int uom = (unsigned int)-om;
+    unsigned int offset = 0xffU & (uom >> OM_ALIGN_);
+    rb_om_bitmap_t mask = (rb_om_bitmap_t)(OM_GETMASK_ & uom);
+
+    return LIKELY((GET_VM()->redefined_flag[offset] & mask) == 0);
+}
+
+static inline int
+rb_opt_method_is_mask(enum ruby_optimized_method om)
+{
+    return !!((int)om < 0);
+}
+
+/* compile.c */
+void rb_undo_opt_str_lit(rb_control_frame_t *cfp);
 
 #endif /* RUBY_INSNHELPER_H */

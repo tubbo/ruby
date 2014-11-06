@@ -1737,6 +1737,153 @@ get_prev_insn(INSN *iobj)
     return 0;
 }
 
+#define new_recvinfo_for_recv(iseq,str,mid,klass) \
+    new_recvinfo_for_recv_(iseq,str,OM_##mid##__##klass)
+static VALUE
+new_recvinfo_for_recv_(rb_iseq_t *iseq, VALUE str,
+			enum ruby_optimized_method om)
+{
+    VALUE ri = rb_ary_new_from_args(2, str, INT2FIX(om));
+
+    hide_obj(ri);
+    iseq_add_mark_object(iseq, ri);
+
+    return ri;
+}
+
+#define new_recvinfo_for_arg(iseq,str,mid,klass,off) \
+    new_recvinfo_for_arg_((iseq),(str),(OM_##mid##__##klass),\
+                          (OM_TMASK_##klass),(off))
+static VALUE
+new_recvinfo_for_arg_(rb_iseq_t *iseq, VALUE str,
+		enum ruby_optimized_method om,
+		VALUE tmask, int recv_off)
+{
+    VALUE ri = rb_ary_new_from_args(4, str, INT2FIX(om),
+				    tmask, INT2FIX(recv_off));
+
+    hide_obj(ri);
+    iseq_add_mark_object(iseq, ri);
+
+    return ri;
+}
+
+/* optimize allocation for: obj.method("literal string") */
+static void
+opt_str_lit_1(rb_iseq_t *iseq, VALUE str, rb_call_info_t *ci, INSN *list)
+{
+    enum ruby_optimized_method om;
+    VALUE tmask;
+    VALUE ri;
+    int data_p = 0;
+
+    switch (ci->mid) {
+#define C(mid,klass) \
+  case mid: \
+    om = OM_##mid##__##klass; \
+    tmask = OM_TMASK_##klass; \
+    break
+      C(idAREF, Hash);
+      C(idEq, String);
+      C(idNeq, String);
+      C(idLTLT, String);
+      C(idPLUS, String);
+      C(idEqq, String);
+      C(idDelete, Array_Hash_String);
+      C(idIncludeP, Array_Hash_String);
+      C(idMemberP, Hash);
+      C(idHas_keyP, Hash);
+      C(idKeyP, Hash);
+      C(idFetch, Hash); /* TODO: hash.fetch("lit") { ... } block */
+      C(idPack, Array);
+      C(idUnpack, String);
+      C(idSplit, String); /* TODO: str.split("lit", num) */
+      C(idJoin, Array);
+      C(idCount, String);
+      C(idChomp, String);
+      C(idChomp_bang, String);
+      C(idSqueeze, String);
+      C(idSqueeze_bang, String);
+      C(idDelete_bang, String);
+      C(idEncode, String);
+      C(idEncode_bang, String);
+      C(idForce_encoding, String);
+      C(idIndex, String); /* TODO: str.index("lit", num) */
+      C(idRindex, String);
+      C(idMatch, String);
+      C(idCasecmp, String);
+      C(idStart_withP, String);
+      C(idEnd_withP, String);
+      C(idPartition, String);
+      C(idRpartition, String);
+#undef C
+#define C(mid,klass) \
+  case mid: \
+    om = OM_##mid##__##klass; \
+    tmask = OM_TMASK_##klass; \
+    data_p = 1; \
+    break
+      /* opt_str_lit_data oddities, maybe this is not worth supporting */
+      C(idStrftime, Time);
+#undef C
+      default: return;
+    }
+
+    list->insn_id = data_p ? BIN(opt_str_lit_data) : BIN(opt_str_lit_tmask);
+    ri = new_recvinfo_for_arg_(iseq, str, om, tmask, 0);
+    list->operands[0] = ri;
+}
+
+/*
+ * optimize common string calls which take one or two string literals:
+ *   obj.method("lit 1", "lit 2")
+ *   obj.method(any, "lit 2") # any may be regexp
+ */
+static void
+opt_str_lit_2(rb_iseq_t *iseq, VALUE str, rb_call_info_t *ci, INSN *list)
+{
+    INSN *piobj;
+    enum ruby_optimized_method om;
+    VALUE ri;
+
+    switch (ci->mid) {
+#define C(mid) case mid: om = OM_##mid##__String; break
+      C(idSub);
+      C(idSub_bang);
+      C(idGsub);
+      C(idGsub_bang);
+      C(idTr);
+      C(idTr_bang);
+      C(idTr_s);
+      C(idTr_s_bang);
+      C(idInsert); /* String#insert(num, "lit") */
+
+      /* String#encode("dst", "src") */
+      C(idEncode);
+      C(idEncode_bang);
+#undef C
+      default: return;
+    }
+
+    /*
+     * previous arg may be a string literal, too:
+     *   foo.gsub!("from", "to")
+     *   foo.tr!("from", "to")
+     *   ..
+     */
+    piobj = (INSN *)get_prev_insn(list);
+    if (piobj && piobj->insn_id == BIN(putstring)) {
+	VALUE pstr = piobj->operands[0];
+	VALUE pri = new_recvinfo_for_arg_(iseq, pstr, om, OM_TMASK_String, 0);
+	piobj->operands[0] = pri;
+	piobj->insn_id = BIN(opt_str_lit_tmask);
+    }
+
+    list->insn_id = BIN(opt_str_lit_tmask);
+    ri = new_recvinfo_for_arg_(iseq, str, om, OM_TMASK_String, 1);
+    list->operands[0] = ri;
+}
+
 static int
 iseq_peephole_optimize(rb_iseq_t *iseq, LINK_ELEMENT *list, const int do_tailcallopt)
 {
@@ -1853,6 +2000,53 @@ iseq_peephole_optimize(rb_iseq_t *iseq, LINK_ELEMENT *list, const int do_tailcal
 	    }
 	}
     }
+
+    /* string literal optimizations */
+    if (iobj->insn_id == BIN(putstring)) {
+	INSN *niobj = (INSN *)get_next_insn((INSN *)list);
+
+	if (niobj && niobj->insn_id == BIN(send)) {
+	    rb_call_info_t *ci = (rb_call_info_t *)niobj->operands[0];
+
+	    if (!ci->blockiseq && !(ci->flag & ~VM_CALL_ARGS_SIMPLE)) {
+		VALUE ri = Qfalse;
+		VALUE str = iobj->operands[0];
+
+		switch (ci->orig_argc) {
+		  case 0:
+		    /*
+		     * optimize:
+		     * "literal".freeze
+		     * "literal".size
+		     * "literal".length
+		     */
+		    switch (ci->mid) {
+		      case idFreeze:
+			ri = new_recvinfo_for_recv(iseq, str, idFreeze, String);
+			break;
+		      case idSize:
+			ri = new_recvinfo_for_recv(iseq, str, idSize, String);
+			break;
+		      case idLength:
+			ri = new_recvinfo_for_recv(iseq, str, idLength, String);
+			break;
+		    }
+		    if (ri != Qfalse) {
+			iobj->insn_id = BIN(opt_str_lit_recv);
+			iobj->operands[0] = ri;
+		    }
+		    break;
+		  case 1:
+		    opt_str_lit_1(iseq, str, ci, (INSN *)list);
+		    break;
+		  case 2:
+		    opt_str_lit_2(iseq, str, ci, (INSN *)list);
+		    break;
+		}
+	    }
+	}
+    }
+
     return COMPILE_OK;
 }
 
@@ -3179,6 +3373,20 @@ build_postexe_iseq(rb_iseq_t *iseq, LINK_ANCHOR *ret, NODE *body)
     return Qnil;
 }
 
+static enum ruby_optimized_method
+opt_str_lit_recv_om(ID mid)
+{
+    switch (mid) {
+      case idEq: return OM_idEq__String;
+      case idNeq: return OM_idNeq__String;
+      case idPLUS: return OM_idPLUS__String;
+      case idMULT: return OM_idMULT__String;
+      case idMOD: return OM_idMOD__String;
+      case idEqq: return OM_idEqq__String;
+    }
+    return OM_LAST_;
+}
+
 /**
   compile each node
 
@@ -4313,37 +4521,6 @@ iseq_compile_each(rb_iseq_t *iseq, LINK_ANCHOR *ret, NODE * node, int poped)
 	break;
       }
       case NODE_CALL:
-	/* optimization shortcut
-	 *   "literal".freeze -> opt_str_freeze("literal")
-	 */
-	if (node->nd_recv && nd_type(node->nd_recv) == NODE_STR &&
-	    node->nd_mid == idFreeze && node->nd_args == NULL)
-	{
-	    VALUE str = rb_fstring(node->nd_recv->nd_lit);
-	    iseq_add_mark_object(iseq, str);
-	    ADD_INSN1(ret, line, opt_str_freeze, str);
-	    if (poped) {
-		ADD_INSN(ret, line, pop);
-	    }
-	    break;
-	}
-	/* optimization shortcut
-	 *   obj["literal"] -> opt_aref_with(obj, "literal")
-	 */
-	if (node->nd_mid == idAREF && !private_recv_p(node) && node->nd_args &&
-	    nd_type(node->nd_args) == NODE_ARRAY && node->nd_args->nd_alen == 1 &&
-	    nd_type(node->nd_args->nd_head) == NODE_STR)
-	{
-	    VALUE str = rb_fstring(node->nd_args->nd_head->nd_lit);
-	    node->nd_args->nd_head->nd_lit = str;
-	    COMPILE(ret, "recv", node->nd_recv);
-	    ADD_INSN2(ret, line, opt_aref_with,
-		      new_callinfo(iseq, idAREF, 1, 0, 0, NULL), str);
-	    if (poped) {
-		ADD_INSN(ret, line, pop);
-	    }
-	    break;
-	}
       case NODE_FCALL:
       case NODE_VCALL:{		/* VCALL: variable or call */
 	/*
@@ -4428,7 +4605,32 @@ iseq_compile_each(rb_iseq_t *iseq, LINK_ANCHOR *ret, NODE * node, int poped)
 #endif
 	/* receiver */
 	if (type == NODE_CALL) {
-	    COMPILE(recv, "recv", node->nd_recv);
+	    enum ruby_optimized_method om;
+	    /*
+	     * optimize:
+	     *   "string literal".method(...)
+	     *   "yoda" == other -> opt_str_lit("yoda").send(:==, other)
+	     *   "yoda" != other -> opt_str_lit("yoda").send(:!=, other)
+	     *   "str" + other -> opt_str_lit("str").send(:+, other)
+	     *   "str" * other -> opt_str_lit("str").send(:*, other)
+	     *   "fmt" % args -> opt_str_lit("str").send(:%, other)
+	     *   ...
+	     */
+	    if (iseq->compile_data->option->peephole_optimization &&
+		((om = opt_str_lit_recv_om(mid)) != OM_LAST_) &&
+		!private_recv_p(node) &&
+		node->nd_recv && nd_type(node->nd_recv) == NODE_STR &&
+		node->nd_args && nd_type(node->nd_args) == NODE_ARRAY &&
+		node->nd_args->nd_alen == 1)
+	    {
+		VALUE yoda = rb_fstring(node->nd_recv->nd_lit);
+		VALUE recv_info = new_recvinfo_for_recv_(iseq, yoda, om);
+
+		node->nd_recv->nd_lit = yoda;
+		ADD_INSN1(recv, line, opt_str_lit_recv, recv_info);
+	    } else {
+		COMPILE(recv, "recv", node->nd_recv);
+	    }
 	}
 	else if (type == NODE_FCALL || type == NODE_VCALL) {
 	    ADD_CALL_RECEIVER(recv, line);
@@ -5321,23 +5523,32 @@ iseq_compile_each(rb_iseq_t *iseq, LINK_ANCHOR *ret, NODE * node, int poped)
 	int asgnflag;
 
 	/* optimization shortcut
-	 *   obj["literal"] = value -> opt_aset_with(obj, "literal", value)
+	 *   obj["literal"] = val -> send(obj, :[]=, opt_str_lit("lit"), val)
+	 * TODO: ideally this should be done inside iseq_peephole_optimize,
+	 * but that would require a lot of scanning as the `val' (2nd arg)
+	 * is of variable distance between the :putstring and :send insns
 	 */
-	if (node->nd_mid == idASET && !private_recv_p(node) && node->nd_args &&
+	if (iseq->compile_data->option->peephole_optimization &&
+	    node->nd_mid == idASET && !private_recv_p(node) && node->nd_args &&
 	    nd_type(node->nd_args) == NODE_ARRAY && node->nd_args->nd_alen == 2 &&
 	    nd_type(node->nd_args->nd_head) == NODE_STR)
 	{
 	    VALUE str = rb_fstring(node->nd_args->nd_head->nd_lit);
+	    VALUE recv_info = new_recvinfo_for_arg(iseq, str, idASET, Hash, 0);
+
 	    node->nd_args->nd_head->nd_lit = str;
-	    iseq_add_mark_object(iseq, str);
+	    if (!poped) {
+		ADD_INSN(ret, line, putnil);
+	    }
 	    COMPILE(ret, "recv", node->nd_recv);
+	    ADD_INSN1(ret, line, opt_str_lit_tmask, recv_info);
 	    COMPILE(ret, "value", node->nd_args->nd_next->nd_head);
 	    if (!poped) {
-		ADD_INSN(ret, line, swap);
-		ADD_INSN1(ret, line, topn, INT2FIX(1));
+		ADD_INSN1(ret, line, setn, INT2FIX(3));
 	    }
-	    ADD_INSN2(ret, line, opt_aset_with,
-		      new_callinfo(iseq, idASET, 2, 0, 0, NULL), str);
+	    flag = VM_CALL_ARGS_SIMPLE;
+	    ADD_SEND_WITH_FLAG(ret, line, node->nd_mid, INT2FIX(2),
+				INT2FIX(flag));
 	    ADD_INSN(ret, line, pop);
 	    break;
 	}
@@ -5980,4 +6191,46 @@ int
 rb_parse_in_main(void)
 {
     return GET_THREAD()->parse_in_eval < 0;
+}
+
+/*
+ * Live bytecode patch:
+ *   - opt_str_lit(recv_info)
+ *   + putstring(str) # str is recv_info[0]
+ *
+ * If allocation optimization fails at this call site once, assume it
+ * will fail in the future.  This prevents performance regressions for
+ * things like #include? calls which may be used with unoptimized
+ * classes (Set,*DBM and many others) as well as optimized core classes
+ * (Array/Hash/String).  Call sites which only use optimized core
+ * classes will never get here.
+ */
+void
+rb_undo_opt_str_lit(rb_control_frame_t *cfp)
+{
+    VALUE *insn = cfp->pc - insn_len(BIN(opt_str_lit_tmask));
+
+#if OPT_DIRECT_THREADED_CODE || OPT_CALL_THREADED_CODE
+    const void * const *table = rb_vm_get_insns_address_table();
+
+    assert(((VALUE)table[BIN(opt_str_lit_tmask)] == insn[0] ||
+            (VALUE)table[BIN(opt_str_lit_data)] == insn[0] ||
+            (VALUE)table[BIN(opt_str_lit_recv)] == insn[0]) &&
+	    "mismatch");
+    insn[0] = (VALUE)table[BIN(putstring)];
+#else
+    assert(((VALUE)BIN(opt_str_lit_tmask) == insn[0] ||
+            (VALUE)BIN(opt_str_lit_data) == insn[0] ||
+            (VALUE)BIN(opt_str_lit_recv) == insn[0]) &&
+	    "mismatch");
+    insn[0] = (VALUE)BIN(putstring);
+#endif
+    assert(insn_len(BIN(putstring)) == insn_len(BIN(opt_str_lit_tmask)));
+    assert(insn_len(BIN(putstring)) == insn_len(BIN(opt_str_lit_data)));
+    assert(insn_len(BIN(putstring)) == insn_len(BIN(opt_str_lit_recv)));
+
+    assert(T_ARRAY == BUILTIN_TYPE(insn[1]));
+
+    /* n.b.: recv_info remains marked */
+    insn[1] = RARRAY_AREF(insn[1], 0); /* recv_info[0] == str */
 }

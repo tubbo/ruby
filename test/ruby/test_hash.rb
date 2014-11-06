@@ -216,6 +216,7 @@ class TestHash < Test::Unit::TestCase
   end
 
   def test_AREF_fstring_key
+    require_compile_option(:peephole_optimization)
     h = {"abc" => 1}
     before = GC.stat(:total_allocated_objects)
     5.times{ h["abc"] }
@@ -230,6 +231,7 @@ class TestHash < Test::Unit::TestCase
   end
 
   def test_NEWHASH_fstring_key
+    require_compile_option(:peephole_optimization)
     a = {"ABC" => :t}
     b = {"ABC" => :t}
     assert_same a.keys[0], b.keys[0]

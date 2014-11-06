@@ -20,6 +20,7 @@
 #include "eval_intern.h"
 #include "probes.h"
 #include "probes_helper.h"
+#include "opt_method.inc"
 
 static inline VALUE *
 VM_EP_LEP(VALUE *ep)
@@ -1169,30 +1170,16 @@ rb_iter_break_value(VALUE val)
 
 static st_table *vm_opt_method_table = 0;
 
-static int
-vm_redefinition_check_flag(VALUE klass)
-{
-    if (klass == rb_cFixnum) return FIXNUM_REDEFINED_OP_FLAG;
-    if (klass == rb_cFloat)  return FLOAT_REDEFINED_OP_FLAG;
-    if (klass == rb_cString) return STRING_REDEFINED_OP_FLAG;
-    if (klass == rb_cArray)  return ARRAY_REDEFINED_OP_FLAG;
-    if (klass == rb_cHash)   return HASH_REDEFINED_OP_FLAG;
-    if (klass == rb_cBignum) return BIGNUM_REDEFINED_OP_FLAG;
-    if (klass == rb_cSymbol) return SYMBOL_REDEFINED_OP_FLAG;
-    if (klass == rb_cTime)   return TIME_REDEFINED_OP_FLAG;
-    if (klass == rb_cRegexp) return REGEXP_REDEFINED_OP_FLAG;
-    return 0;
-}
-
 static void
 rb_vm_check_redefinition_opt_method(const rb_method_entry_t *me, VALUE klass)
 {
-    st_data_t bop;
+    st_data_t om;
     if (!me->def || me->def->type == VM_METHOD_TYPE_CFUNC) {
-	if (st_lookup(vm_opt_method_table, (st_data_t)me, &bop)) {
-	    int flag = vm_redefinition_check_flag(klass);
+	if (st_lookup(vm_opt_method_table, (st_data_t)me, &om)) {
+	    unsigned int i = om / OM_ALIGN_;
+	    rb_om_bitmap_t mask = (rb_om_bitmap_t)(1U << (om % OM_ALIGN_));
 
-	    ruby_vm_redefined_flag[bop] |= flag;
+	    ruby_vm_redefined_flag[i] |= mask;
 	}
     }
 }
@@ -1219,51 +1206,11 @@ rb_vm_check_redefinition_by_prepend(VALUE klass)
 }
 
 static void
-add_opt_method(VALUE klass, ID mid, VALUE bop)
-{
-    rb_method_entry_t *me = rb_method_entry_at(klass, mid);
-
-    if (me && me->def &&
-	me->def->type == VM_METHOD_TYPE_CFUNC) {
-	st_insert(vm_opt_method_table, (st_data_t)me, (st_data_t)bop);
-    }
-    else {
-	rb_bug("undefined optimized method: %s", rb_id2name(mid));
-    }
-}
-
-static void
 vm_init_redefined_flag(void)
 {
-    ID mid;
-    VALUE bop;
-
     vm_opt_method_table = st_init_numtable();
 
-#define OP(mid_, bop_) (mid = id##mid_, bop = BOP_##bop_, ruby_vm_redefined_flag[bop] = 0)
-#define C(k) add_opt_method(rb_c##k, mid, bop)
-    OP(PLUS, PLUS), (C(Fixnum), C(Float), C(String), C(Array));
-    OP(MINUS, MINUS), (C(Fixnum), C(Float));
-    OP(MULT, MULT), (C(Fixnum), C(Float));
-    OP(DIV, DIV), (C(Fixnum), C(Float));
-    OP(MOD, MOD), (C(Fixnum), C(Float));
-    OP(Eq, EQ), (C(Fixnum), C(Float), C(String));
-    OP(Eqq, EQQ), (C(Fixnum), C(Bignum), C(Float), C(Symbol), C(String));
-    OP(LT, LT), (C(Fixnum), C(Float));
-    OP(LE, LE), (C(Fixnum), C(Float));
-    OP(GT, GT), (C(Fixnum), C(Float));
-    OP(GE, GE), (C(Fixnum), C(Float));
-    OP(LTLT, LTLT), (C(String), C(Array));
-    OP(AREF, AREF), (C(Array), C(Hash));
-    OP(ASET, ASET), (C(Array), C(Hash));
-    OP(Length, LENGTH), (C(Array), C(String), C(Hash));
-    OP(Size, SIZE), (C(Array), C(String), C(Hash));
-    OP(EmptyP, EMPTY_P), (C(Array), C(String), C(Hash));
-    OP(Succ, SUCC), (C(Fixnum), C(String), C(Time));
-    OP(EqTilde, MATCH), (C(Regexp), C(String));
-    OP(Freeze, FREEZE), (C(String));
-#undef C
-#undef OP
+    vm_init_redefined_flags(vm_opt_method_table); /* opt_method.h.tmpl */
 }
 
 /* for vm development */

@@ -847,17 +847,17 @@ VALUE
 opt_eq_func(VALUE recv, VALUE obj, CALL_INFO ci)
 {
     if (FIXNUM_2_P(recv, obj) &&
-	BASIC_OP_UNREDEFINED_P(BOP_EQ, FIXNUM_REDEFINED_OP_FLAG)) {
+	BASIC_OP_UNREDEFINED_P(idEq, Fixnum)) {
 	return (recv == obj) ? Qtrue : Qfalse;
     }
     else if (FLONUM_2_P(recv, obj) &&
-	     BASIC_OP_UNREDEFINED_P(BOP_EQ, FLOAT_REDEFINED_OP_FLAG)) {
+	     BASIC_OP_UNREDEFINED_P(idEq, Float)) {
 	return (recv == obj) ? Qtrue : Qfalse;
     }
     else if (!SPECIAL_CONST_P(recv) && !SPECIAL_CONST_P(obj)) {
 	if (RBASIC_CLASS(recv) == rb_cFloat &&
 	    RBASIC_CLASS(obj) == rb_cFloat &&
-	    BASIC_OP_UNREDEFINED_P(BOP_EQ, FLOAT_REDEFINED_OP_FLAG)) {
+	    BASIC_OP_UNREDEFINED_P(idEq, Float)) {
 	    double a = RFLOAT_VALUE(recv);
 	    double b = RFLOAT_VALUE(obj);
 
@@ -868,7 +868,7 @@ opt_eq_func(VALUE recv, VALUE obj, CALL_INFO ci)
 	}
 	else if (RBASIC_CLASS(recv) == rb_cString &&
 		 RBASIC_CLASS(obj) == rb_cString &&
-		 BASIC_OP_UNREDEFINED_P(BOP_EQ, STRING_REDEFINED_OP_FLAG)) {
+		 BASIC_OP_UNREDEFINED_P(idEq, String)) {
 	    return rb_str_equal(recv, obj);
 	}
     }

@@ -118,6 +118,7 @@ class TestISeq < Test::Unit::TestCase
   end
 
   def test_label_fstring
+    require_compile_option(:peephole_optimization)
     c = Class.new{ def foobar() end }
 
     a, b = eval("# encoding: us-ascii\n'foobar'.freeze"),

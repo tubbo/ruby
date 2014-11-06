@@ -28,6 +28,13 @@ class TestRubyOptimization < Test::Unit::TestCase
     end;
   end
 
+  def assert_no_allocation(mesg = "", adjust = 0)
+    before = GC.stat(:total_allocated_objects)
+    yield
+    after = GC.stat(:total_allocated_objects)
+    assert_equal before, after - adjust, mesg
+  end
+
   def test_fixnum_plus
     a, b = 1, 2
     assert_equal 3, a + b
@@ -104,6 +111,11 @@ class TestRubyOptimization < Test::Unit::TestCase
     assert_equal "x", "" + "x"
     assert_equal "ab", "a" + "b"
     assert_redefine_method('String', '+', 'assert_equal "b", "a" + "b"')
+    require_compile_option(:peephole_optimization)
+    assert_no_allocation("String#+", 1) { "a" + "b" }
+    s = ""
+    assert_no_allocation("String#+", 1) { "b" + s }
+    assert_no_allocation("String#+", 1) { s + "b" }
   end
 
   def test_string_succ
@@ -114,15 +126,19 @@ class TestRubyOptimization < Test::Unit::TestCase
   def test_string_format
     assert_equal '2', '%d' % 2
     assert_redefine_method('String', '%', 'assert_equal 2, "%d" % 2')
+    require_compile_option(:peephole_optimization)
+    assert_no_allocation("String#%", 1) { '%d' % 2 }
   end
 
   def test_string_freeze
-    assert_equal "foo", "foo".freeze
     assert_redefine_method('String', 'freeze', 'assert_nil "foo".freeze')
+    require_compile_option(:peephole_optimization)
+    assert_no_allocation { 5.times { "".freeze } }
+    assert_equal "foo", "foo".freeze
   end
 
-  def test_string_eq_neq
-    %w(== !=).each do |m|
+  def test_string_eq_neq_eqq
+    %w(== != ==).each do |m|
       assert_redefine_method('String', m, <<-end)
         assert_equal :b, ("a" #{m} "b").to_sym
         b = 'b'
@@ -138,6 +154,11 @@ class TestRubyOptimization < Test::Unit::TestCase
     assert_equal "x", "" << "x"
     assert_equal "ab", "a" << "b"
     assert_redefine_method('String', '<<', 'assert_equal "b", "a" << "b"')
+    require_compile_option(:peephole_optimization)
+    assert_no_allocation("String#<<", 1) { "a" << "b" }
+    s = ""
+    assert_no_allocation("String#<<", 1) { "a" << s }
+    assert_no_allocation("String#<<") { s << "b" }
   end
 
   def test_array_plus
@@ -252,5 +273,149 @@ class TestRubyOptimization < Test::Unit::TestCase
   end
     EOF
     assert_equal(123, delay { 123 }.call, bug6901)
+  end
+
+  def test_string_opt_str_lit_1_syntax
+    require_compile_option(:peephole_optimization)
+    s = "a"
+    res = true
+    assert_no_allocation do
+      res &&= s == "a"
+      res &&= "a" == s
+      res &&= !(s == "b")
+      res &&= !("b" == s)
+      res &&= s != "b"
+      res &&= "b" != s
+      res &&= "a" === s
+      res &&= s === "a"
+      res &&= !("b" === s)
+      res &&= !(s === "b")
+    end
+    assert_equal true, res, res.inspect
+  end
+
+  def test_string_opt_str_lit_methods
+    require_compile_option(:peephole_optimization)
+    {
+      split: 3,
+      count: 0,
+      include?: 0,
+      chomp: 1,
+      chomp!: 0,
+      delete!: 0,
+      squeeze: 1,
+      squeeze!: 0,
+      index: 0,
+      rindex: 0,
+      start_with?: 0,
+      end_with?: 0,
+      partition: 3,
+      rpartition: 3,
+      casecmp: 0,
+      match: 7, # opt_str_lit only saved one allocation here...
+    }.each do |k,v|
+      eval <<-EOF
+      s = 'a=b'
+      assert_no_allocation('String##{k}', #{v}) { s.#{k}("=") }
+      assert_redefine_method('String', '#{k}', 'assert_nil "".#{k}(nil)')
+      EOF
+    end
+
+    {
+      tr!: 0,
+      tr_s!: 0,
+      tr: 1,
+      tr_s: 1,
+    }.each do |k,v|
+      eval <<-EOF
+      s = 'a=b'
+      assert_no_allocation('String##{k}', #{v}) { s.#{k}("=", "!") }
+      assert_redefine_method('String', '#{k}', 'assert_nil "".#{k}(nil)')
+      EOF
+    end
+
+    # String#encode(dst)
+    s = ''
+    assert_no_allocation('String#encode', 1) { s.encode("utf-8") }
+    assert_no_allocation('String#encode!') { s.encode!("utf-8") }
+    assert_no_allocation('String#force_encoding') { s.force_encoding("utf-8") }
+
+    # String#encode{,!}(dst, src)
+    s = ''.b
+    assert_no_allocation('String#encode', 1) { s.encode("utf-8", "binary") }
+    assert_no_allocation('String#encode!') { s.encode!("utf-8", "binary") }
+
+    assert_no_allocation('String#insert') { s.insert(0, "a") }
+    %w(encode encode! force_encoding insert).each do |m|
+      assert_redefine_method('String', m, "assert_nil ''.#{m}")
+    end
+
+
+  end
+
+  def test_array_opt_str_lit_methods
+    require_compile_option(:peephole_optimization)
+    {
+      join: 1,
+      delete: 0,
+      include?: 0,
+    }.each do |k,v|
+      eval <<-EOF
+      x = %w(a b)
+      assert_no_allocation('Array##{k}', #{v}) { x.#{k}("m") }
+      assert_redefine_method('Array', '#{k}', 'assert_nil [].#{k}(nil)')
+      EOF
+    end
+
+    x = %w(a b)
+    assert_no_allocation('Array#pack', 1) { x.pack('m') }
+    # assert_separately uses Array#pack, so we must use assert_normal_exit:
+    assert_ruby_status(%w(--disable-gems), <<-EOF, "Array#pack redefine")
+      class Array
+        undef pack
+        def pack(*args); true; end
+      end
+      exit(%w(a b).pack(false))
+    EOF
+  end
+
+  def test_hash_opt_str_lit_methods
+    require_compile_option(:peephole_optimization)
+    {
+      delete: 0,
+      include?: 0,
+      member?: 0,
+      has_key?: 0,
+      key?: 0,
+      fetch: 0,
+      # TODO: more more methods, maybe assoc/rassoc
+    }.each do |k,v|
+      eval <<-EOF
+      x = {"x" => 1}
+      assert_no_allocation('Hash##{k}') { x.#{k}("x") }
+      assert_redefine_method('Hash', '#{k}', 'assert_nil({}.#{k}(nil))')
+      EOF
+    end
+  end
+
+  def test_time_opt_str_lit
+    require_compile_option(:peephole_optimization)
+    t = Time.now
+    t.strftime("%Y") # initialize
+    n = 5
+
+    case 1.size
+    when 4
+      adjust = 2
+    when 8
+      adjust = 3
+    else
+      skip "unsupported word size"
+    end
+    assert_no_allocation("Time#strftime", n * adjust) {
+      n.times { t.strftime("%Y") }
+    }
+    assert_redefine_method('Time', 'strftime',
+                           'assert_equal "%Y", Time.now.strftime("%Y")')
   end
 end

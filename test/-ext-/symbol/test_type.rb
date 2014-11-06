@@ -4,6 +4,7 @@ require "-test-/symbol"
 module Test_Symbol
   class TestType < Test::Unit::TestCase
     def test_id2str_fstring_bug9171
+      require_compile_option(:peephole_optimization)
       fstr = eval("# encoding: us-ascii
         'foobar'.freeze")
       assert_same fstr, Bug::Symbol.id2str(:foobar)

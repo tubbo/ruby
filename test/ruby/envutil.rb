@@ -552,6 +552,16 @@ eom
         values
       end
 
+      def require_compile_option(opt)
+        case RubyVM::InstructionSequence.compile_option[opt]
+        when true
+        when false
+          skip(":#{opt} disabled")
+        else
+          raise ArgumentError, "unrecognized compile option: #{opt.inspect}"
+        end
+      end
+
       class << (AssertFile = Struct.new(:failure_message).new)
         include Assertions
         def assert_file_predicate(predicate, *args)
