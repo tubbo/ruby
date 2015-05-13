@@ -44,6 +44,14 @@ typedef enum {
 
 /* method data type */
 
+typedef struct rb_method_entry_struct {
+    VALUE flags;
+    VALUE flag;
+    struct rb_method_definition_struct *def;
+    ID called_id;
+    const VALUE klass;    /* should be mark */
+} rb_method_entry_t;
+
 typedef enum {
     VM_METHOD_TYPE_ISEQ,
     VM_METHOD_TYPE_CFUNC,
