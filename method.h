@@ -49,7 +49,7 @@ typedef struct rb_method_entry_struct {
     VALUE flag;
     struct rb_method_definition_struct *def;
     ID called_id;
-    const VALUE klass;    /* should be mark */
+    const VALUE klass;    /* should be marked */
 } rb_method_entry_t;
 
 typedef enum {
@@ -71,8 +71,8 @@ typedef enum {
 
 
 typedef struct rb_method_iseq_struct {
-    struct rb_iseq_struct *const iseq;            /* should be mark */
-    rb_cref_t *cref;
+    struct rb_iseq_struct *const iseq;            /* should be marked */
+    rb_cref_t * const cref;                       /* shoudl be marked */
 } rb_method_iseq_t;
 
 typedef struct rb_method_cfunc_struct {
@@ -83,7 +83,7 @@ typedef struct rb_method_cfunc_struct {
 
 typedef struct rb_method_attr_struct {
     ID id;
-    const VALUE location;
+    const VALUE location; /* sould be marked */
 } rb_method_attr_t;
 
 typedef struct rb_method_alias_struct {
@@ -94,7 +94,7 @@ typedef struct rb_iseq_struct rb_iseq_t;
 
 typedef struct rb_method_definition_struct {
     rb_method_type_t type; /* method type */
-    int alias_count;
+    int *alias_count_ptr;
     ID original_id;
 
     union {
