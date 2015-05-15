@@ -69,6 +69,12 @@ typedef enum {
     END_OF_ENUMERATION(VM_METHOD_TYPE)
 } rb_method_type_t;
 
+
+typedef struct rb_method_iseq_struct {
+    struct rb_iseq_struct *const iseq;            /* should be mark */
+    rb_cref_t *cref;
+} rb_method_iseq_t;
+
 typedef struct rb_method_cfunc_struct {
     VALUE (*func)(ANYARGS);
     VALUE (*invoker)(VALUE (*func)(ANYARGS), VALUE recv, int argc, const VALUE *argv);
@@ -92,10 +98,7 @@ typedef struct rb_method_definition_struct {
     ID original_id;
 
     union {
-	struct {
-	    rb_iseq_t *const iseq;            /* should be marked */
-	    rb_cref_t *cref;
-	} iseq_body;
+	rb_method_iseq_t iseq;
 	rb_method_cfunc_t cfunc;
 	rb_method_attr_t attr;
 	rb_method_alias_t alias;

@@ -1158,7 +1158,7 @@ vm_callee_setup_arg(rb_thread_t *th, rb_call_info_t *ci, const rb_iseq_t *iseq, 
 static VALUE
 vm_call_iseq_setup(rb_thread_t *th, rb_control_frame_t *cfp, rb_call_info_t *ci)
 {
-    vm_callee_setup_arg(th, ci, ci->me->def->body.iseq_body.iseq, cfp->sp - ci->argc);
+    vm_callee_setup_arg(th, ci, ci->me->def->body.iseq.iseq, cfp->sp - ci->argc);
     return vm_call_iseq_setup_2(th, cfp, ci);
 }
 
@@ -1178,7 +1178,7 @@ vm_call_iseq_setup_normal(rb_thread_t *th, rb_control_frame_t *cfp, rb_call_info
 {
     int i, local_size;
     VALUE *argv = cfp->sp - ci->argc;
-    rb_iseq_t *iseq = ci->me->def->body.iseq_body.iseq;
+    rb_iseq_t *iseq = ci->me->def->body.iseq.iseq;
     VALUE *sp = argv + iseq->param.size;
 
     /* clear local variables (arg_size...local_size) */
@@ -1187,7 +1187,7 @@ vm_call_iseq_setup_normal(rb_thread_t *th, rb_control_frame_t *cfp, rb_call_info
     }
 
     vm_push_frame(th, iseq, VM_FRAME_MAGIC_METHOD, ci->recv, ci->defined_class,
-		  VM_ENVVAL_BLOCK_PTR(ci->blockptr), ci->me->def->body.iseq_body.cref,
+		  VM_ENVVAL_BLOCK_PTR(ci->blockptr), ci->me->def->body.iseq.cref,
 		  iseq->iseq_encoded + ci->aux.opt_pc, sp, 0, ci->me, iseq->stack_max);
 
     cfp->sp = argv - 1 /* recv */;
@@ -1199,7 +1199,7 @@ vm_call_iseq_setup_tailcall(rb_thread_t *th, rb_control_frame_t *cfp, rb_call_in
 {
     int i;
     VALUE *argv = cfp->sp - ci->argc;
-    rb_iseq_t *iseq = ci->me->def->body.iseq_body.iseq;
+    rb_iseq_t *iseq = ci->me->def->body.iseq.iseq;
     VALUE *src_argv = argv;
     VALUE *sp_orig, *sp;
     VALUE finish_flag = VM_FRAME_TYPE_FINISH_P(cfp) ? VM_FRAME_FLAG_FINISH : 0;
@@ -1226,7 +1226,7 @@ vm_call_iseq_setup_tailcall(rb_thread_t *th, rb_control_frame_t *cfp, rb_call_in
 
     vm_push_frame(th, iseq, VM_FRAME_MAGIC_METHOD | finish_flag,
 		  ci->recv, ci->defined_class,
-		  VM_ENVVAL_BLOCK_PTR(ci->blockptr), ci->me->def->body.iseq_body.cref,
+		  VM_ENVVAL_BLOCK_PTR(ci->blockptr), ci->me->def->body.iseq.cref,
 		  iseq->iseq_encoded + ci->aux.opt_pc, sp, 0, ci->me, iseq->stack_max);
 
     cfp->sp = sp_orig;
@@ -2042,7 +2042,7 @@ vm_search_super_method(rb_thread_t *th, rb_control_frame_t *reg_cfp, rb_call_inf
 	iseq = iseq->parent_iseq;
     }
 
-    if (ci->me && ci->me->def->type == VM_METHOD_TYPE_ISEQ && ci->me->def->body.iseq_body.iseq == iseq) {
+    if (ci->me && ci->me->def->type == VM_METHOD_TYPE_ISEQ && ci->me->def->body.iseq.iseq == iseq) {
 	ci->klass = RCLASS_SUPER(ci->defined_class);
 	ci->me = rb_method_entry(ci->klass, ci->mid, &ci->defined_class);
     }
