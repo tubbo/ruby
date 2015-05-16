@@ -464,7 +464,7 @@ rb_method_entry_make(VALUE klass, ID mid, rb_method_type_t type,
 
 	if (RTEST(ruby_verbose) &&
 	    type != VM_METHOD_TYPE_UNDEF &&
-	    old_def->alias_count_ptr == NULL &&
+	    (old_def->alias_count_ptr == NULL || *old_def->alias_count_ptr == 0) &&
 	    old_def->type != VM_METHOD_TYPE_UNDEF &&
 	    old_def->type != VM_METHOD_TYPE_ZSUPER &&
 	    old_def->type != VM_METHOD_TYPE_ALIAS) {
