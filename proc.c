@@ -1160,16 +1160,12 @@ mnew_missing(VALUE rclass, VALUE klass, VALUE obj, ID id, ID rid, VALUE mclass)
     data->defined_class = klass;
     data->id = rid;
 
-    me = rb_method_entry_create(0, id, klass, 0);
-    RB_OBJ_WRITE(method, &data->me, me);
-
-    def = ALLOC(rb_method_definition_t);
-    me->def = def;
+    def = ZALLOC(rb_method_definition_t);
     def->type = VM_METHOD_TYPE_MISSING;
     def->original_id = id;
-    def->alias_count = 0;
 
-    data->me->def->alias_count++;
+    me = rb_method_entry_create(0, id, klass, def);
+    RB_OBJ_WRITE(method, &data->me, me);
 
     OBJ_INFECT(method, klass);
 
@@ -1223,11 +1219,8 @@ mnew_internal(const rb_method_entry_t *me, VALUE defined_class, VALUE klass,
     data->rclass = rclass;
     data->defined_class = defined_class;
     data->id = rid;
-    RB_OBJ_WRITE(method, &data->me, (VALUE)rb_method_entry_clone(me));
-    data->me->def->alias_count++;
-
+    RB_OBJ_WRITE(method, &data->me, rb_method_entry_clone(me));
     OBJ_INFECT(method, klass);
-
     return method;
 }
 
@@ -1350,7 +1343,6 @@ method_unbind(VALUE obj)
     data->recv = Qundef;
     data->id = orig->id;
     RB_OBJ_WRITE(method, &data->me, rb_method_entry_clone(orig->me));
-    if (orig->me->def) orig->me->def->alias_count++;
     data->rclass = orig->rclass;
     data->defined_class = orig->defined_class;
     OBJ_INFECT(method, obj);
@@ -1820,8 +1812,6 @@ method_clone(VALUE self)
     data->defined_class = orig->defined_class;
     data->id = orig->id;
     RB_OBJ_WRITE(clone, &data->me, rb_method_entry_clone(orig->me));
-    if (data->me->def) data->me->def->alias_count++;
-
     return clone;
 }
 
@@ -2009,7 +1999,6 @@ umethod_bind(VALUE method, VALUE recv)
     bound->defined_class = data->defined_class;
     bound->id = data->id;
     RB_OBJ_WRITE(method, &bound->me, rb_method_entry_clone(data->me));
-    if (bound->me->def) bound->me->def->alias_count++;
     rclass = CLASS_OF(recv);
     if (BUILTIN_TYPE(bound->defined_class) == T_MODULE) {
 	VALUE ic = rb_class_search_ancestor(rclass, bound->defined_class);
@@ -2056,7 +2045,8 @@ rb_method_entry_min_max_arity(const rb_method_entry_t *me, int *max)
       case VM_METHOD_TYPE_BMETHOD:
 	return rb_proc_min_max_arity(def->body.proc, max);
       case VM_METHOD_TYPE_ISEQ: {
-	rb_iseq_t *iseq = def->body.iseq.iseq;
+	rb_iseq_t *iseq;
+	GetISeqPtr(def->body.iseq.iseqval, iseq);
 	return rb_iseq_min_max_arity(iseq, max);
       }
       case VM_METHOD_TYPE_UNDEF:
@@ -2192,7 +2182,11 @@ method_def_iseq(const rb_method_definition_t *def)
 {
     switch (def->type) {
       case VM_METHOD_TYPE_ISEQ:
-	return def->body.iseq.iseq;
+	{
+	    rb_iseq_t *iseq;
+	    GetISeqPtr(def->body.iseq.iseqval, iseq);
+	    return iseq;
+	}
       case VM_METHOD_TYPE_BMETHOD:
 	return get_proc_iseq(def->body.proc, 0);
       case VM_METHOD_TYPE_ALIAS:

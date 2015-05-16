@@ -2303,11 +2303,11 @@ vm_define_method(rb_thread_t *th, VALUE obj, ID id, VALUE iseqval,
     /* dup */
     RB_OBJ_WRITE(miseq->self, &miseq->klass, klass);
     miseq->defined_method_id = id;
-    rb_add_method_iseq(klass, id, miseq, cref, noex);
+    rb_add_method_iseq(klass, id, iseqval, cref, noex);
 
     if (!is_singleton && noex == NOEX_MODFUNC) {
 	klass = rb_singleton_class(klass);
-	rb_add_method_iseq(klass, id, miseq, cref, NOEX_PUBLIC);
+	rb_add_method_iseq(klass, id, iseqval, cref, NOEX_PUBLIC);
     }
 }
 

@@ -3934,7 +3934,7 @@ mark_method_entry(rb_objspace_t *objspace, const rb_method_entry_t *me)
 
     switch (def->type) {
       case VM_METHOD_TYPE_ISEQ:
-	gc_mark(objspace, def->body.iseq.iseq->self);
+	gc_mark(objspace, def->body.iseq.iseqval);
 	gc_mark(objspace, (VALUE)def->body.iseq.cref);
 	break;
       case VM_METHOD_TYPE_ATTRSET:

@@ -243,14 +243,12 @@ rb_class_new(VALUE super)
 static void
 clone_method(VALUE klass, ID mid, const rb_method_entry_t *me)
 {
-    VALUE newiseqval;
     if (me->def && me->def->type == VM_METHOD_TYPE_ISEQ) {
-	rb_iseq_t *iseq;
+	VALUE newiseqval;
 	rb_cref_t *new_cref;
-	newiseqval = rb_iseq_clone(me->def->body.iseq.iseq->self, klass);
-	GetISeqPtr(newiseqval, iseq);
+	newiseqval = rb_iseq_clone(me->def->body.iseq.iseqval, klass);
 	rb_vm_rewrite_cref_stack(me->def->body.iseq.cref, me->klass, klass, &new_cref);
-	rb_add_method_iseq(klass, mid, iseq, new_cref, me->flag);
+	rb_add_method_iseq(klass, mid, newiseqval, new_cref, me->flag);
 	RB_GC_GUARD(newiseqval);
     }
     else {

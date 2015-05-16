@@ -2,6 +2,8 @@
  * This file is included by vm.c
  */
 
+#define METHOD_DEBUG 0
+
 #if OPT_GLOBAL_METHOD_CACHE
 #ifndef GLOBAL_METHOD_CACHE_SIZE
 #define GLOBAL_METHOD_CACHE_SIZE 0x800
@@ -129,22 +131,33 @@ rb_add_method_cfunc(VALUE klass, ID mid, VALUE (*func)(ANYARGS), int argc, rb_me
 }
 
 static void
-release_method_definition(rb_method_definition_t *def)
+rb_method_definition_release(rb_method_definition_t *def)
 {
-    if (def == 0) return;
+    if (def != NULL) {
+	if (def->alias_count_ptr == NULL) {
+	    if (METHOD_DEBUG) fprintf(stderr, " %p-%s:NULL\n", def, rb_id2name(def->original_id));
+	}
+	else {
+	    int *iptr = def->alias_count_ptr;
 
-    if (def->alias_count == 0) {
+	    if (*iptr == 0) {
+		if (METHOD_DEBUG) fprintf(stderr, "-%p-%s:%d\n", def, rb_id2name(def->original_id), *iptr);
+		xfree(iptr);
+	    }
+	    else {
+		if (METHOD_DEBUG) fprintf(stderr, "-%p-%s:%d->%d\n", def, rb_id2name(def->original_id), *iptr, *iptr-1);
+		*iptr -= 1;
+	    }
+	}
+
 	xfree(def);
-    }
-    else if (def->alias_count > 0) {
-	def->alias_count--;
     }
 }
 
 void
 rb_free_method_entry(const rb_method_entry_t *me)
 {
-    release_method_definition(me->def);
+    rb_method_definition_release(me->def);
 }
 
 static inline rb_method_entry_t *search_method(VALUE klass, ID id, VALUE *defined_class_ptr);
@@ -163,17 +176,188 @@ lookup_method_table(VALUE klass, ID id)
     }
 }
 
+static VALUE
+(*call_cfunc_invoker_func(int argc))(VALUE (*func)(ANYARGS), VALUE recv, int argc, const VALUE *)
+{
+    switch (argc) {
+      case -2: return &call_cfunc_m2;
+      case -1: return &call_cfunc_m1;
+      case 0: return &call_cfunc_0;
+      case 1: return &call_cfunc_1;
+      case 2: return &call_cfunc_2;
+      case 3: return &call_cfunc_3;
+      case 4: return &call_cfunc_4;
+      case 5: return &call_cfunc_5;
+      case 6: return &call_cfunc_6;
+      case 7: return &call_cfunc_7;
+      case 8: return &call_cfunc_8;
+      case 9: return &call_cfunc_9;
+      case 10: return &call_cfunc_10;
+      case 11: return &call_cfunc_11;
+      case 12: return &call_cfunc_12;
+      case 13: return &call_cfunc_13;
+      case 14: return &call_cfunc_14;
+      case 15: return &call_cfunc_15;
+      default:
+	rb_bug("call_cfunc_func: unsupported length: %d", argc);
+    }
+}
+
+static void
+setup_method_cfunc_struct(rb_method_cfunc_t *cfunc, VALUE (*func)(), int argc)
+{
+    cfunc->func = func;
+    cfunc->argc = argc;
+    cfunc->invoker = call_cfunc_invoker_func(argc);
+}
+
+static rb_method_definition_t *
+rb_method_definition_create(rb_method_type_t type, ID mid)
+{
+    rb_method_definition_t *def = ZALLOC(rb_method_definition_t);
+    /* def->alias_count_ptr = NULL; already cleared */
+    def->type = type;
+    def->original_id = mid;
+
+    return def;
+}
+
+static void
+rb_method_definition_set(rb_method_entry_t *me, rb_method_definition_t *def, rb_method_type_t type, void *opts)
+{
+    me->def = def;
+
+    switch (type) {
+      case VM_METHOD_TYPE_ISEQ:
+	{
+	    rb_method_iseq_t *iseq_body = (rb_method_iseq_t *)opts;
+	    rb_cref_t *private_cref, *cref = iseq_body->cref;
+
+	    /* setup iseq first (before invoking GC) */
+	    RB_OBJ_WRITE(me, &def->body.iseq.iseqval, iseq_body->iseqval);
+
+	    if (0) vm_cref_dump("rb_method_definition_create", cref);
+
+	    private_cref = vm_cref_new_toplevel(GET_THREAD()); /* TODO: CREF should be shared with other methods */
+	    if (cref) COPY_CREF(private_cref, cref);
+	    CREF_VISI_SET(private_cref, NOEX_PUBLIC);
+
+	    RB_OBJ_WRITE(me, &def->body.iseq.cref, private_cref);
+	    return;
+	}
+      case VM_METHOD_TYPE_CFUNC:
+	{
+	    rb_method_cfunc_t *cfunc = (rb_method_cfunc_t *)opts;
+	    setup_method_cfunc_struct(&def->body.cfunc, cfunc->func, cfunc->argc);
+	    return;
+	}
+      case VM_METHOD_TYPE_ATTRSET:
+      case VM_METHOD_TYPE_IVAR:
+	{
+	    rb_thread_t *th = th = GET_THREAD();
+	    rb_control_frame_t *cfp;
+	    int line;
+
+	    def->body.attr.id = (ID)(VALUE)opts;
+
+	    cfp = rb_vm_get_ruby_level_next_cfp(th, th->cfp);
+
+	    if (cfp && (line = rb_vm_get_sourceline(cfp))) {
+		VALUE location = rb_ary_new3(2, cfp->iseq->location.path, INT2FIX(line));
+		RB_OBJ_WRITE(me, &def->body.attr.location, rb_ary_freeze(location));
+	    }
+	    else {
+		assert(def->body.attr.location == 0);
+	    }
+	    return;
+	}
+      case VM_METHOD_TYPE_BMETHOD:
+	RB_OBJ_WRITE(me, &def->body.proc, (VALUE)opts);
+	return;
+      case VM_METHOD_TYPE_NOTIMPLEMENTED:
+	setup_method_cfunc_struct(&def->body.cfunc, rb_f_notimplement, -1);
+	return;
+      case VM_METHOD_TYPE_OPTIMIZED:
+	def->body.optimize_type = (enum method_optimized_type)opts;
+	return;
+      case VM_METHOD_TYPE_REFINED:
+	RB_OBJ_WRITE(me, &def->body.orig_me, (rb_method_entry_t *)opts);
+	return;
+      case VM_METHOD_TYPE_ALIAS:
+	RB_OBJ_WRITE(me, &def->body.alias.original_me, (rb_method_entry_t *)opts);
+	return;
+      case VM_METHOD_TYPE_ZSUPER:
+      case VM_METHOD_TYPE_UNDEF:
+      case VM_METHOD_TYPE_MISSING:
+	return;
+    }
+    rb_bug("rb_add_method: unsupported method type (%d)\n", type);
+}
+
+static void
+rb_method_definition_reset(rb_method_entry_t *me, rb_method_definition_t *def)
+{
+    if (def) {
+	switch(def->type) {
+	  case VM_METHOD_TYPE_ISEQ:
+	    RB_OBJ_WRITTEN(me, Qundef, def->body.iseq.iseqval);
+	    RB_OBJ_WRITTEN(me, Qundef, def->body.iseq.cref);
+	    break;
+	  case VM_METHOD_TYPE_IVAR:
+	    RB_OBJ_WRITTEN(me, Qundef, def->body.attr.location);
+	    break;
+	  case VM_METHOD_TYPE_BMETHOD:
+	    RB_OBJ_WRITTEN(me, Qundef, def->body.proc);
+	    break;
+	  case VM_METHOD_TYPE_REFINED:
+	    RB_OBJ_WRITTEN(me, Qundef, def->body.orig_me);
+	    break;
+	  default:;
+	    /* ignore */
+	}
+    }
+    me->def = def;
+}
+
+static rb_method_definition_t *
+rb_method_definition_clone(rb_method_definition_t *src_def)
+{
+    if (src_def) {
+	int *iptr = src_def->alias_count_ptr;
+	rb_method_definition_t *def = rb_method_definition_create(src_def->type, src_def->original_id);
+	def->alias_count_ptr = src_def->alias_count_ptr;
+
+	memcpy(&def->body, &src_def->body, sizeof(def->body));
+
+	if (!src_def->alias_count_ptr) {
+	    iptr = def->alias_count_ptr = src_def->alias_count_ptr = ALLOC(int);
+	    *iptr = 0;
+	}
+	*iptr += 1;
+
+	if (METHOD_DEBUG) fprintf(stderr, "+%p-%s:%d\n", src_def, rb_id2name(src_def->original_id), *iptr);
+
+	return def;
+    }
+    else {
+	return NULL;
+    }
+}
+
 rb_method_entry_t *
 rb_method_entry_create(rb_method_flag_t noex, ID called_id, VALUE klass, rb_method_definition_t *def)
 {
-    rb_method_entry_t *me = (rb_method_entry_t *)rb_imemo_new(imemo_ment, (VALUE)def, (VALUE)called_id, (VALUE)klass, (VALUE)noex);
+    rb_method_entry_t *me = (rb_method_entry_t *)rb_imemo_new(imemo_ment, (VALUE)NULL, (VALUE)called_id, (VALUE)klass, (VALUE)noex);
+    rb_method_definition_reset(me, def);
     return me;
 }
 
 rb_method_entry_t *
 rb_method_entry_clone(const rb_method_entry_t *src_me)
 {
-    return rb_method_entry_create(src_me->flag, src_me->called_id, src_me->klass, src_me->def);
+    rb_method_entry_t *me = rb_method_entry_create(src_me->flag, src_me->called_id, src_me->klass, NULL);
+    rb_method_definition_reset(me, rb_method_definition_clone(src_me->def));
+    return me;
 }
 
 void
@@ -190,19 +374,14 @@ make_method_entry_refined(rb_method_entry_t *me)
 {
     rb_method_definition_t *new_def;
 
-    if (me->def && me->def->type == VM_METHOD_TYPE_REFINED)
-	return;
+    if (me->def && me->def->type == VM_METHOD_TYPE_REFINED) return;
 
-    new_def = ALLOC(rb_method_definition_t);
-    new_def->type = VM_METHOD_TYPE_REFINED;
-    new_def->original_id = me->called_id;
-    new_def->alias_count = 0;
-    new_def->body.orig_me = rb_method_entry_clone(me);
-    RB_OBJ_WRITTEN(me, Qundef, new_def->body.orig_me);
     rb_vm_check_redefinition_opt_method(me, me->klass);
-    if (me->def) me->def->alias_count++;
+
+    new_def = rb_method_definition_create(VM_METHOD_TYPE_REFINED, me->called_id);
+    rb_method_definition_set(me, new_def, VM_METHOD_TYPE_REFINED, rb_method_entry_clone(me));
+
     me->flag = NOEX_WITH_SAFE(NOEX_PUBLIC);
-    me->def = new_def;
 }
 
 void
@@ -259,8 +438,7 @@ rb_method_entry_make(VALUE klass, ID mid, rb_method_type_t type,
 	rb_add_refined_method_entry(refined_class, mid);
     }
     if (type == VM_METHOD_TYPE_REFINED) {
-	rb_method_entry_t *old_me =
-	    lookup_method_table(RCLASS_ORIGIN(klass), mid);
+	rb_method_entry_t *old_me = lookup_method_table(RCLASS_ORIGIN(klass), mid);
 	if (old_me) rb_vm_check_redefinition_opt_method(old_me, klass);
     }
     else {
@@ -286,7 +464,7 @@ rb_method_entry_make(VALUE klass, ID mid, rb_method_type_t type,
 
 	if (RTEST(ruby_verbose) &&
 	    type != VM_METHOD_TYPE_UNDEF &&
-	    old_def->alias_count == 0 &&
+	    old_def->alias_count_ptr == NULL &&
 	    old_def->type != VM_METHOD_TYPE_UNDEF &&
 	    old_def->type != VM_METHOD_TYPE_ZSUPER &&
 	    old_def->type != VM_METHOD_TYPE_ALIAS) {
@@ -295,7 +473,7 @@ rb_method_entry_make(VALUE klass, ID mid, rb_method_type_t type,
 	    rb_warning("method redefined; discarding old %"PRIsVALUE, rb_id2str(mid));
 	    switch (old_def->type) {
 	      case VM_METHOD_TYPE_ISEQ:
-		iseq = old_def->body.iseq.iseq;
+		iseq = iseq_ptr(old_def->body.iseq.iseqval);
 		break;
 	      case VM_METHOD_TYPE_BMETHOD:
 		iseq = rb_proc_get_iseq(old_def->body.proc, 0);
@@ -312,27 +490,9 @@ rb_method_entry_make(VALUE klass, ID mid, rb_method_type_t type,
 	}
     }
 
-    me = rb_method_entry_create(NOEX_WITH_SAFE(noex), mid, defined_class, def);
+    me = rb_method_entry_create(NOEX_WITH_SAFE(noex), mid, defined_class, rb_method_definition_clone(def));
+
     rb_clear_method_cache_by_class(klass);
-
-    if (def) {
-	def->alias_count++;
-
-	switch(def->type) {
-	  case VM_METHOD_TYPE_ISEQ:
-	    RB_OBJ_WRITTEN(me, Qundef, def->body.iseq.iseq->self);
-	    RB_OBJ_WRITTEN(me, Qundef, def->body.iseq.cref);
-	    break;
-	  case VM_METHOD_TYPE_IVAR:
-	    RB_OBJ_WRITTEN(me, Qundef, def->body.attr.location);
-	    break;
-	  case VM_METHOD_TYPE_BMETHOD:
-	    RB_OBJ_WRITTEN(me, Qundef, def->body.proc);
-	    break;
-	  default:;
-	    /* ignore */
-	}
-    }
 
     /* check mid */
     if (klass == rb_cObject && mid == idInitialize) {
@@ -374,114 +534,19 @@ method_added(VALUE klass, ID mid)
     }
 }
 
-static VALUE
-(*call_cfunc_invoker_func(int argc))(VALUE (*func)(ANYARGS), VALUE recv, int argc, const VALUE *)
-{
-    switch (argc) {
-      case -2: return &call_cfunc_m2;
-      case -1: return &call_cfunc_m1;
-      case 0: return &call_cfunc_0;
-      case 1: return &call_cfunc_1;
-      case 2: return &call_cfunc_2;
-      case 3: return &call_cfunc_3;
-      case 4: return &call_cfunc_4;
-      case 5: return &call_cfunc_5;
-      case 6: return &call_cfunc_6;
-      case 7: return &call_cfunc_7;
-      case 8: return &call_cfunc_8;
-      case 9: return &call_cfunc_9;
-      case 10: return &call_cfunc_10;
-      case 11: return &call_cfunc_11;
-      case 12: return &call_cfunc_12;
-      case 13: return &call_cfunc_13;
-      case 14: return &call_cfunc_14;
-      case 15: return &call_cfunc_15;
-      default:
-	rb_bug("call_cfunc_func: unsupported length: %d", argc);
-    }
-}
-
-static void
-setup_method_cfunc_struct(rb_method_cfunc_t *cfunc, VALUE (*func)(), int argc)
-{
-    cfunc->func = func;
-    cfunc->argc = argc;
-    cfunc->invoker = call_cfunc_invoker_func(argc);
-}
-
 rb_method_entry_t *
 rb_add_method0(VALUE klass, ID mid, rb_method_type_t type, void *opts, rb_method_flag_t noex)
 {
-    rb_thread_t *th;
-    rb_control_frame_t *cfp;
-    int line;
-    rb_method_entry_t *me = rb_method_entry_make(klass, mid, type, 0, noex, klass);
-    rb_method_definition_t *def = ALLOC(rb_method_definition_t);
+    rb_method_entry_t *me = rb_method_entry_make(klass, mid, type, NULL, noex, klass);
+    rb_method_definition_t *def = rb_method_definition_create(type, mid);
 
     if (me->def && me->def->type == VM_METHOD_TYPE_REFINED) {
-	me->def->body.orig_me->def = def;
+	rb_method_definition_set(me->def->body.orig_me, def, type, opts);
     }
     else {
-	me->def = def;
+	rb_method_definition_set(me, def, type, opts);
     }
 
-    def->type = type;
-    def->original_id = mid;
-    def->alias_count = 0;
-
-    switch (type) {
-      case VM_METHOD_TYPE_ISEQ: {
-	  rb_method_iseq_t *iseq_body = (rb_method_iseq_t *)opts;
-	  rb_iseq_t *iseq = iseq_body->iseq;
-	  rb_cref_t *private_cref, *cref = iseq_body->cref;
-
-	  if (0 && cref) vm_cref_dump("rb_add_method0", cref);
-
-	  *(rb_iseq_t **)&def->body.iseq.iseq = iseq;
-	  RB_OBJ_WRITTEN(me, Qundef, iseq->self); /* should be set iseq before newobj */
-	  def->body.iseq.cref = NULL;
-
-	  private_cref = vm_cref_new_toplevel(GET_THREAD()); /* TODO: CREF should be shared with other methods */
-	  if (cref) COPY_CREF(private_cref, cref);
-	  CREF_VISI_SET(private_cref, NOEX_PUBLIC);
-	  RB_OBJ_WRITE(me, &def->body.iseq.cref, private_cref);
-	  break;
-      }
-      case VM_METHOD_TYPE_CFUNC:
-	{
-	    rb_method_cfunc_t *cfunc = (rb_method_cfunc_t *)opts;
-	    setup_method_cfunc_struct(&def->body.cfunc, cfunc->func, cfunc->argc);
-	}
-	break;
-      case VM_METHOD_TYPE_ATTRSET:
-      case VM_METHOD_TYPE_IVAR:
-	def->body.attr.id = (ID)(VALUE)opts;
-	RB_OBJ_WRITE(me, &def->body.attr.location, Qfalse);
-	th = GET_THREAD();
-	cfp = rb_vm_get_ruby_level_next_cfp(th, th->cfp);
-	if (cfp && (line = rb_vm_get_sourceline(cfp))) {
-	    VALUE location = rb_ary_new3(2, cfp->iseq->location.path, INT2FIX(line));
-	    RB_OBJ_WRITE(me, &def->body.attr.location, rb_ary_freeze(location));
-	}
-	break;
-      case VM_METHOD_TYPE_BMETHOD:
-	RB_OBJ_WRITE(me, &def->body.proc, (VALUE)opts);
-	break;
-      case VM_METHOD_TYPE_NOTIMPLEMENTED:
-	setup_method_cfunc_struct(&def->body.cfunc, rb_f_notimplement, -1);
-	break;
-      case VM_METHOD_TYPE_OPTIMIZED:
-	def->body.optimize_type = (enum method_optimized_type)opts;
-	break;
-      case VM_METHOD_TYPE_ZSUPER:
-      case VM_METHOD_TYPE_UNDEF:
-	break;
-      case VM_METHOD_TYPE_REFINED:
-	def->body.orig_me = (rb_method_entry_t *) opts;
-	break;
-      default:
-	rb_bug("rb_add_method: unsupported method type (%d)\n", type);
-    }
     if (type != VM_METHOD_TYPE_UNDEF && type != VM_METHOD_TYPE_REFINED) {
 	method_added(klass, mid);
     }
@@ -495,17 +560,20 @@ rb_add_method(VALUE klass, ID mid, rb_method_type_t type, void *opts, rb_method_
 }
 
 void
-rb_add_method_iseq(VALUE klass, ID mid, rb_iseq_t *iseq, rb_cref_t *cref, rb_method_flag_t noex)
+rb_add_method_iseq(VALUE klass, ID mid, VALUE iseqval, rb_cref_t *cref, rb_method_flag_t noex)
 {
-    rb_method_iseq_t iseq_body = {iseq, cref};
+    rb_method_iseq_t iseq_body = {iseqval, cref};
     rb_add_method0(klass, mid, VM_METHOD_TYPE_ISEQ, &iseq_body, noex);
 }
 
 static rb_method_entry_t *
 method_entry_set0(VALUE klass, ID mid, rb_method_type_t type,
-		  rb_method_definition_t *def, rb_method_flag_t noex, VALUE defined_class)
+		  rb_method_definition_t *def, rb_method_flag_t noex, VALUE defined_class, rb_method_definition_t *alias_def)
 {
     rb_method_entry_t *newme = rb_method_entry_make(klass, mid, type, def, noex, defined_class);
+    if (alias_def) {
+	rb_method_definition_reset(newme, alias_def);
+    }
     method_added(klass, mid);
     return newme;
 }
@@ -515,7 +583,7 @@ method_entry_set(VALUE klass, ID mid, const rb_method_entry_t *me,
 		 rb_method_flag_t noex, VALUE defined_class)
 {
     rb_method_type_t type = me->def ? me->def->type : VM_METHOD_TYPE_UNDEF;
-    return method_entry_set0(klass, mid, type, me->def, noex, defined_class);
+    return method_entry_set0(klass, mid, type, me->def, noex, defined_class, NULL);
 }
 
 rb_method_entry_t *
@@ -710,8 +778,9 @@ rb_method_entry_with_refinements(VALUE klass, ID id,
 
 	me = rb_resolve_refined_method(refinements, me, &defined_class);
     }
-    if (defined_class_ptr)
-	*defined_class_ptr = defined_class;
+
+    if (defined_class_ptr) *defined_class_ptr = defined_class;
+
     return me;
 }
 
@@ -1218,7 +1287,7 @@ rb_method_definition_eq(const rb_method_definition_t *d1, const rb_method_defini
 
     switch (d1->type) {
       case VM_METHOD_TYPE_ISEQ:
-	return d1->body.iseq.iseq == d2->body.iseq.iseq;
+	return d1->body.iseq.iseqval == d2->body.iseq.iseqval;
       case VM_METHOD_TYPE_CFUNC:
 	return
 	  d1->body.cfunc.func == d2->body.cfunc.func &&
@@ -1253,7 +1322,7 @@ rb_hash_method_definition(st_index_t hash, const rb_method_definition_t *def)
 
     switch (def->type) {
       case VM_METHOD_TYPE_ISEQ:
-	return rb_hash_uint(hash, (st_index_t)def->body.iseq.iseq);
+	return rb_hash_uint(hash, (st_index_t)def->body.iseq.iseqval);
       case VM_METHOD_TYPE_CFUNC:
 	hash = rb_hash_uint(hash, (st_index_t)def->body.cfunc.func);
 	return rb_hash_uint(hash, def->body.cfunc.argc);
@@ -1323,7 +1392,7 @@ rb_alias(VALUE klass, ID name, ID def)
 
     if (defined_class != target_klass) { /* inter class/module alias */
 	VALUE real_owner;
-	rb_method_definition_t *alias_def;
+	rb_method_entry_t *alias_me;
 
 	if (RB_TYPE_P(defined_class, T_ICLASS)) {
 	    defined_class = real_owner = RBASIC_CLASS(defined_class);
@@ -1332,16 +1401,10 @@ rb_alias(VALUE klass, ID name, ID def)
 	    real_owner = defined_class;
 	}
 
-	/* make alias def */
-	alias_def = ALLOC(rb_method_definition_t);
-	alias_def->type = VM_METHOD_TYPE_ALIAS;
-	alias_def->original_id = orig_me->called_id;
-	alias_def->alias_count = -1; /* will be increment at method_entry_set0() */
-	alias_def->body.alias.original_me = orig_me;
-	if (orig_me->def) orig_me->def->alias_count++;
-
-	/* make copy */
-	method_entry_set0(target_klass, name, VM_METHOD_TYPE_ALIAS, alias_def, flag, defined_class);
+	/* make mthod entry */
+	alias_me = rb_add_method0(target_klass, name, VM_METHOD_TYPE_ALIAS, orig_me, flag);
+	RB_OBJ_WRITE(alias_me, &alias_me->klass, defined_class);
+	alias_me->def->original_id = orig_me->called_id;
     }
     else {
 	method_entry_set(target_klass, name, orig_me, flag, defined_class);
