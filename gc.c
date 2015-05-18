@@ -3930,8 +3930,6 @@ mark_method_entry(rb_objspace_t *objspace, const rb_method_entry_t *me)
 
     gc_mark(objspace, me->klass);
 
-    if (!def) return;
-
     switch (def->type) {
       case VM_METHOD_TYPE_ISEQ:
 	gc_mark(objspace, def->body.iseq.iseqval);
@@ -8940,6 +8938,9 @@ obj_info(VALUE obj)
 #undef IMEMO_NAME
 	}
 	snprintf(buff, OBJ_INFO_BUFFERS_SIZE, "%s %s", buff, imemo_name);
+	if (imemo_type(obj) == imemo_ment) {
+	    snprintf(buff, OBJ_INFO_BUFFERS_SIZE, "%s (type: %d)", buff, RANY(obj)->as.imemo.ment.def->type);
+	}
       }
       default:
 	break;

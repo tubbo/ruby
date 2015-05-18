@@ -1148,7 +1148,7 @@ vm_callee_setup_arg(rb_thread_t *th, rb_call_info_t *ci, const rb_iseq_t *iseq, 
 
 	CI_SET_FASTPATH(ci,
 			(UNLIKELY(ci->flag & VM_CALL_TAILCALL) ? vm_call_iseq_setup_tailcall : vm_call_iseq_setup_normal),
-			(!IS_ARGS_SPLAT(ci) && !IS_ARGS_KEYWORD(ci) && !(ci->me->flag & NOEX_PROTECTED)));
+			(!IS_ARGS_SPLAT(ci) && !IS_ARGS_KEYWORD(ci) && !(ci->me->def->flag & NOEX_PROTECTED)));
     }
     else {
 	ci->aux.opt_pc = setup_parameters_complex(th, iseq, ci, argv, arg_setup_method);
@@ -1486,7 +1486,7 @@ vm_call_cfunc(rb_thread_t *th, rb_control_frame_t *reg_cfp, rb_call_info_t *ci)
     RUBY_DTRACE_CMETHOD_ENTRY_HOOK(th, me->klass, me->called_id);
     EXEC_EVENT_HOOK(th, RUBY_EVENT_C_CALL, recv, me->called_id, me->klass, Qnil);
 
-    if (!(ci->me->flag & NOEX_PROTECTED) &&
+    if (!(ci->me->def->flag & NOEX_PROTECTED) &&
 	!(ci->flag & VM_CALL_ARGS_SPLAT) &&
 	!(ci->kw_arg != NULL)) {
 	CI_SET_FASTPATH(ci, vm_call_cfunc_latter, 1);
@@ -1742,7 +1742,7 @@ vm_call_method(rb_thread_t *th, rb_control_frame_t *cfp, rb_call_info_t *ci)
 
   start_method_dispatch:
     if (ci->me != 0) {
-	if ((ci->me->flag == 0)) {
+	if ((ci->me->def->flag == 0)) {
 	    VALUE klass;
 
 	  normal_method_dispatch:
@@ -1869,7 +1869,7 @@ vm_call_method(rb_thread_t *th, rb_control_frame_t *cfp, rb_call_info_t *ci)
 	}
 	else {
 	    int noex_safe;
-	    if (!(ci->flag & VM_CALL_FCALL) && (ci->me->flag & NOEX_MASK) & NOEX_PRIVATE) {
+	    if (!(ci->flag & VM_CALL_FCALL) && (ci->me->def->flag & NOEX_MASK) & NOEX_PRIVATE) {
 		int stat = NOEX_PRIVATE;
 
 		if (ci->flag & VM_CALL_VCALL) {
@@ -1879,7 +1879,7 @@ vm_call_method(rb_thread_t *th, rb_control_frame_t *cfp, rb_call_info_t *ci)
 		CI_SET_FASTPATH(ci, vm_call_method_missing, 1);
 		return vm_call_method_missing(th, cfp, ci);
 	    }
-	    else if (!(ci->flag & VM_CALL_OPT_SEND) && (ci->me->flag & NOEX_MASK) & NOEX_PROTECTED) {
+	    else if (!(ci->flag & VM_CALL_OPT_SEND) && (ci->me->def->flag & NOEX_MASK) & NOEX_PROTECTED) {
 		enable_fastpath = 0;
 		if (!rb_obj_is_kind_of(cfp->self, ci->defined_class)) {
 		    ci->aux.missing_reason = NOEX_PROTECTED;
@@ -1889,7 +1889,7 @@ vm_call_method(rb_thread_t *th, rb_control_frame_t *cfp, rb_call_info_t *ci)
 		    goto normal_method_dispatch;
 		}
 	    }
-	    else if ((noex_safe = NOEX_SAFE(ci->me->flag)) > th->safe_level && (noex_safe > 2)) {
+	    else if ((noex_safe = NOEX_SAFE(ci->me->def->flag)) > th->safe_level && (noex_safe > 2)) {
 		rb_raise(rb_eSecurityError, "calling insecure method: %"PRIsVALUE, rb_id2str(ci->mid));
 	    }
 	    else {

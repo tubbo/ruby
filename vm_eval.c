@@ -200,8 +200,7 @@ vm_call0_body(rb_thread_t* th, rb_call_info_t *ci, const VALUE *argv)
       case VM_METHOD_TYPE_REFINED:
 	{
 	    const rb_method_type_t type = ci->me->def->type;
-	    if (type == VM_METHOD_TYPE_REFINED &&
-		ci->me->def->body.orig_me) {
+	    if (type == VM_METHOD_TYPE_REFINED && ci->me->def->body.orig_me) {
 		ci->me = ci->me->def->body.orig_me;
 		goto again;
 	    }
@@ -392,7 +391,7 @@ check_funcall_respond_to(rb_thread_t *th, VALUE klass, VALUE recv, ID mid)
     VALUE defined_class;
     const rb_method_entry_t *me = rb_method_entry(klass, idRespond_to, &defined_class);
 
-    if (me && !(me->flag & NOEX_BASIC)) {
+    if (me && !(me->def->flag & NOEX_BASIC)) {
 	const rb_block_t *passed_block = th->passed_block;
 	VALUE args[2], result;
 	int arity = rb_method_entry_arity(me);
@@ -575,7 +574,7 @@ rb_method_call_status(rb_thread_t *th, const rb_method_entry_t *me, call_type sc
     }
     klass = me->klass;
     oid = me->def->original_id;
-    noex = me->flag;
+    noex = me->def->flag;
 
     if (oid != idMethodMissing) {
 	/* receiver specified form for private method */

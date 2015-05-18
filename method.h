@@ -46,7 +46,7 @@ typedef enum {
 
 typedef struct rb_method_entry_struct {
     VALUE flags;
-    VALUE flag;
+    VALUE reserved;
     struct rb_method_definition_struct *def;
     ID called_id;
     const VALUE klass;    /* should be marked */
@@ -93,6 +93,7 @@ typedef struct rb_method_alias_struct {
 typedef struct rb_iseq_struct rb_iseq_t;
 
 typedef struct rb_method_definition_struct {
+    rb_method_flag_t flag;
     rb_method_type_t type; /* method type */
     int *alias_count_ptr;
     ID original_id;
@@ -146,8 +147,9 @@ VALUE rb_obj_method_location(VALUE obj, ID id);
 void rb_free_method_entry(const rb_method_entry_t *me);
 void rb_sweep_method_entry(void *vm);
 
-rb_method_entry_t *rb_method_entry_create(rb_method_flag_t noex, ID called_id, VALUE klass, rb_method_definition_t *def);
+rb_method_entry_t *rb_method_entry_create(ID called_id, VALUE klass, rb_method_definition_t *def);
 rb_method_entry_t *rb_method_entry_clone(const rb_method_entry_t *me);
+
 void rb_method_entry_copy(rb_method_entry_t *dst, rb_method_entry_t *src);
 
 #endif /* METHOD_H */

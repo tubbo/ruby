@@ -1161,10 +1161,11 @@ mnew_missing(VALUE rclass, VALUE klass, VALUE obj, ID id, ID rid, VALUE mclass)
     data->id = rid;
 
     def = ZALLOC(rb_method_definition_t);
+    def->flag = 0;
     def->type = VM_METHOD_TYPE_MISSING;
     def->original_id = id;
 
-    me = rb_method_entry_create(0, id, klass, def);
+    me = rb_method_entry_create(id, klass, def);
     RB_OBJ_WRITE(method, &data->me, me);
 
     OBJ_INFECT(method, klass);
@@ -1193,13 +1194,13 @@ mnew_internal(const rb_method_entry_t *me, VALUE defined_class, VALUE klass,
     }
     def = me->def;
     if (flag == NOEX_UNDEF) {
-	flag = me->flag;
+	flag = def->flag;
 	if (scope && (flag & NOEX_MASK) != NOEX_PUBLIC) {
 	    if (!error) return Qnil;
 	    rb_print_inaccessible(klass, id, flag & NOEX_MASK);
 	}
     }
-    if (def && def->type == VM_METHOD_TYPE_ZSUPER) {
+    if (def->type == VM_METHOD_TYPE_ZSUPER) {
 	klass = RCLASS_SUPER(defined_class);
 	id = def->original_id;
 	me = rb_method_entry_without_refinements(klass, id, &defined_class);
