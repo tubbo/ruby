@@ -47,7 +47,7 @@ typedef enum {
 typedef struct rb_method_entry_struct {
     VALUE flags;
     VALUE reserved;
-    struct rb_method_definition_struct *def;
+    struct rb_method_definition_struct * const def;
     ID called_id;
     const VALUE klass;    /* should be marked */
 } rb_method_entry_t;

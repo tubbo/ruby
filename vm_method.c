@@ -226,7 +226,7 @@ rb_method_definition_create(rb_method_flag_t flag, rb_method_type_t type, ID mid
 static void
 rb_method_definition_set(rb_method_entry_t *me, rb_method_definition_t *def, rb_method_type_t type, void *opts)
 {
-    me->def = def;
+    *(rb_method_definition_t **)&me->def = def;
 
     switch (type) {
       case VM_METHOD_TYPE_ISEQ:
@@ -315,7 +315,8 @@ rb_method_definition_reset(rb_method_entry_t *me, rb_method_definition_t *def)
       default:;
 	/* ignore */
     }
-    me->def = def;
+
+    *(rb_method_definition_t **)&me->def = def;
 }
 
 static rb_method_definition_t *
@@ -357,7 +358,7 @@ rb_method_entry_clone(const rb_method_entry_t *src_me)
 void
 rb_method_entry_copy(rb_method_entry_t *dst, rb_method_entry_t *src)
 {
-    dst->def = src->def;
+    rb_method_definition_reset(dst, rb_method_definition_clone(src->def));
     dst->called_id = src->called_id;
     RB_OBJ_WRITE((VALUE)dst, &dst->klass, src->klass);
 }
