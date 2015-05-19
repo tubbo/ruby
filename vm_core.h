@@ -440,8 +440,6 @@ typedef struct rb_vm_struct {
     VALUE verbose, debug, orig_progname, progname;
     VALUE coverages;
 
-    struct unlinked_method_entry_list_entry *unlinked_method_entry_list;
-
     VALUE defined_module_hash;
 
 #if defined(ENABLE_VM_OBJSPACE) && ENABLE_VM_OBJSPACE
