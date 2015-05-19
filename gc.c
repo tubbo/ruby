@@ -4275,7 +4275,7 @@ gc_mark_children(rb_objspace_t *objspace, VALUE obj)
 	    gc_mark(objspace, RANY(obj)->as.imemo.cref.refinements);
 	    return;
 	  case imemo_svar:
-	    gc_mark(objspace, (VALUE)RANY(obj)->as.imemo.svar.cref);
+	    gc_mark(objspace, RANY(obj)->as.imemo.svar.cref_or_me);
 	    gc_mark(objspace, RANY(obj)->as.imemo.svar.lastline);
 	    gc_mark(objspace, RANY(obj)->as.imemo.svar.backref);
 	    gc_mark(objspace, RANY(obj)->as.imemo.svar.others);

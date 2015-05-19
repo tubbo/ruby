@@ -559,7 +559,7 @@ typedef struct rb_cref_struct {
 
 struct vm_svar {
     VALUE flags;
-    const rb_cref_t * const cref;
+    const VALUE cref_or_me;
     const VALUE lastline;
     const VALUE backref;
     const VALUE others;

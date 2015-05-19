@@ -511,10 +511,9 @@ typedef struct rb_control_frame_struct {
     VALUE *ep;			/* cfp[6] / block[2] */
     rb_iseq_t *block_iseq;	/* cfp[7] / block[3] */
     VALUE proc;			/* cfp[8] / block[4] */
-    const rb_method_entry_t *me;/* cfp[9] */
 
 #if VM_DEBUG_BP_CHECK
-    VALUE *bp_check;		/* cfp[10] */
+    VALUE *bp_check;		/* cfp[9] */
 #endif
 } rb_control_frame_t;
 
@@ -997,6 +996,8 @@ void rb_gc_mark_machine_stack(rb_thread_t *th);
 int rb_autoloading_value(VALUE mod, ID id, VALUE* value);
 
 void rb_vm_rewrite_cref_stack(rb_cref_t *node, VALUE old_klass, VALUE new_klass, rb_cref_t **new_cref_ptr);
+
+const rb_method_entry_t *rb_vm_frame_method_entry(const rb_control_frame_t *cfp);
 
 #define sysstack_error GET_VM()->special_exceptions[ruby_error_sysstack]
 
