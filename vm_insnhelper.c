@@ -47,6 +47,40 @@ vm_stackoverflow(void)
     rb_exc_raise(ruby_vm_sysstack_error_copy());
 }
 
+#if VM_CHECK_MODE > 0
+static void
+check_frame(int magic, int req_block, int req_me, int req_cref, VALUE specval, VALUE cref_or_me)
+{
+    if (req_block && !VM_ENVVAL_BLOCK_PTR_P(specval)) {
+	rb_bug("vm_push_frame: specval (%p) should be a block_ptr on %x frame", (void *)specval, magic);
+    }
+    if (!req_block && VM_ENVVAL_BLOCK_PTR_P(specval)) {
+	rb_bug("vm_push_frame: specval (%p) should not be a block_ptr on %x frame", (void *)specval, magic);
+    }
+
+    if (req_me) {
+	if (!RB_TYPE_P(cref_or_me, T_IMEMO) || imemo_type(cref_or_me) != imemo_ment) {
+	    rb_bug("vm_push_frame: (%s) should be method entry on %x frame", rb_obj_info(cref_or_me), magic);
+	}
+    }
+    else {
+	if (req_cref && (!RB_TYPE_P(cref_or_me, T_IMEMO) || imemo_type(cref_or_me) != imemo_cref)) {
+	    rb_bug("vm_push_frame: (%s) should be CREF on %x frame", rb_obj_info(cref_or_me), magic);
+	}
+	else { /* cref or Qfalse */
+	    if (cref_or_me != Qfalse && (!RB_TYPE_P(cref_or_me, T_IMEMO) || imemo_type(cref_or_me) != imemo_cref)) {
+		if ((magic == VM_FRAME_MAGIC_LAMBDA || magic == VM_FRAME_MAGIC_IFUNC) && (RB_TYPE_P(cref_or_me, T_IMEMO) && imemo_type(cref_or_me) == imemo_ment)) {
+		    /* ignore */
+		}
+		else {
+		    rb_bug("vm_push_frame: (%s) should be false or cref on %x frame", rb_obj_info(cref_or_me), magic);
+		}
+	    }
+	}
+    }
+}
+#endif
+
 static inline rb_control_frame_t *
 vm_push_frame(rb_thread_t *th,
 	      const rb_iseq_t *iseq,
@@ -66,36 +100,22 @@ vm_push_frame(rb_thread_t *th,
 #if VM_CHECK_MODE > 0
     int magic = (int)(type & VM_FRAME_MAGIC_MASK);
 
+#define CHECK(magic, req_block, req_me, req_cref) case magic: check_frame(magic, req_block, req_me, req_cref, specval, cref_or_me); break;
     switch (magic) {
-      case VM_FRAME_MAGIC_METHOD:
-      case VM_FRAME_MAGIC_CLASS:
-      case VM_FRAME_MAGIC_TOP:
-      case VM_FRAME_MAGIC_CFUNC:
-	if (!VM_ENVVAL_BLOCK_PTR_P(specval)) {
-	    rb_bug("vm_push_frame: specval (%p) should be block_ptr on %x frame", (void *)specval, magic);
-	}
-	break;
-
-      case VM_FRAME_MAGIC_BLOCK:
-      case VM_FRAME_MAGIC_PROC:
-      case VM_FRAME_MAGIC_IFUNC:
-      case VM_FRAME_MAGIC_EVAL:
-      case VM_FRAME_MAGIC_LAMBDA:
-      case VM_FRAME_MAGIC_RESCUE:
-	if (VM_ENVVAL_BLOCK_PTR_P(specval)) {
-	    rb_bug("vm_push_frame: specval (%p) should not be block_ptr on %x frame", (void *)specval, magic);
-	}
-	break;
+	/*                           BLK    ME     CREF */
+	CHECK(VM_FRAME_MAGIC_METHOD, TRUE,  TRUE,  FALSE);
+	CHECK(VM_FRAME_MAGIC_CLASS,  TRUE,  FALSE, TRUE);
+	CHECK(VM_FRAME_MAGIC_TOP,    TRUE,  FALSE, TRUE);
+        CHECK(VM_FRAME_MAGIC_CFUNC,  TRUE,  TRUE,  FALSE);
+	CHECK(VM_FRAME_MAGIC_BLOCK,  FALSE, FALSE, FALSE);
+	CHECK(VM_FRAME_MAGIC_PROC,   FALSE, FALSE, FALSE);
+        CHECK(VM_FRAME_MAGIC_IFUNC,  FALSE, FALSE, FALSE);
+	CHECK(VM_FRAME_MAGIC_EVAL,   FALSE, FALSE, FALSE);
+	CHECK(VM_FRAME_MAGIC_LAMBDA, FALSE, FALSE, FALSE);
+	CHECK(VM_FRAME_MAGIC_RESCUE, FALSE, FALSE, FALSE);
+	CHECK(VM_FRAME_MAGIC_DUMMY,  TRUE,  FALSE, FALSE);
       default:
 	rb_bug("vm_push_frame: unknown type (%x)", magic);
-    }
-
-    if (cref_or_me == Qfalse ||
-	(RB_TYPE_P(cref_or_me, T_IMEMO) && (imemo_type(cref_or_me) == imemo_cref || imemo_type(cref_or_me) == imemo_ment))) {
-	/* ok */
-    }
-    else {
-	rb_bug("unknown type CREF_OR_ME: %s", rb_obj_info(cref_or_me));
     }
 #endif
 
@@ -226,7 +246,7 @@ lep_svar_get(rb_thread_t *th, const VALUE *lep, rb_num_t key)
     struct vm_svar ** const svar_place = lep_svar_place(th, lep);
     const struct vm_svar *const svar = *svar_place;
 
-    if (svar == Qfalse || imemo_type((VALUE)svar) != imemo_svar) return Qnil;
+    if ((VALUE)svar == Qfalse || imemo_type((VALUE)svar) != imemo_svar) return Qnil;
 
     switch (key) {
       case VM_SVAR_LASTLINE:
@@ -2210,6 +2230,8 @@ vm_yield_with_cfunc(rb_thread_t *th, const rb_block_t *block,
     const struct vm_ifunc *ifunc = (struct vm_ifunc *)block->iseq;
     VALUE val, arg, blockarg;
     int lambda = block_proc_is_lambda(block->proc);
+    const rb_method_entry_t *me = th->passed_bmethod_me;
+    th->passed_bmethod_me = NULL;
 
     if (lambda) {
 	arg = rb_ary_new4(argc, argv);
@@ -2235,7 +2257,7 @@ vm_yield_with_cfunc(rb_thread_t *th, const rb_block_t *block,
 
     vm_push_frame(th, (rb_iseq_t *)ifunc, VM_FRAME_MAGIC_IFUNC,
 		  self, defined_class,
-		  VM_ENVVAL_PREV_EP_PTR(block->ep), (VALUE)th->passed_bmethod_me,
+		  VM_ENVVAL_PREV_EP_PTR(block->ep), (VALUE)me,
 		  0, th->cfp->sp, 1, 0);
 
     val = (*ifunc->func) (arg, ifunc->data, argc, argv, blockarg);

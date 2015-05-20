@@ -511,7 +511,7 @@ vm_make_env_each(const rb_thread_t *const th, rb_control_frame_t *const cfp,
     }
 
     if (!RUBY_VM_NORMAL_ISEQ_P(cfp->iseq)) {
-	local_size = 2;
+	local_size = 2; /* specva + cref/me */
     }
     else {
 	local_size = cfp->iseq->local_size;
@@ -817,7 +817,7 @@ invoke_block_from_c(rb_thread_t *th, const rb_block_t *block,
 	int i, opt_pc, arg_size = iseq->param.size;
 	int type = block_proc_is_lambda(block->proc) ? VM_FRAME_MAGIC_LAMBDA : VM_FRAME_MAGIC_BLOCK;
 	const rb_method_entry_t *me = th->passed_bmethod_me;
-	th->passed_bmethod_me = 0;
+	th->passed_bmethod_me = NULL;
 	cfp = th->cfp;
 
 	for (i=0; i<argc; i++) {
@@ -2233,8 +2233,8 @@ th_init(rb_thread_t *th, VALUE self)
 
     th->cfp = (void *)(th->stack + th->stack_size);
 
-    vm_push_frame(th, 0 /* dummy iseq */, VM_FRAME_MAGIC_DUMMY | VM_FRAME_FLAG_FINISH,
-		  Qnil /* dummy self */, Qnil /* dummy klass */, VM_ENVVAL_BLOCK_PTR(0),
+    vm_push_frame(th, 0 /* dummy iseq */, VM_FRAME_MAGIC_DUMMY | VM_FRAME_FLAG_FINISH /* dummy frame */,
+		  Qnil /* dummy self */, Qnil /* dummy klass */, VM_ENVVAL_BLOCK_PTR(0) /* dummy block ptr */,
 		  0 /* dummy cref/me */,
 		  0 /* dummy pc */, th->stack, 1, 0);
 
