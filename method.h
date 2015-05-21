@@ -149,7 +149,6 @@ void rb_sweep_method_entry(void *vm);
 
 rb_method_entry_t *rb_method_entry_create(ID called_id, VALUE klass, rb_method_definition_t *def);
 rb_method_entry_t *rb_method_entry_clone(const rb_method_entry_t *me);
-
 void rb_method_entry_copy(rb_method_entry_t *dst, rb_method_entry_t *src);
 
 #endif /* METHOD_H */
