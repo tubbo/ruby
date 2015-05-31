@@ -212,9 +212,15 @@ setup_method_cfunc_struct(rb_method_cfunc_t *cfunc, VALUE (*func)(), int argc)
 }
 
 static void
+def_obj_write(VALUE *ptr, VALUE val)
+{
+    *ptr = val;
+}
+
+static void
 rb_method_definition_set(rb_method_definition_t *def, void *opts)
 {
-#define DEF_OBJ_WRITE(ptr, val) (*(VALUE *)(ptr) = (VALUE)(val))
+#define DEF_OBJ_WRITE(ptr, val) def_obj_write((VALUE *)(ptr), (VALUE)(val))
     switch (def->type) {
       case VM_METHOD_TYPE_ISEQ:
 	{
