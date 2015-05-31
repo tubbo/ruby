@@ -1376,9 +1376,10 @@ rb_alias(VALUE klass, ID name, ID def)
 	}
 
 	/* make mthod entry */
-	alias_me = rb_add_method(target_klass, name, VM_METHOD_TYPE_ALIAS, orig_me, flag);
+	alias_me = rb_add_method(target_klass, name, VM_METHOD_TYPE_ALIAS, rb_method_entry_clone(orig_me), flag);
 	RB_OBJ_WRITE(alias_me, &alias_me->klass, defined_class);
 	alias_me->def->original_id = orig_me->called_id;
+	*(ID *)&alias_me->def->body.alias.original_me->called_id = name;
     }
     else {
 	method_entry_set(target_klass, name, orig_me, flag, defined_class);
