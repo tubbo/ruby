@@ -225,18 +225,21 @@ rb_method_definition_set(rb_method_definition_t *def, void *opts)
       case VM_METHOD_TYPE_ISEQ:
 	{
 	    rb_method_iseq_t *iseq_body = (rb_method_iseq_t *)opts;
-	    rb_cref_t *private_cref, *cref = iseq_body->cref;
+	    rb_cref_t *method_cref, *cref = iseq_body->cref;
 	    
 	    /* setup iseq first (before invoking GC) */
 	    DEF_OBJ_WRITE(&def->body.iseq.iseqval, iseq_body->iseqval);
 
 	    if (0) vm_cref_dump("rb_method_definition_create", cref);
 
-	    private_cref = vm_cref_new_toplevel(GET_THREAD()); /* TODO: CREF should be shared with other methods */
-	    if (cref) COPY_CREF(private_cref, cref);
-	    CREF_VISI_SET(private_cref, NOEX_PUBLIC);
+	    if (cref) {
+		method_cref = cref;
+	    }
+	    else {
+		method_cref = vm_cref_new_toplevel(GET_THREAD()); /* TODO: can we reuse? */
+	    }
 
-	    DEF_OBJ_WRITE(&def->body.iseq.cref, private_cref);
+	    DEF_OBJ_WRITE(&def->body.iseq.cref, method_cref);
 	    return;
 	}
       case VM_METHOD_TYPE_CFUNC:
@@ -918,7 +921,14 @@ extern ID rb_check_attr_id(ID id);
 static int
 rb_frame_visibility_test(rb_method_flag_t flag)
 {
-    return CREF_VISI(rb_vm_cref()) & flag;
+    rb_control_frame_t *cfp = GET_THREAD()->cfp;
+
+    if (!vm_env_cref_by_cref(cfp->ep)) {
+	return NOEX_PUBLIC & flag;
+    }
+    else {
+	return CREF_VISI(rb_vm_cref()) & flag;
+    }
 }
 
 static int

@@ -426,6 +426,27 @@ vm_env_cref(const VALUE *ep)
     return check_cref(ep[-1], TRUE);
 }
 
+static int
+is_cref(const VALUE svar)
+{
+    if (RB_TYPE_P(svar, T_IMEMO) && imemo_type(svar) == imemo_cref) {
+	return TRUE;
+    }
+    else {
+	return FALSE;
+    }
+}
+
+static int
+vm_env_cref_by_cref(const VALUE *ep)
+{
+    while (!VM_EP_LEP_P(ep)) {
+	if (is_cref(ep[-1])) return TRUE;
+	ep = VM_EP_PREV_EP(ep);
+    }
+    return is_cref(ep[-1]);
+}
+
 static rb_cref_t *
 rb_vm_get_cref(const VALUE *ep)
 {
