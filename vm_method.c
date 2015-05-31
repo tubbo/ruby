@@ -921,7 +921,8 @@ extern ID rb_check_attr_id(ID id);
 static int
 rb_frame_visibility_test(rb_method_flag_t flag)
 {
-    rb_control_frame_t *cfp = GET_THREAD()->cfp;
+    rb_thread_t *th = GET_THREAD();
+    rb_control_frame_t *cfp = rb_vm_get_ruby_level_next_cfp(th, th->cfp);
 
     if (!vm_env_cref_by_cref(cfp->ep)) {
 	return NOEX_PUBLIC & flag;

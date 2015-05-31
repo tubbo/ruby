@@ -427,24 +427,29 @@ vm_env_cref(const VALUE *ep)
 }
 
 static int
-is_cref(const VALUE svar)
+is_cref(const VALUE v, int can_be_svar)
 {
-    if (RB_TYPE_P(svar, T_IMEMO) && imemo_type(svar) == imemo_cref) {
-	return TRUE;
+    if (RB_TYPE_P(v, T_IMEMO)) {
+	switch (imemo_type(v)) {
+	  case imemo_cref:
+	    return TRUE;
+	  case imemo_svar:
+	    if (can_be_svar) return is_cref(((struct vm_svar *)v)->cref_or_me, FALSE);
+	  default:
+	    break;
+	}
     }
-    else {
-	return FALSE;
-    }
+    return FALSE;
 }
 
 static int
 vm_env_cref_by_cref(const VALUE *ep)
 {
     while (!VM_EP_LEP_P(ep)) {
-	if (is_cref(ep[-1])) return TRUE;
+	if (is_cref(ep[-1], FALSE)) return TRUE;
 	ep = VM_EP_PREV_EP(ep);
     }
-    return is_cref(ep[-1]);
+    return is_cref(ep[-1], TRUE);
 }
 
 static rb_cref_t *
