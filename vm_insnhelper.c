@@ -1323,17 +1323,21 @@ vm_callee_setup_arg(rb_thread_t *th, rb_call_info_t *ci, const rb_iseq_t *iseq, 
 }
 
 static rb_iseq_t *
-iseq_ptr(VALUE iseqval)
+def_iseq_ptr(rb_method_definition_t *def)
 {
+#if VM_CHECK_MODE > 0
     rb_iseq_t *iseq;
-    GetISeqPtr(iseqval, iseq);
-    return iseq;
+    if (def->type != VM_METHOD_TYPE_ISEQ) rb_bug("def_iseq_ptr: not iseq (%d)", def->type);
+    GetISeqPtr(def->body.iseq.iseqval, iseq);
+    if (def->body.iseq.iseqptr != iseq) rb_bug("def_iseq_ptr: ???.");
+#endif
+    return def->body.iseq.iseqptr;
 }
 
 static VALUE
 vm_call_iseq_setup(rb_thread_t *th, rb_control_frame_t *cfp, rb_call_info_t *ci)
 {
-    vm_callee_setup_arg(th, ci, iseq_ptr(ci->me->def->body.iseq.iseqval), cfp->sp - ci->argc);
+    vm_callee_setup_arg(th, ci, def_iseq_ptr(ci->me->def), cfp->sp - ci->argc);
     return vm_call_iseq_setup_2(th, cfp, ci);
 }
 
@@ -1354,7 +1358,7 @@ vm_call_iseq_setup_normal(rb_thread_t *th, rb_control_frame_t *cfp, rb_call_info
     int i, local_size;
     VALUE *argv = cfp->sp - ci->argc;
     const rb_method_entry_t *me = ci->me;
-    rb_iseq_t *iseq = iseq_ptr(me->def->body.iseq.iseqval);
+    rb_iseq_t *iseq = def_iseq_ptr(me->def);
     VALUE *sp = argv + iseq->param.size;
 
     /* clear local variables (arg_size...local_size) */
@@ -1376,7 +1380,7 @@ vm_call_iseq_setup_tailcall(rb_thread_t *th, rb_control_frame_t *cfp, rb_call_in
     int i;
     VALUE *argv = cfp->sp - ci->argc;
     const rb_method_entry_t *me = ci->me;
-    rb_iseq_t *iseq = iseq_ptr(me->def->body.iseq.iseqval);
+    rb_iseq_t *iseq = def_iseq_ptr(me->def);
     VALUE *src_argv = argv;
     VALUE *sp_orig, *sp;
     VALUE finish_flag = VM_FRAME_TYPE_FINISH_P(cfp) ? VM_FRAME_FLAG_FINISH : 0;
@@ -2225,7 +2229,7 @@ vm_search_super_method(rb_thread_t *th, rb_control_frame_t *reg_cfp, rb_call_inf
 	iseq = iseq->parent_iseq;
     }
 
-    if (ci->me && ci->me->def->type == VM_METHOD_TYPE_ISEQ && iseq_ptr(ci->me->def->body.iseq.iseqval) == iseq) {
+    if (ci->me && ci->me->def->type == VM_METHOD_TYPE_ISEQ && def_iseq_ptr(ci->me->def) == iseq) {
 	ci->klass = RCLASS_SUPER(ci->defined_class);
 	ci->me = rb_method_entry(ci->klass, ci->mid, &ci->defined_class);
     }

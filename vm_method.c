@@ -226,9 +226,12 @@ rb_method_definition_set(rb_method_definition_t *def, void *opts)
 	{
 	    rb_method_iseq_t *iseq_body = (rb_method_iseq_t *)opts;
 	    rb_cref_t *method_cref, *cref = iseq_body->cref;
-	    
+	    rb_iseq_t *iseq;
+	    GetISeqPtr(iseq_body->iseqval, iseq);
+
 	    /* setup iseq first (before invoking GC) */
 	    DEF_OBJ_WRITE(&def->body.iseq.iseqval, iseq_body->iseqval);
+	    DEF_OBJ_WRITE(&def->body.iseq.iseqptr, iseq);
 
 	    if (0) vm_cref_dump("rb_method_definition_create", cref);
 
@@ -474,7 +477,7 @@ rb_method_entry_make(VALUE klass, ID mid, rb_method_type_t type, rb_method_defin
 	    rb_warning("method redefined; discarding old %"PRIsVALUE, rb_id2str(mid));
 	    switch (old_def->type) {
 	      case VM_METHOD_TYPE_ISEQ:
-		iseq = iseq_ptr(old_def->body.iseq.iseqval);
+		iseq = def_iseq_ptr(old_def);
 		break;
 	      case VM_METHOD_TYPE_BMETHOD:
 		iseq = rb_proc_get_iseq(old_def->body.proc, 0);
@@ -555,7 +558,7 @@ rb_add_method(VALUE klass, ID mid, rb_method_type_t type, void *opts, rb_method_
 void
 rb_add_method_iseq(VALUE klass, ID mid, VALUE iseqval, rb_cref_t *cref, rb_method_flag_t noex)
 {
-    rb_method_iseq_t iseq_body = {iseqval, cref};
+    rb_method_iseq_t iseq_body = {iseqval, NULL, cref};
     rb_add_method(klass, mid, VM_METHOD_TYPE_ISEQ, &iseq_body, noex);
 }
 

@@ -69,9 +69,11 @@ typedef enum {
     END_OF_ENUMERATION(VM_METHOD_TYPE)
 } rb_method_type_t;
 
+typedef struct rb_iseq_struct rb_iseq_t;
 
 typedef struct rb_method_iseq_struct {
     const VALUE iseqval;                          /* should be marked */
+    rb_iseq_t * const iseqptr;                    /* should be separated from iseqval */
     rb_cref_t * const cref;                       /* shoudl be marked */
 } rb_method_iseq_t;
 
@@ -89,8 +91,6 @@ typedef struct rb_method_attr_struct {
 typedef struct rb_method_alias_struct {
     const struct rb_method_entry_struct *original_me; /* original_me->klass is original owner */
 } rb_method_alias_t;
-
-typedef struct rb_iseq_struct rb_iseq_t;
 
 typedef struct rb_method_definition_struct {
     rb_method_flag_t flag;
