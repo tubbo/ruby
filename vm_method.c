@@ -129,68 +129,11 @@ rb_add_method_cfunc(VALUE klass, ID mid, VALUE (*func)(ANYARGS), int argc, rb_me
 }
 
 static void
-rb_unlink_method_entry(rb_method_entry_t *me)
-{
-    struct unlinked_method_entry_list_entry *ume = ALLOC(struct unlinked_method_entry_list_entry);
-    ume->me = me;
-    ume->next = GET_VM()->unlinked_method_entry_list;
-    GET_VM()->unlinked_method_entry_list = ume;
-}
-
-void
-rb_gc_mark_unlinked_live_method_entries(void *pvm)
-{
-    rb_vm_t *vm = pvm;
-    struct unlinked_method_entry_list_entry *ume = vm->unlinked_method_entry_list;
-
-    while (ume) {
-	if (ume->me->mark) {
-	    rb_mark_method_entry(ume->me);
-	}
-	ume = ume->next;
-    }
-}
-
-void
-rb_sweep_method_entry(void *pvm)
-{
-    rb_vm_t *vm = pvm;
-    struct unlinked_method_entry_list_entry **prev_ume = &vm->unlinked_method_entry_list, *ume = *prev_ume, *curr_ume;
-
-    while (ume) {
-	if (ume->me->mark) {
-	    ume->me->mark = 0;
-	    prev_ume = &ume->next;
-	    ume = *prev_ume;
-	}
-	else {
-	    rb_free_method_entry(ume->me);
-
-	    curr_ume = ume;
-	    ume = ume->next;
-	    *prev_ume = ume;
-	    xfree(curr_ume);
-	}
-    }
-}
-
-static void
 release_method_definition(rb_method_definition_t *def)
 {
     if (def == 0) return;
 
     if (def->alias_count == 0) {
-	switch (def->type) {
-	  case VM_METHOD_TYPE_REFINED:
-	    if (def->body.orig_me) rb_free_method_entry(def->body.orig_me);
-	    break;
-	  case VM_METHOD_TYPE_ALIAS:
-	    if (!def->body.alias.original_me) rb_free_method_entry(def->body.alias.original_me);
-	    break;
-	  default:
-	    break;
-	}
-
 	xfree(def);
     }
     else if (def->alias_count > 0) {
@@ -202,7 +145,6 @@ void
 rb_free_method_entry(const rb_method_entry_t *me)
 {
     release_method_definition(me->def);
-    xfree((void *)me);
 }
 
 static inline rb_method_entry_t *search_method(VALUE klass, ID id, VALUE *defined_class_ptr);
@@ -221,6 +163,28 @@ lookup_method_table(VALUE klass, ID id)
     }
 }
 
+rb_method_entry_t *
+rb_method_entry_create(rb_method_flag_t noex, ID called_id, VALUE klass, rb_method_definition_t *def)
+{
+    rb_method_entry_t *me = (rb_method_entry_t *)rb_imemo_new(imemo_ment, (VALUE)def, (VALUE)called_id, (VALUE)klass, (VALUE)noex);
+    return me;
+}
+
+rb_method_entry_t *
+rb_method_entry_clone(const rb_method_entry_t *src_me)
+{
+    return rb_method_entry_create(src_me->flag, src_me->called_id, src_me->klass, src_me->def);
+}
+
+void
+rb_method_entry_copy(rb_method_entry_t *dst, rb_method_entry_t *src)
+{
+    dst->flag = src->flag;
+    dst->def = src->def;
+    dst->called_id = src->called_id;
+    RB_OBJ_WRITE((VALUE)dst, &dst->klass, src->klass);
+}
+
 static void
 make_method_entry_refined(rb_method_entry_t *me)
 {
@@ -233,8 +197,8 @@ make_method_entry_refined(rb_method_entry_t *me)
     new_def->type = VM_METHOD_TYPE_REFINED;
     new_def->original_id = me->called_id;
     new_def->alias_count = 0;
-    new_def->body.orig_me = ALLOC(rb_method_entry_t);
-    *new_def->body.orig_me = *me;
+    new_def->body.orig_me = rb_method_entry_clone(me);
+    RB_OBJ_WRITTEN(me, Qundef, new_def->body.orig_me);
     rb_vm_check_redefinition_opt_method(me, me->klass);
     if (me->def) me->def->alias_count++;
     me->flag = NOEX_WITH_SAFE(NOEX_PUBLIC);
@@ -346,33 +310,24 @@ rb_method_entry_make(VALUE klass, ID mid, rb_method_type_t type,
 				   rb_id2str(old_def->original_id));
 	    }
 	}
-
-	rb_unlink_method_entry(old_me);
     }
 
-    me = ALLOC(rb_method_entry_t);
-
+    me = rb_method_entry_create(NOEX_WITH_SAFE(noex), mid, defined_class, def);
     rb_clear_method_cache_by_class(klass);
-
-    me->flag = NOEX_WITH_SAFE(noex);
-    me->mark = 0;
-    me->called_id = mid;
-    RB_OBJ_WRITE(klass, &me->klass, defined_class);
-    me->def = def;
 
     if (def) {
 	def->alias_count++;
 
 	switch(def->type) {
 	  case VM_METHOD_TYPE_ISEQ:
-	    RB_OBJ_WRITTEN(klass, Qundef, def->body.iseq_body.iseq->self);
-	    RB_OBJ_WRITTEN(klass, Qundef, def->body.iseq_body.cref);
+	    RB_OBJ_WRITTEN(me, Qundef, def->body.iseq_body.iseq->self);
+	    RB_OBJ_WRITTEN(me, Qundef, def->body.iseq_body.cref);
 	    break;
 	  case VM_METHOD_TYPE_IVAR:
-	    RB_OBJ_WRITTEN(klass, Qundef, def->body.attr.location);
+	    RB_OBJ_WRITTEN(me, Qundef, def->body.attr.location);
 	    break;
 	  case VM_METHOD_TYPE_BMETHOD:
-	    RB_OBJ_WRITTEN(klass, Qundef, def->body.proc);
+	    RB_OBJ_WRITTEN(me, Qundef, def->body.proc);
 	    break;
 	  default:;
 	    /* ignore */
@@ -395,6 +350,7 @@ rb_method_entry_make(VALUE klass, ID mid, rb_method_type_t type,
     }
 
     st_insert(mtbl, mid, (st_data_t) me);
+    RB_OBJ_WRITTEN(klass, Qundef, (VALUE)me);
 
     return me;
 }
@@ -481,13 +437,13 @@ rb_add_method0(VALUE klass, ID mid, rb_method_type_t type, void *opts, rb_method
 	  rb_cref_t *private_cref;
 
 	  *(rb_iseq_t **)&def->body.iseq_body.iseq = iseq;
-	  RB_OBJ_WRITTEN(klass, Qundef, iseq->self); /* should be set iseq before newobj */
+	  RB_OBJ_WRITTEN(me, Qundef, iseq->self); /* should be set iseq before newobj */
 	  def->body.iseq_body.cref = NULL;
 
 	  private_cref = vm_cref_new_toplevel(GET_THREAD()); /* TODO: CREF should be shared with other methods */
 	  if (cref) COPY_CREF(private_cref, cref);
 	  CREF_VISI_SET(private_cref, NOEX_PUBLIC);
-	  RB_OBJ_WRITE(klass, &def->body.iseq_body.cref, private_cref);
+	  RB_OBJ_WRITE(me, &def->body.iseq_body.cref, private_cref);
 	  break;
       }
       case VM_METHOD_TYPE_CFUNC:
@@ -499,16 +455,16 @@ rb_add_method0(VALUE klass, ID mid, rb_method_type_t type, void *opts, rb_method
       case VM_METHOD_TYPE_ATTRSET:
       case VM_METHOD_TYPE_IVAR:
 	def->body.attr.id = (ID)(VALUE)opts;
-	RB_OBJ_WRITE(klass, &def->body.attr.location, Qfalse);
+	RB_OBJ_WRITE(me, &def->body.attr.location, Qfalse);
 	th = GET_THREAD();
 	cfp = rb_vm_get_ruby_level_next_cfp(th, th->cfp);
 	if (cfp && (line = rb_vm_get_sourceline(cfp))) {
 	    VALUE location = rb_ary_new3(2, cfp->iseq->location.path, INT2FIX(line));
-	    RB_OBJ_WRITE(klass, &def->body.attr.location, rb_ary_freeze(location));
+	    RB_OBJ_WRITE(me, &def->body.attr.location, rb_ary_freeze(location));
 	}
 	break;
       case VM_METHOD_TYPE_BMETHOD:
-	RB_OBJ_WRITE(klass, &def->body.proc, (VALUE)opts);
+	RB_OBJ_WRITE(me, &def->body.proc, (VALUE)opts);
 	break;
       case VM_METHOD_TYPE_NOTIMPLEMENTED:
 	setup_method_cfunc_struct(&def->body.cfunc, rb_f_notimplement, -1);
@@ -803,7 +759,6 @@ remove_method(VALUE klass, ID mid)
 
     rb_vm_check_redefinition_opt_method(me, klass);
     rb_clear_method_cache_by_class(klass);
-    rb_unlink_method_entry(me);
 
     if (me->def->type == VM_METHOD_TYPE_REFINED) {
 	rb_add_refined_method_entry(klass, mid);
@@ -1366,8 +1321,7 @@ rb_alias(VALUE klass, ID name, ID def)
 
     if (defined_class != target_klass) { /* inter class/module alias */
 	VALUE real_owner;
-	rb_method_entry_t *new_orig_me;
-	rb_method_definition_t *def;
+	rb_method_definition_t *alias_def;
 
 	if (RB_TYPE_P(defined_class, T_ICLASS)) {
 	    defined_class = real_owner = RBASIC_CLASS(defined_class);
@@ -1376,25 +1330,20 @@ rb_alias(VALUE klass, ID name, ID def)
 	    real_owner = defined_class;
 	}
 
-	/* make ne me */
-	new_orig_me = ALLOC(rb_method_entry_t);
-	*new_orig_me = *orig_me;
-	new_orig_me->called_id = name;
-
 	/* make alias def */
-	def = ALLOC(rb_method_definition_t);
-	def->type = VM_METHOD_TYPE_ALIAS;
-	def->original_id = orig_me->called_id;
-	def->alias_count = -1; /* will be increment at method_entry_set0() */
-	def->body.alias.original_me = new_orig_me;
-	if (new_orig_me->def) new_orig_me->def->alias_count++;
+	alias_def = ALLOC(rb_method_definition_t);
+	alias_def->type = VM_METHOD_TYPE_ALIAS;
+	alias_def->original_id = orig_me->called_id;
+	alias_def->alias_count = -1; /* will be increment at method_entry_set0() */
+	alias_def->body.alias.original_me = orig_me;
+	if (orig_me->def) orig_me->def->alias_count++;
 
 	/* make copy */
-	method_entry_set0(target_klass, name, VM_METHOD_TYPE_ALIAS, def, flag, defined_class);
+	method_entry_set0(target_klass, name, VM_METHOD_TYPE_ALIAS, alias_def, flag, defined_class);
     }
     else {
-    method_entry_set(target_klass, name, orig_me, flag, defined_class);
-}
+	method_entry_set(target_klass, name, orig_me, flag, defined_class);
+    }
 }
 
 /*

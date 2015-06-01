@@ -102,19 +102,6 @@ typedef struct rb_method_definition_struct {
     } body;
 } rb_method_definition_t;
 
-typedef struct rb_method_entry_struct {
-    rb_method_flag_t flag;
-    char mark;
-    rb_method_definition_t *def;
-    ID called_id;
-    VALUE klass;                    /* should be marked */
-} rb_method_entry_t;
-
-struct unlinked_method_entry_list_entry {
-    struct unlinked_method_entry_list_entry *next;
-    rb_method_entry_t *me;
-};
-
 #define UNDEFINED_METHOD_ENTRY_P(me) (!(me) || !(me)->def || (me)->def->type == VM_METHOD_TYPE_UNDEF)
 #define UNDEFINED_REFINED_METHOD_P(def) \
     ((def)->type == VM_METHOD_TYPE_REFINED && \
@@ -145,8 +132,11 @@ VALUE rb_method_entry_location(const rb_method_entry_t *me);
 VALUE rb_mod_method_location(VALUE mod, ID id);
 VALUE rb_obj_method_location(VALUE obj, ID id);
 
-void rb_mark_method_entry(const rb_method_entry_t *me);
 void rb_free_method_entry(const rb_method_entry_t *me);
 void rb_sweep_method_entry(void *vm);
+
+rb_method_entry_t *rb_method_entry_create(rb_method_flag_t noex, ID called_id, VALUE klass, rb_method_definition_t *def);
+rb_method_entry_t *rb_method_entry_clone(const rb_method_entry_t *me);
+void rb_method_entry_copy(rb_method_entry_t *dst, rb_method_entry_t *src);
 
 #endif /* METHOD_H */

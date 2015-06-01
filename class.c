@@ -904,11 +904,9 @@ move_refined_method(st_data_t key, st_data_t value, st_data_t data)
 	if (me->def->body.orig_me) {
 	    rb_method_entry_t *orig_me = me->def->body.orig_me, *new_me;
 	    me->def->body.orig_me = NULL;
-	    new_me = ALLOC(rb_method_entry_t);
-	    *new_me = *me;
+	    new_me = rb_method_entry_clone(me);
 	    st_add_direct(tbl, key, (st_data_t) new_me);
-	    *me = *orig_me;
-	    xfree(orig_me);
+	    rb_method_entry_copy(me, orig_me);
 	    return ST_CONTINUE;
 	}
 	else {

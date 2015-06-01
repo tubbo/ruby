@@ -2078,8 +2078,7 @@ rb_thread_mark(void *ptr)
 		if (cfp->me) {
 		    /* bitmap marking `me' does not seem worth the trouble:
 		     * [ruby-core:64340] [ruby-core:64341] */
-		    ((rb_method_entry_t *)cfp->me)->mark = 1;
-		    rb_mark_method_entry(cfp->me);
+		    rb_gc_mark((VALUE)cfp->me);
 		}
 		cfp = RUBY_VM_PREVIOUS_CONTROL_FRAME(cfp);
 	    }

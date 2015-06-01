@@ -535,6 +535,7 @@ enum imemo_type {
     imemo_throw_data = 3,
     imemo_ifunc = 4,
     imemo_memo = 5,
+    imemo_ment = 6,
     imemo_mask = 0x07
 };
 
@@ -614,6 +615,16 @@ struct MEMO {
 #define MEMO_FOR(type, value) ((type *)RARRAY_PTR(value))
 #define NEW_MEMO_FOR(type, value) \
   ((value) = rb_ary_tmp_new_fill(type_roomof(type, VALUE)), MEMO_FOR(type, value))
+
+/* ment */
+
+typedef struct rb_method_entry_struct {
+    VALUE flags;
+    VALUE flag;
+    struct rb_method_definition_struct *def;
+    ID called_id;
+    const VALUE klass;    /* should be mark */
+} rb_method_entry_t;
 
 /* global variable */
 
