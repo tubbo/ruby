@@ -749,7 +749,7 @@ rb_raise_jump(VALUE mesg, VALUE cause)
     rb_thread_t *th = GET_THREAD();
     const rb_control_frame_t *cfp = th->cfp;
     const rb_method_entry_t *me = rb_vm_frame_method_entry(cfp);
-    VALUE klass = me->klass;
+    VALUE klass = rb_method_entry_owner(me);
     VALUE self = cfp->self;
     ID mid = me->called_id;
 

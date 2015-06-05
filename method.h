@@ -50,7 +50,7 @@ typedef struct rb_method_entry_struct {
     VALUE dummy;
     struct rb_method_definition_struct * const def;
     ID called_id;
-    const VALUE klass;    /* should be marked */
+    const VALUE defined_class;    /* should be marked */
 } rb_method_entry_t;
 
 #define METHOD_ENTRY_VISI(me)  (rb_method_visibility_t)(((me)->flags & (IMEMO_FL_USER0 | IMEMO_FL_USER1)) >> (IMEMO_FL_USHIFT+0))
@@ -127,6 +127,7 @@ typedef struct rb_method_alias_struct {
 
 typedef struct rb_method_refined_struct {
     const struct rb_method_entry_struct * const orig_me;
+    const VALUE owner;
 } rb_method_refined_t;
 
 typedef struct rb_method_definition_struct {
@@ -190,5 +191,7 @@ rb_method_entry_t *rb_method_entry_clone(const rb_method_entry_t *me);
 void rb_method_entry_copy(rb_method_entry_t *dst, const rb_method_entry_t *src);
 
 void rb_scope_visibility_set(rb_method_visibility_t);
+
+VALUE rb_method_entry_owner(const rb_method_entry_t *me);
 
 #endif /* METHOD_H */

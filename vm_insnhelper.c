@@ -1581,8 +1581,8 @@ vm_call_cfunc_with_frame(rb_thread_t *th, rb_control_frame_t *reg_cfp, rb_call_i
     rb_block_t *blockptr = ci->blockptr;
     int argc = ci->argc;
 
-    RUBY_DTRACE_CMETHOD_ENTRY_HOOK(th, me->klass, me->called_id);
-    EXEC_EVENT_HOOK(th, RUBY_EVENT_C_CALL, recv, me->called_id, me->klass, Qundef);
+    RUBY_DTRACE_CMETHOD_ENTRY_HOOK(th, rb_method_entry_owner(me), me->called_id);
+    EXEC_EVENT_HOOK(th, RUBY_EVENT_C_CALL, recv, me->called_id, rb_method_entry_owner(me), Qundef);
 
     vm_push_frame(th, NULL, VM_FRAME_MAGIC_CFUNC, recv, defined_class,
 		  VM_ENVVAL_BLOCK_PTR(blockptr), (VALUE)me,
@@ -1600,8 +1600,8 @@ vm_call_cfunc_with_frame(rb_thread_t *th, rb_control_frame_t *reg_cfp, rb_call_i
 
     vm_pop_frame(th);
 
-    EXEC_EVENT_HOOK(th, RUBY_EVENT_C_RETURN, recv, me->called_id, me->klass, val);
-    RUBY_DTRACE_CMETHOD_RETURN_HOOK(th, me->klass, me->called_id);
+    EXEC_EVENT_HOOK(th, RUBY_EVENT_C_RETURN, recv, me->called_id, rb_method_entry_owner(me), val);
+    RUBY_DTRACE_CMETHOD_RETURN_HOOK(th, rb_method_entry_owner(me), me->called_id);
 
     return val;
 }
@@ -1651,8 +1651,8 @@ vm_call_cfunc(rb_thread_t *th, rb_control_frame_t *reg_cfp, rb_call_info_t *ci)
     CALLER_SETUP_ARG(reg_cfp, ci);
     if (len >= 0) rb_check_arity(ci->argc, len, len);
 
-    RUBY_DTRACE_CMETHOD_ENTRY_HOOK(th, me->klass, me->called_id);
-    EXEC_EVENT_HOOK(th, RUBY_EVENT_C_CALL, recv, me->called_id, me->klass, Qnil);
+    RUBY_DTRACE_CMETHOD_ENTRY_HOOK(th, rb_method_entry_owner(me), me->called_id);
+    EXEC_EVENT_HOOK(th, RUBY_EVENT_C_CALL, recv, me->called_id, rb_method_entry_owner(me), Qnil);
 
     if (!(ci->me->def->flag & METHOD_VISI_PROTECTED) &&
 	!(ci->flag & VM_CALL_ARGS_SPLAT) &&
@@ -1661,8 +1661,8 @@ vm_call_cfunc(rb_thread_t *th, rb_control_frame_t *reg_cfp, rb_call_info_t *ci)
     }
     val = vm_call_cfunc_latter(th, reg_cfp, ci);
 
-    EXEC_EVENT_HOOK(th, RUBY_EVENT_C_RETURN, recv, me->called_id, me->klass, val);
-    RUBY_DTRACE_CMETHOD_RETURN_HOOK(th, me->klass, me->called_id);
+    EXEC_EVENT_HOOK(th, RUBY_EVENT_C_RETURN, recv, me->called_id, rb_method_entry_owner(me), val);
+    RUBY_DTRACE_CMETHOD_RETURN_HOOK(th, rb_method_entry_owner(me), me->called_id);
 
     return val;
 }
@@ -1943,7 +1943,7 @@ vm_call_method(rb_thread_t *th, rb_control_frame_t *cfp, rb_call_info_t *ci)
 		return vm_call_bmethod(th, cfp, ci);
 	      }
 	      case VM_METHOD_TYPE_ZSUPER:{
-		klass = ci->me->klass;
+		klass = rb_method_entry_owner(ci->me);
 		klass = RCLASS_ORIGIN(klass);
 	      zsuper_method_dispatch:
 		klass = RCLASS_SUPER(klass);
@@ -1965,7 +1965,7 @@ vm_call_method(rb_thread_t *th, rb_control_frame_t *cfp, rb_call_info_t *ci)
 	      }
 	      case VM_METHOD_TYPE_ALIAS: {
 		ci->me = ci->me->def->body.alias.original_me;
-		ci->defined_class = find_defined_class_by_owner(ci->defined_class, ci->me->klass /* owner */);
+		ci->defined_class = find_defined_class_by_owner(ci->defined_class, rb_method_entry_owner(ci->me) /* owner */);
 		goto normal_method_dispatch;
 	      }
 	      case VM_METHOD_TYPE_OPTIMIZED:{
@@ -2025,7 +2025,7 @@ vm_call_method(rb_thread_t *th, rb_control_frame_t *cfp, rb_call_info_t *ci)
 		    goto start_method_dispatch;
 		}
 		else {
-		    klass = ci->me->klass;
+		    klass = rb_method_entry_owner(ci->me);
 		    goto zsuper_method_dispatch;
 		}
 	      }

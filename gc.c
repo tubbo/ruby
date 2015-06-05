@@ -3928,7 +3928,7 @@ mark_method_entry(rb_objspace_t *objspace, const rb_method_entry_t *me)
 {
     const rb_method_definition_t *def = me->def;
 
-    gc_mark(objspace, me->klass);
+    gc_mark(objspace, me->defined_class);
 
     if (def) {
 	switch (def->type) {
@@ -3948,6 +3948,7 @@ mark_method_entry(rb_objspace_t *objspace, const rb_method_entry_t *me)
 	    return;
 	  case VM_METHOD_TYPE_REFINED:
 	    gc_mark(objspace, (VALUE)def->body.refined.orig_me);
+	    gc_mark(objspace, (VALUE)def->body.refined.owner);
 	    break;
 	  case VM_METHOD_TYPE_CFUNC:
 	  case VM_METHOD_TYPE_ZSUPER:
@@ -8969,7 +8970,7 @@ obj_info(VALUE obj)
 	if (imemo_type(obj) == imemo_ment) {
 	    const rb_method_entry_t *me = &RANY(obj)->as.imemo.ment;
 	    snprintf(buff, OBJ_INFO_BUFFERS_SIZE, "%s (called_id: %s, type: %s, alias: %d, class: %s)", buff,
-		     rb_id2name(me->called_id), method_type_name(me->def->type), me->def->alias_count, obj_info(me->klass));
+		     rb_id2name(me->called_id), method_type_name(me->def->type), me->def->alias_count, obj_info(me->defined_class));
 	}
       }
       default:

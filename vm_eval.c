@@ -216,7 +216,7 @@ vm_call0_body(rb_thread_t* th, rb_call_info_t *ci, const VALUE *argv)
       case VM_METHOD_TYPE_ALIAS:
 	{
 	    ci->me = ci->me->def->body.alias.original_me;
-	    ci->defined_class = find_defined_class_by_owner(ci->defined_class, ci->me->klass);
+	    ci->defined_class = find_defined_class_by_owner(ci->defined_class, rb_method_entry_owner(ci->me));
 	    goto again;
 	}
       case VM_METHOD_TYPE_MISSING:
@@ -568,7 +568,8 @@ rb_method_call_status(rb_thread_t *th, const rb_method_entry_t *me, call_type sc
 	me = rb_resolve_refined_method(Qnil, me, NULL);
 	if (UNDEFINED_METHOD_ENTRY_P(me)) goto undefined;
     }
-    klass = me->klass;
+
+    klass = rb_method_entry_owner(me);
     oid = me->def->original_id;
     visi = METHOD_ENTRY_VISI(me);
 

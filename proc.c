@@ -2329,7 +2329,7 @@ method_inspect(VALUE method)
     rb_str_buf_cat2(str, s);
     rb_str_buf_cat2(str, ": ");
 
-    mklass = data->me->klass;
+    mklass = rb_method_entry_owner(data->me);
     if (FL_TEST(mklass, FL_SINGLETON)) {
 	VALUE v = rb_ivar_get(mklass, attached);
 
