@@ -220,7 +220,7 @@ static ruby_gc_params_t gc_params = {
  * 5: show all references
  */
 #ifndef RGENGC_CHECK_MODE
-#define RGENGC_CHECK_MODE  0
+#define RGENGC_CHECK_MODE  1
 #endif
 
 /* RGENGC_OLD_NEWOBJ_CHECK
@@ -2107,6 +2107,7 @@ obj_free(rb_objspace_t *objspace, VALUE obj)
 	if (FL_TEST(obj, RICLASS_IS_ORIGIN)) {
 	    rb_free_m_tbl(RCLASS_M_TBL(obj));
 	}
+	rb_free_m_tbl(RCLASS_CALLABLE_M_TBL(obj));
 	if (RCLASS_EXT(obj)->subclasses) {
 	    rb_class_detach_subclasses(obj);
 	    RCLASS_EXT(obj)->subclasses = NULL;
@@ -4328,6 +4329,7 @@ gc_mark_children(rb_objspace_t *objspace, VALUE obj)
 	if (FL_TEST(obj, RICLASS_IS_ORIGIN)) {
 	    mark_m_tbl(objspace, RCLASS_M_TBL(obj));
 	}
+	mark_m_tbl(objspace, RCLASS_CALLABLE_M_TBL(obj));
 	if (!RCLASS_EXT(obj)) break;
 	gc_mark(objspace, RCLASS_SUPER((VALUE)obj));
 	break;

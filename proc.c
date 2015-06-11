@@ -23,7 +23,6 @@ const rb_cref_t *rb_vm_cref_in_context(VALUE self, VALUE cbase);
 struct METHOD {
     VALUE recv;
     VALUE rclass;
-    VALUE defined_class;
     ID id;
     rb_method_entry_t * const me;
 };
@@ -1105,7 +1104,6 @@ static void
 bm_mark(void *ptr)
 {
     struct METHOD *data = ptr;
-    rb_gc_mark(data->defined_class);
     rb_gc_mark(data->rclass);
     rb_gc_mark(data->recv);
     rb_gc_mark((VALUE)data->me);
@@ -1166,7 +1164,6 @@ mnew_missing(VALUE rclass, VALUE klass, VALUE obj, ID id, ID rid, VALUE mclass)
 
     data->recv = obj;
     data->rclass = rclass;
-    data->defined_class = klass;
     data->id = rid;
 
     def = ZALLOC(rb_method_definition_t);
@@ -1183,7 +1180,7 @@ mnew_missing(VALUE rclass, VALUE klass, VALUE obj, ID id, ID rid, VALUE mclass)
 }
 
 static VALUE
-mnew_internal(const rb_method_entry_t *me, VALUE defined_class, VALUE klass,
+mnew_internal(const rb_method_entry_t *me, VALUE klass,
 	      VALUE obj, ID id, VALUE mclass, int scope, int error)
 {
     struct METHOD *data;
@@ -1208,13 +1205,13 @@ mnew_internal(const rb_method_entry_t *me, VALUE defined_class, VALUE klass,
 	}
     }
     if (me->def->type == VM_METHOD_TYPE_ZSUPER) {
-	klass = RCLASS_SUPER(defined_class);
+	klass = RCLASS_SUPER(me->defined_class);
 	id = me->def->original_id;
-	me = rb_method_entry_without_refinements(klass, id, &defined_class);
+	me = rb_callable_method_entry_without_refinements(klass, id);
 	goto again;
     }
 
-    klass = defined_class;
+    klass = me->defined_class;
 
     while (rclass != klass &&
 	   (FL_TEST(rclass, FL_SINGLETON) || RB_TYPE_P(rclass, T_ICLASS))) {
@@ -1225,7 +1222,6 @@ mnew_internal(const rb_method_entry_t *me, VALUE defined_class, VALUE klass,
 
     data->recv = obj;
     data->rclass = rclass;
-    data->defined_class = defined_class;
     data->id = rid;
     RB_OBJ_WRITE(method, &data->me, rb_method_entry_clone(me));
     OBJ_INFECT(method, klass);
@@ -1233,19 +1229,25 @@ mnew_internal(const rb_method_entry_t *me, VALUE defined_class, VALUE klass,
 }
 
 static VALUE
-mnew_from_me(const rb_method_entry_t *me, VALUE defined_class, VALUE klass,
+mnew_from_me(const rb_method_entry_t *me, VALUE klass,
 	     VALUE obj, ID id, VALUE mclass, int scope)
 {
-    return mnew_internal(me, defined_class, klass, obj, id, mclass, scope, TRUE);
+    return mnew_internal(me, klass, obj, id, mclass, scope, TRUE);
 }
 
 static VALUE
 mnew(VALUE klass, VALUE obj, ID id, VALUE mclass, int scope)
 {
-    VALUE defined_class;
-    const rb_method_entry_t *me =
-	rb_method_entry_without_refinements(klass, id, &defined_class);
-    return mnew_from_me(me, defined_class, klass, obj, id, mclass, scope);
+    const rb_method_entry_t *me;
+
+    if (mclass == rb_cUnboundMethod) {
+	me = rb_method_entry_without_refinements(klass, id);
+    }
+    else {
+	me = rb_callable_method_entry_without_refinements(klass, id);
+    }
+
+    return mnew_from_me(me, klass, obj, id, mclass, scope);
 }
 
 
@@ -1352,7 +1354,6 @@ method_unbind(VALUE obj)
     data->id = orig->id;
     RB_OBJ_WRITE(method, &data->me, rb_method_entry_clone(orig->me));
     data->rclass = orig->rclass;
-    data->defined_class = orig->defined_class;
     OBJ_INFECT(method, obj);
 
     return method;
@@ -1417,16 +1418,8 @@ static VALUE
 method_owner(VALUE obj)
 {
     struct METHOD *data;
-    VALUE defined_class;
-
     TypedData_Get_Struct(obj, struct METHOD, &method_data_type, data);
-    defined_class = data->defined_class;
-
-    if (RB_TYPE_P(defined_class, T_ICLASS)) {
-	defined_class = RBASIC_CLASS(defined_class);
-    }
-
-    return defined_class;
+    return data->me->owner;
 }
 
 void
@@ -1562,7 +1555,7 @@ rb_obj_singleton_method(VALUE obj, VALUE vid)
 	rb_name_error(id, "undefined singleton method `%"PRIsVALUE"' for `%"PRIsVALUE"'",
 		      QUOTE_ID(id), obj);
     }
-    return mnew_from_me(me, klass, klass, obj, id, rb_cMethod, FALSE);
+    return mnew_from_me(me, klass, obj, id, rb_cMethod, FALSE);
 }
 
 /*
@@ -1732,7 +1725,6 @@ rb_mod_define_method(int argc, VALUE *argv, VALUE mod)
 	    RB_OBJ_WRITE(proc->block.iseq->self, &proc->block.iseq->klass, mod);
 	    proc->is_lambda = TRUE;
 	    proc->is_from_method = TRUE;
-	    proc->block.klass = mod;
 	}
 	rb_add_method(mod, id, VM_METHOD_TYPE_BMETHOD, (void *)body, scope_visi->method_visi);
 	if (scope_visi->module_func) {
@@ -1828,7 +1820,6 @@ method_clone(VALUE self)
     CLONESETUP(clone, self);
     data->recv = orig->recv;
     data->rclass = orig->rclass;
-    data->defined_class = orig->defined_class;
     data->id = orig->id;
     RB_OBJ_WRITE(clone, &data->me, rb_method_entry_clone(orig->me));
     return clone;
@@ -1877,7 +1868,6 @@ rb_method_call_with_block(int argc, const VALUE *argv, VALUE method, VALUE pass_
     if ((state = EXEC_TAG()) == 0) {
 	rb_thread_t *th = GET_THREAD();
 	rb_block_t *block = 0;
-	VALUE defined_class;
 
 	if (!NIL_P(pass_procval)) {
 	    rb_proc_t *pass_proc;
@@ -1887,9 +1877,8 @@ rb_method_call_with_block(int argc, const VALUE *argv, VALUE method, VALUE pass_
 
 	th->passed_block = block;
 	VAR_INITIALIZED(data);
-	defined_class = data->defined_class;
-	if (BUILTIN_TYPE(defined_class) == T_MODULE) defined_class = data->rclass;
-	result = rb_vm_call(th, data->recv, data->id, argc, argv, data->me, defined_class);
+	/* TODO: 何これ？ if (BUILTIN_TYPE(defined_class) == T_MODULE) defined_class = data->rclass; */
+	result = rb_vm_call(th, data->recv, data->id, argc, argv, data->me);
     }
     POP_TAG();
     if (safe >= 0)
@@ -2015,18 +2004,19 @@ umethod_bind(VALUE method, VALUE recv)
     method = TypedData_Make_Struct(rb_cMethod, struct METHOD, &method_data_type, bound);
     bound->recv = data->recv;
     bound->rclass = data->rclass;
-    bound->defined_class = data->defined_class;
     bound->id = data->id;
     RB_OBJ_WRITE(method, &bound->me, rb_method_entry_clone(data->me));
     rclass = CLASS_OF(recv);
-    if (BUILTIN_TYPE(bound->defined_class) == T_MODULE) {
-	VALUE ic = rb_class_search_ancestor(rclass, bound->defined_class);
+
+    if (RB_TYPE_P(bound->me->owner, T_MODULE)) {
+	VALUE ic = rb_class_search_ancestor(rclass, bound->me->owner);
 	if (ic) {
 	    rclass = ic;
 	}
 	else {
 	    rclass = rb_include_class_new(methclass, rclass);
 	}
+	RB_OBJ_WRITE(method, &bound->me, rb_method_entry_complement_defined_class(bound->me, rclass));
     }
     bound->recv = recv;
     bound->rclass = rclass;
@@ -2150,14 +2140,12 @@ method_arity(VALUE method)
 static const rb_method_entry_t *
 original_method_entry(VALUE mod, ID id)
 {
-    VALUE rclass;
     const rb_method_entry_t *me;
 
-    while ((me = rb_method_entry(mod, id, &rclass)) != 0) {
+    while ((me = rb_method_entry(mod, id)) != 0) {
 	const rb_method_definition_t *def = me->def;
-	if (!def) break;
 	if (def->type != VM_METHOD_TYPE_ZSUPER) break;
-	mod = RCLASS_SUPER(rclass);
+	mod = RCLASS_SUPER(me->owner);
 	id = def->original_id;
     }
     return me;
@@ -2444,18 +2432,16 @@ static VALUE
 method_super_method(VALUE method)
 {
     const struct METHOD *data;
-    VALUE defined_class, super_class;
+    VALUE super_class;
     const rb_method_entry_t *me;
 
     TypedData_Get_Struct(method, struct METHOD, &method_data_type, data);
-    defined_class = data->defined_class;
-    if (BUILTIN_TYPE(defined_class) == T_MODULE) defined_class = data->rclass;
-    super_class = RCLASS_SUPER(defined_class);
+    /* TODO: UnboundMethod と同じコード使っている？ if (BUILTIN_TYPE(defined_class) == T_MODULE) defined_class = data->rclass; */
+    super_class = RCLASS_SUPER(data->me->defined_class);
     if (!super_class) return Qnil;
-    me = rb_method_entry_without_refinements(super_class, data->id, &defined_class);
+    me = rb_callable_method_entry_without_refinements(super_class, data->id);
     if (!me) return Qnil;
-    return mnew_internal(me, defined_class,
-			 super_class, data->recv, data->id,
+    return mnew_internal(me, super_class, data->recv, data->id,
 			 rb_obj_class(method), FALSE, FALSE);
 }
 

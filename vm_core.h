@@ -184,7 +184,6 @@ typedef struct rb_call_info_struct {
 
     /* inline cache: values */
     const rb_method_entry_t *me;
-    VALUE defined_class;
 
     /* temporary values for method calling */
     struct rb_block_struct *blockptr;
@@ -533,10 +532,9 @@ typedef struct rb_control_frame_struct {
     rb_iseq_t *iseq;		/* cfp[2] */
     VALUE flag;			/* cfp[3] */
     VALUE self;			/* cfp[4] / block[0] */
-    VALUE klass;		/* cfp[5] / block[1] */
-    VALUE *ep;			/* cfp[6] / block[2] */
-    rb_iseq_t *block_iseq;	/* cfp[7] / block[3] */
-    VALUE proc;			/* cfp[8] / block[4] */
+    VALUE *ep;			/* cfp[6] / block[1] */
+    rb_iseq_t *block_iseq;	/* cfp[7] / block[2] */
+    VALUE proc;			/* cfp[8] / block[3] */
 
 #if VM_DEBUG_BP_CHECK
     VALUE *bp_check;		/* cfp[9] */
@@ -545,7 +543,6 @@ typedef struct rb_control_frame_struct {
 
 typedef struct rb_block_struct {
     VALUE self;			/* share with method frame if it's only block */
-    VALUE klass;		/* share with method frame if it's only block */
     VALUE *ep;			/* share with method frame if it's only block */
     rb_iseq_t *iseq;
     VALUE proc;
@@ -976,8 +973,7 @@ VALUE *rb_binding_add_dynavars(rb_binding_t *bind, int dyncount, const ID *dynva
 void rb_vm_inc_const_missing_count(void);
 void rb_vm_gvl_destroy(rb_vm_t *vm);
 VALUE rb_vm_call(rb_thread_t *th, VALUE recv, VALUE id, int argc,
-		 const VALUE *argv, const rb_method_entry_t *me,
-		 VALUE defined_class);
+		 const VALUE *argv, const rb_method_entry_t *me);
 
 void rb_thread_start_timer_thread(void);
 void rb_thread_stop_timer_thread(int);
