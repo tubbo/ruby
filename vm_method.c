@@ -816,6 +816,7 @@ rb_method_entry_resolve_refienment(VALUE klass, ID id, int callable, int with_re
 {
     const rb_method_entry_t *me;
 
+    /* TODO: shortcut */
     if (callable) {
 	me = rb_callable_method_entry(klass, id);
     }
@@ -823,17 +824,22 @@ rb_method_entry_resolve_refienment(VALUE klass, ID id, int callable, int with_re
 	me = rb_method_entry(klass, id);
     }
 
-    if (me && me->def->type == VM_METHOD_TYPE_REFINED) {
-	if (with_refinement) {
-	    const rb_cref_t *cref = rb_vm_cref();
-	    VALUE refinements = cref ? CREF_REFINEMENTS(cref) : Qnil;
-	    me = rb_resolve_refined_method(refinements, me);
-	}
-	else {
-	    me = rb_resolve_refined_method(Qnil, me);
+    if (me) {
+	if (me->def->type == VM_METHOD_TYPE_REFINED) {
+	    if (with_refinement) {
+		const rb_cref_t *cref = rb_vm_cref();
+		VALUE refinements = cref ? CREF_REFINEMENTS(cref) : Qnil;
+		me = rb_resolve_refined_method(refinements, me);
+	    }
+	    else {
+		me = rb_resolve_refined_method(Qnil, me);
+	    }
+
+	    if (UNDEFINED_METHOD_ENTRY_P(me)) me = NULL;
 	}
     }
 
+    VM_ASSERT(!me || !callable || me->defined_class != 0);
     return me;
 }
 
