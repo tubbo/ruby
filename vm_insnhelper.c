@@ -1112,6 +1112,7 @@ rb_equal_opt(VALUE obj1, VALUE obj2)
     ci.klass = 0;
     ci.method_state = 0;
     ci.me = NULL;
+    ci.class_serial = 0;
     return opt_eq_func(obj1, obj2, &ci);
 }
 
@@ -1963,6 +1964,7 @@ vm_call_method(rb_thread_t *th, rb_control_frame_t *cfp, rb_call_info_t *ci)
 
 		    if (me->defined_class == 0) {
 			VALUE defined_class = find_defined_class_by_owner(ci->me->defined_class, me->owner);
+			VM_ASSERT(RB_TYPE_P(me->owner, T_MODULE));
 			me = rb_method_entry_complement_defined_class(me, defined_class);
 			RB_OBJ_WRITE(ci->me, &ci->me->def->body.alias.original_me, me);
 		    }

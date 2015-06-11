@@ -1300,6 +1300,7 @@ method_eq(VALUE method, VALUE other)
     m2 = (struct METHOD *)DATA_PTR(other);
 
     if (!rb_method_entry_eq(m1->me, m2->me) ||
+	m1->me->owner != m2->me->owner ||
 	m1->rclass != m2->rclass ||
 	m1->recv != m2->recv) {
 	return Qfalse;

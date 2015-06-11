@@ -1523,11 +1523,12 @@ rb_alias(VALUE klass, ID alias_name, ID original_name)
 
 	alias_me = rb_add_method(target_klass, alias_name, VM_METHOD_TYPE_ALIAS, rb_method_entry_clone(orig_me), visi);
 	RB_OBJ_WRITE(alias_me, &alias_me->owner, owner);
-	*(ID *)&alias_me->def->body.alias.original_me->called_id = alias_name;
+	alias_me->def->original_id = orig_me->called_id;
+	// *(ID *)&alias_me->def->body.alias.original_me->called_id = alias_name;
 	METHOD_ENTRY_SAFE_SET(alias_me, METHOD_ENTRY_SAFE(orig_me));
     }
     else {
-	rb_method_entry_t *alias_me = method_entry_set(target_klass, alias_name, orig_me, visi, orig_me->owner);
+	rb_method_entry_t *alias_me = method_entry_set(target_klass, alias_name, orig_me, visi, target_klass);
 	RB_OBJ_WRITE(alias_me, &alias_me->defined_class, defined_class);
     }
 }
