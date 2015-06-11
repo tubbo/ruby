@@ -40,6 +40,14 @@ vm_stackoverflow(void)
 }
 
 #if VM_CHECK_MODE > 0
+
+int callable, called;
+
+__attribute__((destructor)) static void
+    show_stat(void){
+	fprintf(stderr, "callable/called: %d/%d\n", callable, called);
+    }
+
 static void
 check_frame(int magic, int req_block, int req_me, int req_cref, VALUE specval, VALUE cref_or_me)
 {
@@ -75,6 +83,12 @@ check_frame(int magic, int req_block, int req_me, int req_cref, VALUE specval, V
 		}
 	    }
 	}
+    }
+
+    if (cref_or_me_type == imemo_ment) {
+	const rb_method_entry_t *me = (const rb_method_entry_t *)cref_or_me;
+	called++;
+	if (me->defined_class != 0) callable++;
     }
 }
 #endif

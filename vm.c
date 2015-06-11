@@ -8,6 +8,8 @@
 
 **********************************************************************/
 
+#define VM_CHECK_MODE 0
+
 #include "internal.h"
 #include "ruby/vm.h"
 #include "ruby/st.h"

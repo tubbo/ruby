@@ -332,10 +332,31 @@ method_definition_addref(rb_method_definition_t *def)
     return def;
 }
 
+static rb_method_entry_t *
+rb_method_entry_alloc(ID called_id, VALUE owner, VALUE defined_class, const rb_method_definition_t *def)
+{
+    rb_method_entry_t *me = (rb_method_entry_t *)rb_imemo_new(imemo_ment, (VALUE)def, (VALUE)called_id, owner, defined_class);
+    return me;
+}
+
+static VALUE
+filter_defined_class(VALUE klass)
+{
+    switch (BUILTIN_TYPE(klass)) {
+      case T_CLASS:
+	return klass;
+      case T_MODULE:
+	return 0;
+      case T_ICLASS:
+	break;
+    }
+    rb_bug("filter_defined_class: %s", rb_obj_info(klass));
+}
+
 rb_method_entry_t *
 rb_method_entry_create(ID called_id, VALUE klass, rb_method_visibility_t visi, const rb_method_definition_t *def)
 {
-    rb_method_entry_t *me = (rb_method_entry_t *)rb_imemo_new(imemo_ment, (VALUE)def, (VALUE)called_id, (VALUE)klass, 0);
+    rb_method_entry_t *me = rb_method_entry_alloc(called_id, klass, filter_defined_class(klass), def);
     METHOD_ENTRY_FLAGS_SET(me, visi, ruby_running ? FALSE : TRUE, rb_safe_level());
     if (def != NULL) method_definition_reset(me);
     return me;
@@ -344,9 +365,18 @@ rb_method_entry_create(ID called_id, VALUE klass, rb_method_visibility_t visi, c
 rb_method_entry_t *
 rb_method_entry_clone(const rb_method_entry_t *src_me)
 {
-    rb_method_entry_t *me = rb_method_entry_create(src_me->called_id, src_me->defined_class,
-						   METHOD_ENTRY_VISI(src_me),
-						   method_definition_addref(src_me->def));
+    rb_method_entry_t *me = rb_method_entry_alloc(src_me->called_id, src_me->owner, src_me->defined_class,
+						  method_definition_addref(src_me->def));
+    METHOD_ENTRY_FLAGS_COPY(me, src_me);
+    return me;
+}
+
+rb_method_entry_t *
+rb_method_entry_complement_defined_class(const rb_method_entry_t *src_me, VALUE defined_class)
+{
+    rb_method_entry_t *me = rb_method_entry_alloc(src_me->called_id, src_me->owner, defined_class,
+						  method_definition_addref(src_me->def));
+    METHOD_ENTRY_FLAGS_COPY(me, src_me);
     return me;
 }
 
@@ -356,7 +386,9 @@ rb_method_entry_copy(rb_method_entry_t *dst, const rb_method_entry_t *src)
     *(rb_method_definition_t **)&dst->def = method_definition_addref(src->def);
     method_definition_reset(dst);
     dst->called_id = src->called_id;
+    RB_OBJ_WRITE((VALUE)dst, &dst->owner, src->owner);
     RB_OBJ_WRITE((VALUE)dst, &dst->defined_class, src->defined_class);
+    METHOD_ENTRY_FLAGS_COPY(dst, src);
 }
 
 static void
@@ -371,8 +403,7 @@ make_method_entry_refined(VALUE owner, rb_method_entry_t *me)
 	    VALUE owner;
 	} refined;
 
-
-	rb_vm_check_redefinition_opt_method(me, me->defined_class);
+	rb_vm_check_redefinition_opt_method(me, me->owner);
 
 	refined.orig_me = rb_method_entry_clone(me);
 	refined.owner = owner;
@@ -591,10 +622,8 @@ rb_method_entry_set(VALUE klass, ID mid, const rb_method_entry_t *me, rb_method_
 VALUE
 rb_method_entry_owner(const rb_method_entry_t *me)
 {
-    VALUE owner = me->defined_class;
-    if (RB_TYPE_P(owner, T_ICLASS)) {
-	owner = RBASIC_CLASS(owner);
-    }
+    VALUE owner = me->owner;
+
 #if VM_CHECK_MODE > 0
     switch (TYPE(owner)) {
       case T_CLASS:
@@ -1430,7 +1459,7 @@ rb_alias(VALUE klass, ID alias_name, ID original_name)
 
 	/* make mthod entry */
 	alias_me = rb_add_method(target_klass, alias_name, VM_METHOD_TYPE_ALIAS, rb_method_entry_clone(orig_me), visi);
-	RB_OBJ_WRITE(alias_me, &alias_me->defined_class, defined_class);
+	RB_OBJ_WRITE(alias_me, &alias_me->owner, real_owner);
 	alias_me->def->original_id = orig_me->called_id;
 	*(ID *)&alias_me->def->body.alias.original_me->called_id = alias_name;
 	METHOD_ENTRY_SAFE_SET(alias_me, METHOD_ENTRY_SAFE(orig_me));

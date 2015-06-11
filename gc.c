@@ -3928,6 +3928,7 @@ mark_method_entry(rb_objspace_t *objspace, const rb_method_entry_t *me)
 {
     const rb_method_definition_t *def = me->def;
 
+    gc_mark(objspace, me->owner);
     gc_mark(objspace, me->defined_class);
 
     if (def) {

@@ -47,10 +47,10 @@ typedef struct rb_cref_struct {
 
 typedef struct rb_method_entry_struct {
     VALUE flags;
-    VALUE dummy;
+    VALUE defined_class;
     struct rb_method_definition_struct * const def;
     ID called_id;
-    const VALUE defined_class;    /* should be marked */
+    const VALUE owner;    /* should be marked */
 } rb_method_entry_t;
 
 #define METHOD_ENTRY_VISI(me)  (rb_method_visibility_t)(((me)->flags & (IMEMO_FL_USER0 | IMEMO_FL_USER1)) >> (IMEMO_FL_USHIFT+0))
@@ -84,6 +84,13 @@ METHOD_ENTRY_FLAGS_SET(rb_method_entry_t *me, rb_method_visibility_t visi, unsig
     me->flags =
       (me->flags & ~(IMEMO_FL_USER0|IMEMO_FL_USER1|IMEMO_FL_USER2|IMEMO_FL_USER3|IMEMO_FL_USER4)) |
 	((visi << IMEMO_FL_USHIFT+0) | (basic << (IMEMO_FL_USHIFT+2)) | (safe << IMEMO_FL_USHIFT+3));
+}
+static inline void
+METHOD_ENTRY_FLAGS_COPY(rb_method_entry_t *dst, const rb_method_entry_t *src)
+{
+    dst->flags =
+      (dst->flags & ~(IMEMO_FL_USER0|IMEMO_FL_USER1|IMEMO_FL_USER2|IMEMO_FL_USER3|IMEMO_FL_USER4)) |
+	(src->flags & (IMEMO_FL_USER0|IMEMO_FL_USER1|IMEMO_FL_USER2|IMEMO_FL_USER3|IMEMO_FL_USER4));
 }
 
 typedef enum {
