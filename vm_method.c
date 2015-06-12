@@ -1528,7 +1528,7 @@ rb_alias(VALUE klass, ID alias_name, ID original_name)
 	METHOD_ENTRY_SAFE_SET(alias_me, METHOD_ENTRY_SAFE(orig_me));
     }
     else {
-	rb_method_entry_t *alias_me = method_entry_set(target_klass, alias_name, orig_me, visi, target_klass);
+	rb_method_entry_t *alias_me = method_entry_set(target_klass, alias_name, orig_me, visi, orig_me->owner);
 	RB_OBJ_WRITE(alias_me, &alias_me->defined_class, defined_class);
     }
 }

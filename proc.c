@@ -21,9 +21,8 @@
 const rb_cref_t *rb_vm_cref_in_context(VALUE self, VALUE cbase);
 
 struct METHOD {
-    VALUE recv;
-    VALUE rclass;
-    ID id;
+    const VALUE recv;
+    const VALUE klass;
     rb_method_entry_t * const me;
 };
 
@@ -1104,8 +1103,8 @@ static void
 bm_mark(void *ptr)
 {
     struct METHOD *data = ptr;
-    rb_gc_mark(data->rclass);
     rb_gc_mark(data->recv);
+    rb_gc_mark(data->klass);
     rb_gc_mark((VALUE)data->me);
 }
 
@@ -1155,16 +1154,15 @@ respond_to_missing_p(VALUE klass, VALUE obj, VALUE sym, int scope)
 
 
 static VALUE
-mnew_missing(VALUE rclass, VALUE klass, VALUE obj, ID id, ID rid, VALUE mclass)
+mnew_missing(VALUE klass, VALUE obj, ID id, ID rid, VALUE mclass)
 {
     struct METHOD *data;
     VALUE method = TypedData_Make_Struct(mclass, struct METHOD, &method_data_type, data);
     rb_method_entry_t *me;
     rb_method_definition_t *def;
 
-    data->recv = obj;
-    data->rclass = rclass;
-    data->id = rid;
+    RB_OBJ_WRITE(method, &data->recv, obj);
+    RB_OBJ_WRITE(method, &data->klass, klass);
 
     def = ZALLOC(rb_method_definition_t);
     def->type = VM_METHOD_TYPE_MISSING;
@@ -1184,7 +1182,6 @@ mnew_internal(const rb_method_entry_t *me, VALUE klass,
 	      VALUE obj, ID id, VALUE mclass, int scope, int error)
 {
     struct METHOD *data;
-    VALUE rclass = klass;
     VALUE method;
     ID rid = id;
     rb_method_visibility_t visi = METHOD_VISI_UNDEF;
@@ -1192,7 +1189,7 @@ mnew_internal(const rb_method_entry_t *me, VALUE klass,
   again:
     if (UNDEFINED_METHOD_ENTRY_P(me)) {
 	if (respond_to_missing_p(klass, obj, ID2SYM(id), scope)) {
-	    return mnew_missing(rclass, klass, obj, id, rid, mclass);
+	    return mnew_missing(klass, obj, id, rid, mclass);
 	}
 	if (!error) return Qnil;
 	rb_print_undef(klass, id, 0);
@@ -1205,25 +1202,25 @@ mnew_internal(const rb_method_entry_t *me, VALUE klass,
 	}
     }
     if (me->def->type == VM_METHOD_TYPE_ZSUPER) {
-	klass = RCLASS_SUPER(me->defined_class);
-	id = me->def->original_id;
-	me = rb_callable_method_entry_without_refinements(klass, id);
+	if (me->defined_class) {
+	    VALUE klass = RCLASS_SUPER(me->defined_class);
+	    id = me->def->original_id;
+	    me = rb_callable_method_entry_without_refinements(klass, id);
+	}
+	else {
+	    VALUE klass = RCLASS_SUPER(me->owner);
+	    id = me->def->original_id;
+	    me = rb_method_entry_without_refinements(klass, id);
+	}
 	goto again;
-    }
-
-    klass = me->defined_class;
-
-    while (rclass != klass &&
-	   (FL_TEST(rclass, FL_SINGLETON) || RB_TYPE_P(rclass, T_ICLASS))) {
-	rclass = RCLASS_SUPER(rclass);
     }
 
     method = TypedData_Make_Struct(mclass, struct METHOD, &method_data_type, data);
 
-    data->recv = obj;
-    data->rclass = rclass;
-    data->id = rid;
+    RB_OBJ_WRITE(method, &data->recv, obj);
+    RB_OBJ_WRITE(method, &data->klass, klass);
     RB_OBJ_WRITE(method, &data->me, rb_method_entry_clone(me));
+
     OBJ_INFECT(method, klass);
     return method;
 }
@@ -1301,7 +1298,7 @@ method_eq(VALUE method, VALUE other)
 
     if (!rb_method_entry_eq(m1->me, m2->me) ||
 	m1->me->owner != m2->me->owner ||
-	m1->rclass != m2->rclass ||
+	m1->klass != m2->klass ||
 	m1->recv != m2->recv) {
 	return Qfalse;
     }
@@ -1325,8 +1322,7 @@ method_hash(VALUE method)
     st_index_t hash;
 
     TypedData_Get_Struct(method, struct METHOD, &method_data_type, m);
-    hash = rb_hash_start((st_index_t)m->rclass);
-    hash = rb_hash_uint(hash, (st_index_t)m->recv);
+    hash = rb_hash_start((st_index_t)m->recv);
     hash = rb_hash_method_entry(hash, m->me);
     hash = rb_hash_end(hash);
 
@@ -1351,10 +1347,9 @@ method_unbind(VALUE obj)
     TypedData_Get_Struct(obj, struct METHOD, &method_data_type, orig);
     method = TypedData_Make_Struct(rb_cUnboundMethod, struct METHOD,
 				   &method_data_type, data);
-    data->recv = Qundef;
-    data->id = orig->id;
+    RB_OBJ_WRITE(method, &data->recv, Qundef);
+    RB_OBJ_WRITE(method, &data->klass, orig->klass);
     RB_OBJ_WRITE(method, &data->me, rb_method_entry_clone(orig->me));
-    data->rclass = orig->rclass;
     OBJ_INFECT(method, obj);
 
     return method;
@@ -1389,7 +1384,7 @@ method_name(VALUE obj)
     struct METHOD *data;
 
     TypedData_Get_Struct(obj, struct METHOD, &method_data_type, data);
-    return ID2SYM(data->id);
+    return ID2SYM(data->me->called_id);
 }
 
 /*
@@ -1456,7 +1451,7 @@ obj_method(VALUE obj, VALUE vid, int scope)
     if (!id) {
 	if (respond_to_missing_p(klass, obj, vid, scope)) {
 	    id = rb_intern_str(vid);
-	    return mnew_missing(klass, klass, obj, id, id, mclass);
+	    return mnew_missing(klass, obj, id, id, mclass);
 	}
 	rb_method_name_error(klass, vid);
     }
@@ -1545,7 +1540,7 @@ rb_obj_singleton_method(VALUE obj, VALUE vid)
 	if (!NIL_P(klass = rb_singleton_class_get(obj)) &&
 	    respond_to_missing_p(klass, obj, vid, FALSE)) {
 	    id = rb_intern_str(vid);
-	    return mnew_missing(klass, klass, obj, id, id, rb_cMethod);
+	    return mnew_missing(klass, obj, id, id, rb_cMethod);
 	}
 	rb_name_error_str(vid, "undefined singleton method `%"PRIsVALUE"' for `%"PRIsVALUE"'",
 			  QUOTE(vid), obj);
@@ -1698,17 +1693,16 @@ rb_mod_define_method(int argc, VALUE *argv, VALUE mod)
 
     if (is_method) {
 	struct METHOD *method = (struct METHOD *)DATA_PTR(body);
-	VALUE rclass = method->rclass;
-	if (rclass != mod && !RB_TYPE_P(rclass, T_MODULE) &&
-	    !RTEST(rb_class_inherited_p(mod, rclass))) {
-	    if (FL_TEST(rclass, FL_SINGLETON)) {
+	if (method->me->owner != mod && !RB_TYPE_P(method->me->owner, T_MODULE) &&
+	    !RTEST(rb_class_inherited_p(mod, method->me->owner))) {
+	    if (FL_TEST(method->me->owner, FL_SINGLETON)) {
 		rb_raise(rb_eTypeError,
 			 "can't bind singleton method to a different class");
 	    }
 	    else {
 		rb_raise(rb_eTypeError,
 			 "bind argument must be a subclass of % "PRIsVALUE,
-			 rb_class_name(rclass));
+			 rb_class_name(method->me->owner));
 	    }
 	}
 	rb_method_entry_set(mod, id, method->me, scope_visi->method_visi);
@@ -1819,9 +1813,8 @@ method_clone(VALUE self)
     TypedData_Get_Struct(self, struct METHOD, &method_data_type, orig);
     clone = TypedData_Make_Struct(CLASS_OF(self), struct METHOD, &method_data_type, data);
     CLONESETUP(clone, self);
-    data->recv = orig->recv;
-    data->rclass = orig->rclass;
-    data->id = orig->id;
+    RB_OBJ_WRITE(clone, &data->recv, orig->recv);
+    RB_OBJ_WRITE(clone, &data->klass, orig->klass);
     RB_OBJ_WRITE(clone, &data->me, rb_method_entry_clone(orig->me));
     return clone;
 }
@@ -1878,8 +1871,7 @@ rb_method_call_with_block(int argc, const VALUE *argv, VALUE method, VALUE pass_
 
 	th->passed_block = block;
 	VAR_INITIALIZED(data);
-	/* TODO: 何これ？ if (BUILTIN_TYPE(defined_class) == T_MODULE) defined_class = data->rclass; */
-	result = rb_vm_call(th, data->recv, data->id, argc, argv, data->me);
+	result = rb_vm_call(th, data->recv, data->me->called_id, argc, argv, data->me);
     }
     POP_TAG();
     if (safe >= 0)
@@ -1984,12 +1976,12 @@ static VALUE
 umethod_bind(VALUE method, VALUE recv)
 {
     struct METHOD *data, *bound;
-    VALUE methclass;
-    VALUE rclass;
+    VALUE methclass, klass;
 
     TypedData_Get_Struct(method, struct METHOD, &method_data_type, data);
 
-    methclass = data->rclass;
+    methclass = data->me->owner;
+
     if (!RB_TYPE_P(methclass, T_MODULE) &&
 	methclass != CLASS_OF(recv) && !rb_obj_is_kind_of(recv, methclass)) {
 	if (FL_TEST(methclass, FL_SINGLETON)) {
@@ -2002,25 +1994,23 @@ umethod_bind(VALUE method, VALUE recv)
 	}
     }
 
+    klass  = CLASS_OF(recv);
+
     method = TypedData_Make_Struct(rb_cMethod, struct METHOD, &method_data_type, bound);
-    bound->recv = data->recv;
-    bound->rclass = data->rclass;
-    bound->id = data->id;
+    RB_OBJ_WRITE(method, &bound->recv, recv);
+    RB_OBJ_WRITE(method, &bound->klass, data->klass);
     RB_OBJ_WRITE(method, &bound->me, rb_method_entry_clone(data->me));
-    rclass = CLASS_OF(recv);
 
     if (RB_TYPE_P(bound->me->owner, T_MODULE)) {
-	VALUE ic = rb_class_search_ancestor(rclass, bound->me->owner);
+	VALUE ic = rb_class_search_ancestor(klass, bound->me->owner);
 	if (ic) {
-	    rclass = ic;
+	    klass = ic;
 	}
 	else {
-	    rclass = rb_include_class_new(methclass, rclass);
+	    klass = rb_include_class_new(methclass, klass);
 	}
-	RB_OBJ_WRITE(method, &bound->me, rb_method_entry_complement_defined_class(bound->me, rclass));
+	RB_OBJ_WRITE(method, &bound->me, rb_method_entry_complement_defined_class(bound->me, klass));
     }
-    bound->recv = recv;
-    bound->rclass = rclass;
 
     return method;
 }
@@ -2318,7 +2308,8 @@ method_inspect(VALUE method)
     rb_str_buf_cat2(str, s);
     rb_str_buf_cat2(str, ": ");
 
-    mklass = rb_method_entry_owner(data->me);
+    mklass = data->klass;
+
     if (FL_TEST(mklass, FL_SINGLETON)) {
 	VALUE v = rb_ivar_get(mklass, attached);
 
@@ -2338,16 +2329,16 @@ method_inspect(VALUE method)
 	}
     }
     else {
-	rb_str_buf_append(str, rb_class_name(data->rclass));
-	if (data->rclass != mklass) {
+	rb_str_buf_append(str, rb_class_name(mklass));
+	if (data->me->owner != mklass) {
 	    rb_str_buf_cat2(str, "(");
-	    rb_str_buf_append(str, rb_class_name(mklass));
+	    rb_str_buf_append(str, rb_class_name(data->me->owner));
 	    rb_str_buf_cat2(str, ")");
 	}
     }
     rb_str_buf_cat2(str, sharp);
-    rb_str_append(str, rb_id2str(data->id));
-    if (data->id != data->me->def->original_id) {
+    rb_str_append(str, rb_id2str(data->me->called_id));
+    if (data->me->called_id != data->me->def->original_id) {
 	rb_str_catf(str, "(%"PRIsVALUE")",
 		    rb_id2str(data->me->def->original_id));
     }
@@ -2437,13 +2428,11 @@ method_super_method(VALUE method)
     const rb_method_entry_t *me;
 
     TypedData_Get_Struct(method, struct METHOD, &method_data_type, data);
-    /* TODO: UnboundMethod と同じコード使っている？ if (BUILTIN_TYPE(defined_class) == T_MODULE) defined_class = data->rclass; */
     super_class = RCLASS_SUPER(data->me->defined_class);
     if (!super_class) return Qnil;
-    me = rb_callable_method_entry_without_refinements(super_class, data->id);
+    me = rb_callable_method_entry_without_refinements(super_class, data->me->called_id);
     if (!me) return Qnil;
-    return mnew_internal(me, super_class, data->recv, data->id,
-			 rb_obj_class(method), FALSE, FALSE);
+    return mnew_internal(me, super_class, data->recv, data->me->called_id, rb_obj_class(method), FALSE, FALSE);
 }
 
 /*
