@@ -23,7 +23,8 @@ const rb_cref_t *rb_vm_cref_in_context(VALUE self, VALUE cbase);
 struct METHOD {
     const VALUE recv;
     const VALUE klass;
-    rb_method_entry_t * const me;
+    const rb_method_entry_t * const me;
+    /* for bound methods, `me' should be rb_callable_method_entry_t * */
 };
 
 VALUE rb_cUnboundMethod;
@@ -1237,7 +1238,7 @@ mnew(VALUE klass, VALUE obj, ID id, VALUE mclass, int scope)
 {
     const rb_method_entry_t *me;
 
-    if (mclass == rb_cUnboundMethod) {
+    if (obj == Qundef) { /* UnboundMethod */
 	me = rb_method_entry_without_refinements(klass, id);
     }
     else {
