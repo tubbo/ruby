@@ -41,9 +41,30 @@ vm_stackoverflow(void)
 #if VM_CHECK_MODE > 0
 
 static int
+callable_class_p(VALUE klass)
+{
+#if VM_CHECK_MODE >= 2
+    while (klass) {
+	if (klass == rb_cBasicObject) {
+	    return TRUE;
+	}
+	klass = RCLASS_SUPER(klass);
+    }
+    return FALSE;
+#else
+    return klass != 0;
+#endif
+}
+
+static int
 callable_method_entry_p(const rb_callable_method_entry_t *me)
 {
-    return (me == 0 || me->defined_class != 0) ? TRUE : FALSE;
+    if (me == NULL || callable_class_p(me->defined_class)) {
+	return TRUE;
+    }
+    else {
+	return FALSE;
+    }
 }
 
 static void

@@ -8,7 +8,7 @@
 
 **********************************************************************/
 
-#define VM_CHECK_MODE 1
+#define VM_CHECK_MODE 2
 
 #include "internal.h"
 #include "ruby/vm.h"
@@ -2535,7 +2535,6 @@ Init_VM(void)
     rb_define_method_id(klass, idLambda, rb_block_lambda, 0);
     rb_obj_freeze(fcore);
     RBASIC_CLEAR_CLASS(klass);
-    RCLASS_SET_SUPER(klass, 0);
     rb_obj_freeze(klass);
     rb_gc_register_mark_object(fcore);
     rb_mRubyVMFrozenCore = fcore;
