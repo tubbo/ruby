@@ -371,13 +371,13 @@ rb_method_entry_clone(const rb_method_entry_t *src_me)
     return me;
 }
 
-rb_method_entry_t *
+const rb_callable_method_entry_t *
 rb_method_entry_complement_defined_class(const rb_method_entry_t *src_me, VALUE defined_class)
 {
     rb_method_entry_t *me = rb_method_entry_alloc(src_me->called_id, src_me->owner, defined_class,
 						  method_definition_addref(src_me->def));
     METHOD_ENTRY_FLAGS_COPY(me, src_me);
-    return me;
+    return (rb_callable_method_entry_t *)me;
 }
 
 void
@@ -392,7 +392,7 @@ rb_method_entry_copy(rb_method_entry_t *dst, const rb_method_entry_t *src)
 }
 
 static void
-make_method_entry_refined(VALUE owner, rb_method_entry_t *me)
+make_method_entry_refined(VALUE owner, const rb_method_entry_t *me)
 {
     if (me->def->type == VM_METHOD_TYPE_REFINED) {
 	return;
@@ -618,24 +618,6 @@ rb_method_entry_set(VALUE klass, ID mid, const rb_method_entry_t *me, rb_method_
     return method_entry_set(klass, mid, me, visi, klass);
 }
 
-/* return owner class or module */
-VALUE
-rb_method_entry_owner(const rb_method_entry_t *me)
-{
-    VALUE owner = me->owner;
-
-#if VM_CHECK_MODE > 0
-    switch (TYPE(owner)) {
-      case T_CLASS:
-      case T_MODULE:
-	break;
-      default:
-	rb_bug("rb_method_entry_owner: owner is %s", rb_obj_info(owner));
-    }
-#endif
-    return owner;
-}
-
 #define UNDEF_ALLOC_FUNC ((rb_alloc_func_t)-1)
 
 void
@@ -757,32 +739,38 @@ rb_method_entry(VALUE klass, ID id)
     return rb_method_entry_get_without_cache(klass, id, NULL);
 }
 
-static rb_method_entry_t *
+static rb_callable_method_entry_t *
 callable_method_entry_get(VALUE defined_class, ID id, rb_method_entry_t *me)
 {
     struct st_table *mtbl;
+    rb_callable_method_entry_t *cme;
 
     VM_ASSERT(RB_TYPE_P(defined_class, T_ICLASS));
+    VM_ASSERT(me->defined_class == 0);
 
     if ((mtbl = RCLASS_EXT(defined_class)->callable_m_tbl) == NULL) {
 	mtbl = RCLASS_EXT(defined_class)->callable_m_tbl = st_init_numtable();
     }
 
     if (st_lookup(mtbl, id, (st_data_t *)&me)) {
-	/* OK */
+	cme = (rb_callable_method_entry_t *)me;
+	VM_ASSERT(callable_method_entry_p(cme));
     }
     else {
-	me = rb_method_entry_complement_defined_class(me, defined_class);
-	st_insert(mtbl, id, (st_data_t)me);
+	cme = rb_method_entry_complement_defined_class(me, defined_class);
+	st_insert(mtbl, id, (st_data_t)cme);
+	VM_ASSERT(callable_method_entry_p(cme));
     }
 
-    return me;
+    VM_ASSERT(callable_method_entry_p(cme));
+    return cme;
 }
 
-rb_method_entry_t *
+rb_callable_method_entry_t *
 rb_callable_method_entry(VALUE klass, ID id)
 {
     rb_method_entry_t *me;
+    rb_callable_method_entry_t *cme;
     VALUE defined_class;
 
     if (OPT_GLOBAL_METHOD_CACHE) {
@@ -802,13 +790,15 @@ rb_callable_method_entry(VALUE klass, ID id)
     me = rb_method_entry_get_without_cache(klass, id, &defined_class);
   found:
 
-    if (me) {
-	if (me->defined_class == 0) {
-	    me = callable_method_entry_get(defined_class, id, me);
-	}
+    if (me && me->defined_class == 0) {
+	cme = callable_method_entry_get(defined_class, id, me);
+    }
+    else {
+	cme = (rb_callable_method_entry_t *)me;
     }
 
-    return me;
+    VM_ASSERT(me == 0 || callable_method_entry_p(cme));
+    return cme;
 }
 
 static const rb_method_entry_t *
@@ -818,7 +808,7 @@ rb_method_entry_resolve_refienment(VALUE klass, ID id, int callable, int with_re
 
     /* TODO: shortcut */
     if (callable) {
-	me = rb_callable_method_entry(klass, id);
+	me = (const rb_method_entry_t *)rb_callable_method_entry(klass, id);
     }
     else {
 	me = rb_method_entry(klass, id);
@@ -849,10 +839,10 @@ rb_method_entry_with_refinements(VALUE klass, ID id)
     return rb_method_entry_resolve_refienment(klass, id, FALSE, TRUE);
 }
 
-const rb_method_entry_t *
+const rb_callable_method_entry_t *
 rb_callable_method_entry_with_refinements(VALUE klass, ID id)
 {
-    return rb_method_entry_resolve_refienment(klass, id, TRUE, TRUE);
+    return (const rb_callable_method_entry_t *)rb_method_entry_resolve_refienment(klass, id, TRUE, TRUE);
 }
 
 const rb_method_entry_t *
@@ -861,10 +851,10 @@ rb_method_entry_without_refinements(VALUE klass, ID id)
     return rb_method_entry_resolve_refienment(klass, id, FALSE, FALSE);
 }
 
-const rb_method_entry_t *
+const rb_callable_method_entry_t *
 rb_callable_method_entry_without_refinements(VALUE klass, ID id)
 {
-    return rb_method_entry_resolve_refienment(klass, id, TRUE, FALSE);
+    return (const rb_callable_method_entry_t *)rb_method_entry_resolve_refienment(klass, id, TRUE, FALSE);
 }
 
 static const rb_method_entry_t *
@@ -876,7 +866,7 @@ get_original_method_entry(VALUE refinements,
     if (me->def->body.refined.orig_me) {
 	return me->def->body.refined.orig_me;
     }
-    else if (!(super = RCLASS_SUPER(rb_method_entry_owner(me)))) {
+    else if (!(super = RCLASS_SUPER(me->owner))) {
 	return 0;
     }
     else {
@@ -893,7 +883,7 @@ rb_resolve_refined_method(VALUE refinements, const rb_method_entry_t *me)
 	VALUE refinement;
 	rb_method_entry_t *tmp_me;
 
-	refinement = find_refinement(refinements, rb_method_entry_owner(me));
+	refinement = find_refinement(refinements, me->owner);
 	if (NIL_P(refinement)) {
 	    return get_original_method_entry(refinements, me);
 	}

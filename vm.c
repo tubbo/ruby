@@ -343,10 +343,10 @@ void
 rb_vm_pop_cfunc_frame(void)
 {
     rb_thread_t *th = GET_THREAD();
-    const rb_method_entry_t *me = rb_vm_frame_method_entry(th->cfp);
+    const rb_callable_method_entry_t *me = rb_vm_frame_method_entry(th->cfp);
 
-    EXEC_EVENT_HOOK(th, RUBY_EVENT_C_RETURN, th->cfp->self, me->called_id, rb_method_entry_owner(me), Qnil);
-    RUBY_DTRACE_CMETHOD_RETURN_HOOK(th, rb_method_entry_owner(me), me->called_id);
+    EXEC_EVENT_HOOK(th, RUBY_EVENT_C_RETURN, th->cfp->self, me->called_id, me->owner, Qnil);
+    RUBY_DTRACE_CMETHOD_RETURN_HOOK(th, me->owner, me->called_id);
     vm_pop_frame(th);
 }
 
@@ -819,7 +819,7 @@ invoke_block_from_c(rb_thread_t *th, const rb_block_t *block,
 	const rb_control_frame_t *cfp;
 	int i, opt_pc, arg_size = iseq->param.size;
 	int type = block_proc_is_lambda(block->proc) ? VM_FRAME_MAGIC_LAMBDA : VM_FRAME_MAGIC_BLOCK;
-	const rb_method_entry_t *me = th->passed_bmethod_me;
+	const rb_callable_method_entry_t *me = th->passed_bmethod_me;
 	th->passed_bmethod_me = NULL;
 	cfp = th->cfp;
 
@@ -839,8 +839,8 @@ invoke_block_from_c(rb_thread_t *th, const rb_block_t *block,
 			  cfp->sp + arg_size, iseq->local_size - arg_size,
 			  iseq->stack_max);
 
-	    RUBY_DTRACE_METHOD_ENTRY_HOOK(th, rb_method_entry_owner(me), me->called_id);
-	    EXEC_EVENT_HOOK(th, RUBY_EVENT_CALL, self, me->called_id, rb_method_entry_owner(me), Qnil);
+	    RUBY_DTRACE_METHOD_ENTRY_HOOK(th, me->owner, me->called_id);
+	    EXEC_EVENT_HOOK(th, RUBY_EVENT_CALL, self, me->called_id, me->owner, Qnil);
 	}
 	else {
 	    vm_push_frame(th, iseq, type | VM_FRAME_FLAG_FINISH, self,
@@ -855,8 +855,8 @@ invoke_block_from_c(rb_thread_t *th, const rb_block_t *block,
 
 	if (me) {
 	    /* bmethod */
-	    EXEC_EVENT_HOOK(th, RUBY_EVENT_RETURN, self, me->called_id, rb_method_entry_owner(me), ret);
-	    RUBY_DTRACE_METHOD_RETURN_HOOK(th, rb_method_entry_owner(me), me->called_id);
+	    EXEC_EVENT_HOOK(th, RUBY_EVENT_RETURN, self, me->called_id, me->owner, ret);
+	    RUBY_DTRACE_METHOD_RETURN_HOOK(th, me->owner, me->called_id);
 	}
 
 	return ret;
@@ -1255,7 +1255,7 @@ check_redefined_method(st_data_t key, st_data_t value, st_data_t data)
     rb_method_entry_t *newme = rb_method_entry(klass, mid);
 
     if (newme != me)
-	rb_vm_check_redefinition_opt_method(me, rb_method_entry_owner(me));
+	rb_vm_check_redefinition_opt_method(me, me->owner);
     return ST_CONTINUE;
 }
 
@@ -1351,7 +1351,7 @@ hook_before_rewind(rb_thread_t *th, rb_control_frame_t *cfp)
 	    EXEC_EVENT_HOOK(th, RUBY_EVENT_B_RETURN, th->cfp->self, 0, 0, Qnil);
 	    EXEC_EVENT_HOOK_AND_POP_FRAME(th, RUBY_EVENT_RETURN, th->cfp->self,
 					  rb_vm_frame_method_entry(th->cfp)->called_id,
-					  rb_method_entry_owner(rb_vm_frame_method_entry(th->cfp)), Qnil);
+					  rb_vm_frame_method_entry(th->cfp)->owner, Qnil);
 	}
 	else {
 	    EXEC_EVENT_HOOK_AND_POP_FRAME(th, RUBY_EVENT_B_RETURN, th->cfp->self, 0, 0, Qnil);
@@ -1497,9 +1497,12 @@ vm_exec(rb_thread_t *th)
 
 	while (th->cfp->pc == 0 || th->cfp->iseq == 0) {
 	    if (UNLIKELY(VM_FRAME_TYPE(th->cfp) == VM_FRAME_MAGIC_CFUNC)) {
-		EXEC_EVENT_HOOK(th, RUBY_EVENT_C_RETURN, th->cfp->self, rb_vm_frame_method_entry(th->cfp)->called_id,
-				rb_method_entry_owner(rb_vm_frame_method_entry(th->cfp)), Qnil);
-		RUBY_DTRACE_METHOD_RETURN_HOOK(th, rb_method_entry_owner(rb_vm_frame_method_entry(th->cfp)), rb_vm_frame_method_entry(th->cfp)->called_id);
+		EXEC_EVENT_HOOK(th, RUBY_EVENT_C_RETURN, th->cfp->self,
+				rb_vm_frame_method_entry(th->cfp)->called_id,
+				rb_vm_frame_method_entry(th->cfp)->owner, Qnil);
+		RUBY_DTRACE_METHOD_RETURN_HOOK(th,
+					       rb_vm_frame_method_entry(th->cfp)->owner,
+					       rb_vm_frame_method_entry(th->cfp)->called_id);
 	    }
 	    th->cfp = RUBY_VM_PREVIOUS_CONTROL_FRAME(th->cfp);
 	}
@@ -1727,11 +1730,11 @@ rb_iseq_eval_main(VALUE iseqval)
 int
 rb_vm_control_frame_id_and_class(const rb_control_frame_t *cfp, ID *idp, VALUE *klassp)
 {
-    const rb_method_entry_t *me = rb_vm_frame_method_entry(cfp);
+    const rb_callable_method_entry_t *me = rb_vm_frame_method_entry(cfp);
 
     if (me) {
 	if (idp) *idp = me->def->original_id;
-	if (klassp) *klassp = rb_method_entry_owner(me);
+	if (klassp) *klassp = me->owner;
 	return TRUE;
     }
     else {
@@ -1755,7 +1758,7 @@ VALUE
 rb_thread_current_status(const rb_thread_t *th)
 {
     const rb_control_frame_t *cfp = th->cfp;
-    const rb_method_entry_t *me;
+    const rb_callable_method_entry_t *me;
     VALUE str = Qnil;
 
     if (cfp->iseq != 0) {
@@ -1768,7 +1771,7 @@ rb_thread_current_status(const rb_thread_t *th)
     }
     else if ((me = rb_vm_frame_method_entry(cfp)) && me->def->original_id) {
 	str = rb_sprintf("`%"PRIsVALUE"#%"PRIsVALUE"' (cfunc)",
-			 rb_class_path(rb_method_entry_owner(me)),
+			 rb_class_path(me->owner),
 			 rb_id2str(me->def->original_id));
     }
 

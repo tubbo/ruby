@@ -1205,7 +1205,7 @@ mnew_internal(const rb_method_entry_t *me, VALUE klass,
 	if (me->defined_class) {
 	    VALUE klass = RCLASS_SUPER(me->defined_class);
 	    id = me->def->original_id;
-	    me = rb_callable_method_entry_without_refinements(klass, id);
+	    me = (rb_method_entry_t *)rb_callable_method_entry_without_refinements(klass, id);
 	}
 	else {
 	    VALUE klass = RCLASS_SUPER(me->owner);
@@ -1219,7 +1219,7 @@ mnew_internal(const rb_method_entry_t *me, VALUE klass,
 
     RB_OBJ_WRITE(method, &data->recv, obj);
     RB_OBJ_WRITE(method, &data->klass, klass);
-    RB_OBJ_WRITE(method, &data->me, rb_method_entry_clone(me));
+    RB_OBJ_WRITE(method, &data->me, me);
 
     OBJ_INFECT(method, klass);
     return method;
@@ -1241,7 +1241,7 @@ mnew(VALUE klass, VALUE obj, ID id, VALUE mclass, int scope)
 	me = rb_method_entry_without_refinements(klass, id);
     }
     else {
-	me = rb_callable_method_entry_without_refinements(klass, id);
+	me = (rb_method_entry_t *)rb_callable_method_entry_without_refinements(klass, id);
     }
 
     return mnew_from_me(me, klass, obj, id, mclass, scope);
@@ -1839,6 +1839,13 @@ rb_method_call(int argc, const VALUE *argv, VALUE method)
     return rb_method_call_with_block(argc, argv, method, proc);
 }
 
+static const rb_callable_method_entry_t *
+method_callable_method_entry(struct METHOD *data)
+{
+    if (data->me && data->me->defined_class == 0) rb_bug("method_callable_method_entry: not callable.");
+    return (const rb_callable_method_entry_t *)data->me;
+}
+
 VALUE
 rb_method_call_with_block(int argc, const VALUE *argv, VALUE method, VALUE pass_procval)
 {
@@ -1871,7 +1878,7 @@ rb_method_call_with_block(int argc, const VALUE *argv, VALUE method, VALUE pass_
 
 	th->passed_block = block;
 	VAR_INITIALIZED(data);
-	result = rb_vm_call(th, data->recv, data->me->called_id, argc, argv, data->me);
+	result = rb_vm_call(th, data->recv, data->me->called_id, argc, argv, method_callable_method_entry(data));
     }
     POP_TAG();
     if (safe >= 0)
@@ -2430,7 +2437,7 @@ method_super_method(VALUE method)
     TypedData_Get_Struct(method, struct METHOD, &method_data_type, data);
     super_class = RCLASS_SUPER(data->me->defined_class);
     if (!super_class) return Qnil;
-    me = rb_callable_method_entry_without_refinements(super_class, data->me->called_id);
+    me = (rb_method_entry_t *)rb_callable_method_entry_without_refinements(super_class, data->me->called_id);
     if (!me) return Qnil;
     return mnew_internal(me, super_class, data->recv, data->me->called_id, rb_obj_class(method), FALSE, FALSE);
 }

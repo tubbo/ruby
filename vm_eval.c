@@ -42,7 +42,7 @@ static VALUE send_internal(int argc, const VALUE *argv, VALUE recv, call_type sc
 static VALUE vm_call0_body(rb_thread_t* th, rb_call_info_t *ci, const VALUE *argv);
 
 static VALUE
-vm_call0(rb_thread_t* th, VALUE recv, ID id, int argc, const VALUE *argv, const rb_method_entry_t *me)
+vm_call0(rb_thread_t* th, VALUE recv, ID id, int argc, const VALUE *argv, const rb_callable_method_entry_t *me)
 {
     rb_call_info_t ci_entry, *ci = &ci_entry;
 
@@ -66,7 +66,7 @@ vm_call0_cfunc(rb_thread_t* th, rb_call_info_t *ci, const VALUE *argv)
     EXEC_EVENT_HOOK(th, RUBY_EVENT_C_CALL, ci->recv, ci->mid, ci->me->owner, Qnil);
     {
 	rb_control_frame_t *reg_cfp = th->cfp;
-	const rb_method_entry_t *me = ci->me;
+	const rb_callable_method_entry_t *me = ci->me;
 	const rb_method_cfunc_t *cfunc = &me->def->body.cfunc;
 	int len = cfunc->argc;
 	VALUE recv = ci->recv;
@@ -103,7 +103,7 @@ static VALUE
 vm_call0_cfunc_with_frame(rb_thread_t* th, rb_call_info_t *ci, const VALUE *argv)
 {
     VALUE val;
-    const rb_method_entry_t *me = ci->me;
+    const rb_callable_method_entry_t *me = ci->me;
     const rb_method_cfunc_t *cfunc = &me->def->body.cfunc;
     int len = cfunc->argc;
     VALUE recv = ci->recv;
@@ -199,6 +199,7 @@ vm_call0_body(rb_thread_t* th, rb_call_info_t *ci, const VALUE *argv)
 
 	    if (type == VM_METHOD_TYPE_REFINED && ci->me->def->body.refined.orig_me) {
 		ci->me = ci->me->def->body.refined.orig_me;
+		/* TODO */
 		goto again;
 	    }
 
@@ -213,11 +214,8 @@ vm_call0_body(rb_thread_t* th, rb_call_info_t *ci, const VALUE *argv)
 	    goto again;
 	}
       case VM_METHOD_TYPE_ALIAS:
-	{
-	    ci->me = ci->me->def->body.alias.original_me;
-	    /* TODO: ci->defined_class = find_defined_class_by_owner(ci->defined_class, rb_method_entry_owner(ci->me)); */
-	    goto again;
-	}
+	ci->me = alias_orig_callable_method_entry(ci->me);
+	goto again;
       case VM_METHOD_TYPE_MISSING:
 	{
 	    VALUE new_args = rb_ary_new4(ci->argc, argv);
@@ -257,7 +255,7 @@ vm_call0_body(rb_thread_t* th, rb_call_info_t *ci, const VALUE *argv)
 }
 
 VALUE
-rb_vm_call(rb_thread_t *th, VALUE recv, VALUE id, int argc, const VALUE *argv, const rb_method_entry_t *me)
+rb_vm_call(rb_thread_t *th, VALUE recv, VALUE id, int argc, const VALUE *argv, const rb_callable_method_entry_t *me)
 {
     return vm_call0(th, recv, id, argc, argv, me);
 }
@@ -269,7 +267,7 @@ vm_call_super(rb_thread_t *th, int argc, const VALUE *argv)
     VALUE klass;
     ID id;
     rb_control_frame_t *cfp = th->cfp;
-    const rb_method_entry_t *me = rb_vm_frame_method_entry(cfp);
+    const rb_callable_method_entry_t *me = rb_vm_frame_method_entry(cfp);
 
     if (RUBY_VM_NORMAL_ISEQ_P(cfp->iseq)) {
 	rb_bug("vm_call_super: should not be reached");
@@ -316,8 +314,8 @@ stack_check(void)
     }
 }
 
-static inline rb_method_entry_t *rb_search_method_entry(VALUE recv, ID mid);
-static inline enum method_missing_reason rb_method_call_status(rb_thread_t *th, const rb_method_entry_t *me, call_type scope, VALUE self);
+static inline rb_callable_method_entry_t *rb_search_method_entry(VALUE recv, ID mid);
+static inline enum method_missing_reason rb_method_call_status(rb_thread_t *th, const rb_callable_method_entry_t *me, call_type scope, VALUE self);
 
 /*!
  * \internal
@@ -338,7 +336,7 @@ static inline VALUE
 rb_call0(VALUE recv, ID mid, int argc, const VALUE *argv,
 	 call_type scope, VALUE self)
 {
-    rb_method_entry_t *me = rb_search_method_entry(recv, mid);
+    rb_callable_method_entry_t *me = rb_search_method_entry(recv, mid);
     rb_thread_t *th = GET_THREAD();
     enum method_missing_reason call_status = rb_method_call_status(th, me, scope, self);
 
@@ -381,12 +379,12 @@ check_funcall_failed(struct rescue_funcall_args *args, VALUE e)
 static int
 check_funcall_respond_to(rb_thread_t *th, VALUE klass, VALUE recv, ID mid)
 {
-    const rb_method_entry_t *me = rb_callable_method_entry(klass, idRespond_to);
+    const rb_callable_method_entry_t *me = rb_callable_method_entry(klass, idRespond_to);
 
     if (me && !METHOD_ENTRY_BASIC(me)) {
 	const rb_block_t *passed_block = th->passed_block;
 	VALUE args[2], result;
-	int arity = rb_method_entry_arity(me);
+	int arity = rb_method_entry_arity((const rb_method_entry_t *)me);
 
 	if (arity > 2)
 	    rb_raise(rb_eArgError, "respond_to? must accept 1 or 2 arguments (requires %d)", arity);
@@ -405,7 +403,7 @@ check_funcall_respond_to(rb_thread_t *th, VALUE klass, VALUE recv, ID mid)
 }
 
 static int
-check_funcall_callable(rb_thread_t *th, const rb_method_entry_t *me)
+check_funcall_callable(rb_thread_t *th, const rb_callable_method_entry_t *me)
 {
     return rb_method_call_status(th, me, CALL_FCALL, th->cfp->self) == MISSING_NONE;
 }
@@ -434,7 +432,7 @@ VALUE
 rb_check_funcall(VALUE recv, ID mid, int argc, const VALUE *argv)
 {
     VALUE klass = CLASS_OF(recv);
-    const rb_method_entry_t *me;
+    const rb_callable_method_entry_t *me;
     rb_thread_t *th = GET_THREAD();
 
     if (!check_funcall_respond_to(th, klass, recv, mid))
@@ -453,7 +451,7 @@ rb_check_funcall_with_hook(VALUE recv, ID mid, int argc, const VALUE *argv,
 			   rb_check_funcall_hook *hook, VALUE arg)
 {
     VALUE klass = CLASS_OF(recv);
-    const rb_method_entry_t *me;
+    const rb_callable_method_entry_t *me;
     rb_thread_t *th = GET_THREAD();
 
     if (!check_funcall_respond_to(th, klass, recv, mid))
@@ -505,7 +503,7 @@ rb_type_str(enum ruby_value_type type)
 #undef type_case
 }
 
-static inline rb_method_entry_t *
+static inline rb_callable_method_entry_t *
 rb_search_method_entry(VALUE recv, ID mid)
 {
     VALUE klass = CLASS_OF(recv);
@@ -548,7 +546,7 @@ rb_search_method_entry(VALUE recv, ID mid)
 }
 
 static inline enum method_missing_reason
-rb_method_call_status(rb_thread_t *th, const rb_method_entry_t *me, call_type scope, VALUE self)
+rb_method_call_status(rb_thread_t *th, const rb_callable_method_entry_t *me, call_type scope, VALUE self)
 {
     VALUE klass;
     ID oid;
@@ -563,7 +561,7 @@ rb_method_call_status(rb_thread_t *th, const rb_method_entry_t *me, call_type sc
 	if (UNDEFINED_METHOD_ENTRY_P(me)) goto undefined;
     }
 
-    klass = rb_method_entry_owner(me);
+    klass = me->owner;
     oid = me->def->original_id;
     visi = METHOD_ENTRY_VISI(me);
 
