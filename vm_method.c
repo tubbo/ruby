@@ -93,6 +93,15 @@ rb_clear_method_cache_by_class(VALUE klass)
 	else {
 	    rb_class_clear_method_cache(klass, Qnil);
 	}
+
+	if (RB_TYPE_P(klass, T_MODULE)) {
+	    rb_subclass_entry_t *entry = RCLASS_EXT(klass)->subclasses;
+
+	    for (; entry != NULL; entry = entry->next) {
+		struct st_table *table = RCLASS_CALLABLE_M_TBL(entry->klass);
+		if (table) st_clear(table);
+	    }
+	}
     }
 }
 
@@ -201,7 +210,7 @@ setup_method_cfunc_struct(rb_method_cfunc_t *cfunc, VALUE (*func)(), int argc)
 }
 
 static void
-method_definition_set(rb_method_entry_t *me, rb_method_definition_t *def, void *opts)
+method_definition_set(const rb_method_entry_t *me, rb_method_definition_t *def, void *opts)
 {
     *(rb_method_definition_t **)&me->def = def;
 
@@ -392,7 +401,7 @@ rb_method_entry_copy(rb_method_entry_t *dst, const rb_method_entry_t *src)
 }
 
 static void
-make_method_entry_refined(VALUE owner, const rb_method_entry_t *me)
+make_method_entry_refined(VALUE owner, rb_method_entry_t *me)
 {
     if (me->def->type == VM_METHOD_TYPE_REFINED) {
 	return;
@@ -673,8 +682,8 @@ rb_method_entry_at(VALUE klass, ID id)
  * rb_method_entry() simply.
  */
 static rb_method_entry_t *
-rb_method_entry_get_without_cache(VALUE klass, ID id,
-				  VALUE *defined_class_ptr)
+method_entry_get_without_cache(VALUE klass, ID id,
+			       VALUE *defined_class_ptr)
 {
     VALUE defined_class;
     rb_method_entry_t *me = search_method(klass, id, &defined_class);
@@ -712,7 +721,7 @@ verify_method_cache(VALUE klass, ID id, VALUE defined_class, rb_method_entry_t *
 {
     VALUE actual_defined_class;
     rb_method_entry_t *actual_me =
-	rb_method_entry_get_without_cache(klass, id, &actual_defined_class);
+      method_entry_get_without_cache(klass, id, &actual_defined_class);
 
     if (me != actual_me || defined_class != actual_defined_class) {
 	rb_bug("method cache verification failed");
@@ -720,8 +729,8 @@ verify_method_cache(VALUE klass, ID id, VALUE defined_class, rb_method_entry_t *
 }
 #endif
 
-rb_method_entry_t *
-rb_method_entry(VALUE klass, ID id)
+static rb_method_entry_t *
+method_entry_get(VALUE klass, ID id, VALUE *defined_class_ptr)
 {
 #if OPT_GLOBAL_METHOD_CACHE
     struct cache_entry *ent;
@@ -732,138 +741,120 @@ rb_method_entry(VALUE klass, ID id)
 #if VM_DEBUG_VERIFY_METHOD_CACHE
 	verify_method_cache(klass, id, ent->defined_class, ent->me);
 #endif
+	if (defined_class_ptr) *defined_class_ptr = ent->defined_class;
 	return ent->me;
     }
 #endif
 
-    return rb_method_entry_get_without_cache(klass, id, NULL);
+    return method_entry_get_without_cache(klass, id, defined_class_ptr);
 }
 
-static rb_callable_method_entry_t *
-callable_method_entry_get(VALUE defined_class, ID id, rb_method_entry_t *me)
+rb_method_entry_t *
+rb_method_entry(VALUE klass, ID id)
+{
+    return method_entry_get(klass, id, NULL);
+}
+
+static const rb_callable_method_entry_t *
+prepare_callable_method_entry(VALUE defined_class, ID id, const rb_method_entry_t *me)
 {
     struct st_table *mtbl;
-    rb_callable_method_entry_t *cme;
+    const rb_callable_method_entry_t *cme;
 
-    VM_ASSERT(RB_TYPE_P(defined_class, T_ICLASS));
-    VM_ASSERT(me->defined_class == 0);
+    if (me && me->defined_class == 0) {
+	VM_ASSERT(RB_TYPE_P(defined_class, T_ICLASS));
+	VM_ASSERT(me->defined_class == 0);
 
-    if ((mtbl = RCLASS_EXT(defined_class)->callable_m_tbl) == NULL) {
-	mtbl = RCLASS_EXT(defined_class)->callable_m_tbl = st_init_numtable();
-    }
+	if ((mtbl = RCLASS_EXT(defined_class)->callable_m_tbl) == NULL) {
+	    mtbl = RCLASS_EXT(defined_class)->callable_m_tbl = st_init_numtable();
+	}
 
-    if (st_lookup(mtbl, id, (st_data_t *)&me)) {
-	cme = (rb_callable_method_entry_t *)me;
-	VM_ASSERT(callable_method_entry_p(cme));
+	if (st_lookup(mtbl, id, (st_data_t *)&me)) {
+	    cme = (rb_callable_method_entry_t *)me;
+	    VM_ASSERT(callable_method_entry_p(cme));
+	}
+	else {
+	    cme = rb_method_entry_complement_defined_class(me, defined_class);
+	    st_insert(mtbl, id, (st_data_t)cme);
+	    VM_ASSERT(callable_method_entry_p(cme));
+	}
     }
     else {
-	cme = rb_method_entry_complement_defined_class(me, defined_class);
-	st_insert(mtbl, id, (st_data_t)cme);
-	VM_ASSERT(callable_method_entry_p(cme));
+	cme = (const rb_callable_method_entry_t *)me;
     }
 
     VM_ASSERT(callable_method_entry_p(cme));
     return cme;
 }
 
-rb_callable_method_entry_t *
+const rb_callable_method_entry_t *
 rb_callable_method_entry(VALUE klass, ID id)
 {
-    rb_method_entry_t *me;
-    rb_callable_method_entry_t *cme;
     VALUE defined_class;
-
-    if (OPT_GLOBAL_METHOD_CACHE) {
-	struct cache_entry *ent;
-	ent = GLOBAL_METHOD_CACHE(klass, id);
-	if (ent->method_state == GET_GLOBAL_METHOD_STATE() &&
-	    ent->class_serial == RCLASS_SERIAL(klass) &&
-	    ent->mid == id) {
-#if VM_DEBUG_VERIFY_METHOD_CACHE
-	    verify_method_cache(klass, id, ent->defined_class, ent->me);
-#endif
-	    me = ent->me;
-	    defined_class = ent->defined_class;
-	    goto found;
-	}
-    }
-    me = rb_method_entry_get_without_cache(klass, id, &defined_class);
-  found:
-
-    if (me && me->defined_class == 0) {
-	cme = callable_method_entry_get(defined_class, id, me);
-    }
-    else {
-	cme = (rb_callable_method_entry_t *)me;
-    }
-
-    VM_ASSERT(me == 0 || callable_method_entry_p(cme));
-    return cme;
+    rb_method_entry_t *me = method_entry_get(klass, id, &defined_class);
+    return prepare_callable_method_entry(defined_class, id, me);
 }
 
-static const rb_method_entry_t *
-rb_method_entry_resolve_refienment(VALUE klass, ID id, int callable, int with_refinement)
-{
-    const rb_method_entry_t *me;
+static const rb_method_entry_t *resolve_refined_method(VALUE refinements, const rb_method_entry_t *me, VALUE *defined_class_ptr);
 
-    /* TODO: shortcut */
-    if (callable) {
-	me = (const rb_method_entry_t *)rb_callable_method_entry(klass, id);
-    }
-    else {
-	me = rb_method_entry(klass, id);
-    }
+static const rb_method_entry_t *
+method_entry_resolve_refienment(VALUE klass, ID id, int with_refinement, VALUE *defined_class_ptr)
+{
+    const rb_method_entry_t *me = method_entry_get(klass, id, defined_class_ptr);
 
     if (me) {
 	if (me->def->type == VM_METHOD_TYPE_REFINED) {
 	    if (with_refinement) {
 		const rb_cref_t *cref = rb_vm_cref();
 		VALUE refinements = cref ? CREF_REFINEMENTS(cref) : Qnil;
-		me = rb_resolve_refined_method(refinements, me);
+		me = resolve_refined_method(refinements, me, defined_class_ptr);
 	    }
 	    else {
-		me = rb_resolve_refined_method(Qnil, me);
+		me = resolve_refined_method(Qnil, me, defined_class_ptr);
 	    }
 
 	    if (UNDEFINED_METHOD_ENTRY_P(me)) me = NULL;
 	}
     }
 
-    VM_ASSERT(!me || !callable || me->defined_class != 0);
     return me;
 }
 
 const rb_method_entry_t *
 rb_method_entry_with_refinements(VALUE klass, ID id)
 {
-    return rb_method_entry_resolve_refienment(klass, id, FALSE, TRUE);
+    return method_entry_resolve_refienment(klass, id, TRUE, NULL);
 }
 
 const rb_callable_method_entry_t *
 rb_callable_method_entry_with_refinements(VALUE klass, ID id)
 {
-    return (const rb_callable_method_entry_t *)rb_method_entry_resolve_refienment(klass, id, TRUE, TRUE);
+    VALUE defined_class;
+    const rb_method_entry_t *me = method_entry_resolve_refienment(klass, id, TRUE, &defined_class);
+    return prepare_callable_method_entry(defined_class, id, me);
 }
 
 const rb_method_entry_t *
 rb_method_entry_without_refinements(VALUE klass, ID id)
 {
-    return rb_method_entry_resolve_refienment(klass, id, FALSE, FALSE);
+    return method_entry_resolve_refienment(klass, id, FALSE, NULL);
 }
 
 const rb_callable_method_entry_t *
 rb_callable_method_entry_without_refinements(VALUE klass, ID id)
 {
-    return (const rb_callable_method_entry_t *)rb_method_entry_resolve_refienment(klass, id, TRUE, FALSE);
+    VALUE defined_class;
+    const rb_method_entry_t *me = method_entry_resolve_refienment(klass, id, FALSE, &defined_class);
+    return prepare_callable_method_entry(defined_class, id, me);
 }
 
 static const rb_method_entry_t *
-get_original_method_entry(VALUE refinements,
-			  const rb_method_entry_t *me)
+refiend_method_original_method_entry(VALUE refinements, const rb_method_entry_t *me, VALUE *defined_class_ptr)
 {
     VALUE super;
 
     if (me->def->body.refined.orig_me) {
+	if (defined_class_ptr) *defined_class_ptr = me->def->body.refined.orig_me->defined_class; /* TODO: check */
 	return me->def->body.refined.orig_me;
     }
     else if (!(super = RCLASS_SUPER(me->owner))) {
@@ -871,13 +862,13 @@ get_original_method_entry(VALUE refinements,
     }
     else {
 	rb_method_entry_t *tmp_me;
-	tmp_me = rb_method_entry(super, me->called_id);
-	return rb_resolve_refined_method(refinements, tmp_me);
+	tmp_me = method_entry_get(super, me->called_id, defined_class_ptr);
+	return resolve_refined_method(refinements, tmp_me, defined_class_ptr);
     }
 }
 
-const rb_method_entry_t *
-rb_resolve_refined_method(VALUE refinements, const rb_method_entry_t *me)
+static const rb_method_entry_t *
+resolve_refined_method(VALUE refinements, const rb_method_entry_t *me, VALUE *defined_class_ptr)
 {
     if (me && me->def->type == VM_METHOD_TYPE_REFINED) {
 	VALUE refinement;
@@ -885,19 +876,41 @@ rb_resolve_refined_method(VALUE refinements, const rb_method_entry_t *me)
 
 	refinement = find_refinement(refinements, me->owner);
 	if (NIL_P(refinement)) {
-	    return get_original_method_entry(refinements, me);
-	}
-	tmp_me = rb_method_entry(refinement, me->called_id);
-
-	if (tmp_me && tmp_me->def->type != VM_METHOD_TYPE_REFINED) {
-	    return tmp_me;
+	    return refiend_method_original_method_entry(refinements, me, defined_class_ptr);
 	}
 	else {
-	    return get_original_method_entry(refinements, me);
+	    tmp_me = method_entry_get(refinement, me->called_id, defined_class_ptr);
+
+	    if (tmp_me && tmp_me->def->type != VM_METHOD_TYPE_REFINED) {
+		return tmp_me;
+	    }
+	    else {
+		return refiend_method_original_method_entry(refinements, me, defined_class_ptr);
+	    }
 	}
     }
     else {
-	return (rb_method_entry_t *)me;
+	return me;
+    }
+}
+
+const rb_method_entry_t *
+rb_resolve_refined_method(VALUE refinements, const rb_method_entry_t *me)
+{
+    return resolve_refined_method(refinements, me, NULL);
+}
+
+const rb_callable_method_entry_t *
+rb_resolve_refined_method_callable(VALUE refinements, const rb_callable_method_entry_t *me)
+{
+    VALUE defined_class = me->defined_class;
+    const rb_method_entry_t *resolved_me = resolve_refined_method(refinements, (const rb_method_entry_t *)me, &defined_class);
+
+    if (resolved_me && resolved_me->defined_class == 0) {
+	return rb_method_entry_complement_defined_class(resolved_me, defined_class);
+    }
+    else {
+	return (const rb_callable_method_entry_t *)resolved_me;
     }
 }
 

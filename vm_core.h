@@ -523,7 +523,7 @@ typedef struct rb_vm_struct {
 #endif
 
 #ifndef VM_DEBUG_VERIFY_METHOD_CACHE
-#define VM_DEBUG_VERIFY_METHOD_CACHE 0
+#define VM_DEBUG_VERIFY_METHOD_CACHE (VM_DEBUG_MODE != 0)
 #endif
 
 typedef struct rb_control_frame_struct {

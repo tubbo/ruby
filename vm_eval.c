@@ -198,7 +198,7 @@ vm_call0_body(rb_thread_t* th, rb_call_info_t *ci, const VALUE *argv)
 	    VALUE super_class;
 
 	    if (type == VM_METHOD_TYPE_REFINED && ci->me->def->body.refined.orig_me) {
-		ci->me = ci->me->def->body.refined.orig_me;
+		ci->me = refined_method_callable_without_refinement(ci->me);
 		/* TODO */
 		goto again;
 	    }
@@ -314,7 +314,7 @@ stack_check(void)
     }
 }
 
-static inline rb_callable_method_entry_t *rb_search_method_entry(VALUE recv, ID mid);
+static inline const rb_callable_method_entry_t *rb_search_method_entry(VALUE recv, ID mid);
 static inline enum method_missing_reason rb_method_call_status(rb_thread_t *th, const rb_callable_method_entry_t *me, call_type scope, VALUE self);
 
 /*!
@@ -336,7 +336,7 @@ static inline VALUE
 rb_call0(VALUE recv, ID mid, int argc, const VALUE *argv,
 	 call_type scope, VALUE self)
 {
-    rb_callable_method_entry_t *me = rb_search_method_entry(recv, mid);
+    const rb_callable_method_entry_t *me = rb_search_method_entry(recv, mid);
     rb_thread_t *th = GET_THREAD();
     enum method_missing_reason call_status = rb_method_call_status(th, me, scope, self);
 
@@ -503,7 +503,7 @@ rb_type_str(enum ruby_value_type type)
 #undef type_case
 }
 
-static inline rb_callable_method_entry_t *
+static inline const rb_callable_method_entry_t *
 rb_search_method_entry(VALUE recv, ID mid)
 {
     VALUE klass = CLASS_OF(recv);
@@ -557,7 +557,7 @@ rb_method_call_status(rb_thread_t *th, const rb_callable_method_entry_t *me, cal
 	return scope == CALL_VCALL ? MISSING_VCALL : MISSING_NOENTRY;
     }
     if (me->def->type == VM_METHOD_TYPE_REFINED) {
-	me = rb_resolve_refined_method(Qnil, me);
+	me = rb_resolve_refined_method_callable(Qnil, me);
 	if (UNDEFINED_METHOD_ENTRY_P(me)) goto undefined;
     }
 

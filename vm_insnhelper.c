@@ -1914,6 +1914,9 @@ find_defined_class_by_owner(VALUE current_class, VALUE target_owner)
     return current_class; /* maybe module function */
 }
 
+static rb_method_definition_t *method_definition_create(rb_method_type_t type, ID mid);
+static void method_definition_set(const rb_method_entry_t *me, rb_method_definition_t *def, void *opts);
+
 static const rb_callable_method_entry_t *
 alias_orig_callable_method_entry(const rb_callable_method_entry_t *me)
 {
@@ -1924,7 +1927,15 @@ alias_orig_callable_method_entry(const rb_callable_method_entry_t *me)
 	VALUE defined_class = find_defined_class_by_owner(me->defined_class, orig_me->owner);
 	VM_ASSERT(RB_TYPE_P(orig_me->owner, T_MODULE));
 	cme = rb_method_entry_complement_defined_class(orig_me, defined_class);
-	RB_OBJ_WRITE(me, &me->def->body.alias.original_me, cme);
+
+	if (me->def->alias_count == 0) {
+	    RB_OBJ_WRITE(me, &me->def->body.alias.original_me, cme);
+	}
+	else {
+	    method_definition_set((rb_method_entry_t *)me,
+				  method_definition_create(VM_METHOD_TYPE_ALIAS, me->def->original_id),
+				  (void *)cme);
+	}
     }
     else {
 	cme = (const rb_callable_method_entry_t *)orig_me;
@@ -1934,7 +1945,23 @@ alias_orig_callable_method_entry(const rb_callable_method_entry_t *me)
     return cme;
 }
 
+static const rb_callable_method_entry_t *
+refined_method_callable_without_refinement(const rb_callable_method_entry_t *me)
+{
+    const rb_method_entry_t *orig_me = me->def->body.refined.orig_me;
+    const rb_callable_method_entry_t *cme;
 
+    if (orig_me->defined_class == 0) {
+	cme = NULL;
+	rb_notimplement();
+    }
+    else {
+	cme = (const rb_callable_method_entry_t *)orig_me;
+    }
+
+    VM_ASSERT(callable_method_entry_p(cme));
+    return cme;
+}
 
 static
 #ifdef _MSC_VER
@@ -2034,7 +2061,7 @@ vm_call_method(rb_thread_t *th, rb_control_frame_t *cfp, rb_call_info_t *ci)
 		const rb_cref_t *cref = rb_vm_get_cref(cfp->ep);
 		VALUE refinements = cref ? CREF_REFINEMENTS(cref) : Qnil;
 		VALUE refinement;
-		rb_callable_method_entry_t *me;
+		const rb_callable_method_entry_t *me;
 
 		refinement = find_refinement(refinements, ci->me->owner);
 		if (NIL_P(refinement)) {
@@ -2062,9 +2089,7 @@ vm_call_method(rb_thread_t *th, rb_control_frame_t *cfp, rb_call_info_t *ci)
 
 	      no_refinement_dispatch:
 		if (ci->me->def->body.refined.orig_me) {
-		    const rb_method_entry_t *me = ci->me->def->body.refined.orig_me;
-		    /* TODO: ci->me = (const rb_method_entry_t *)me; */
-		    ci->me = me;
+		    ci->me = refined_method_callable_without_refinement(ci->me);
 
 		    if (UNDEFINED_METHOD_ENTRY_P(ci->me)) {
 			ci->me = 0;
