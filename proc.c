@@ -1216,6 +1216,10 @@ mnew_internal(const rb_method_entry_t *me, VALUE klass,
 	goto again;
     }
 
+    while (klass != me->owner && (FL_TEST(klass, FL_SINGLETON) || RB_TYPE_P(klass, T_ICLASS))) {
+	klass = RCLASS_SUPER(klass);
+    }
+
     method = TypedData_Make_Struct(mclass, struct METHOD, &method_data_type, data);
 
     RB_OBJ_WRITE(method, &data->recv, obj);
@@ -1244,7 +1248,6 @@ mnew(VALUE klass, VALUE obj, ID id, VALUE mclass, int scope)
     else {
 	me = (rb_method_entry_t *)rb_callable_method_entry_without_refinements(klass, id);
     }
-
     return mnew_from_me(me, klass, obj, id, mclass, scope);
 }
 
@@ -1287,6 +1290,7 @@ static VALUE
 method_eq(VALUE method, VALUE other)
 {
     struct METHOD *m1, *m2;
+    VALUE klass1, klass2;
 
     if (!rb_obj_is_method(other))
 	return Qfalse;
@@ -1297,8 +1301,11 @@ method_eq(VALUE method, VALUE other)
     m1 = (struct METHOD *)DATA_PTR(method);
     m2 = (struct METHOD *)DATA_PTR(other);
 
+    klass1 = m1->me->defined_class ? m1->me->defined_class : m1->me->owner;
+    klass2 = m2->me->defined_class ? m2->me->defined_class : m2->me->owner;
+
     if (!rb_method_entry_eq(m1->me, m2->me) ||
-	m1->me->owner != m2->me->owner ||
+	klass1 != klass2 ||
 	m1->klass != m2->klass ||
 	m1->recv != m2->recv) {
 	return Qfalse;
@@ -2309,6 +2316,7 @@ method_inspect(VALUE method)
     const char *s;
     const char *sharp = "#";
     VALUE mklass;
+    VALUE defined_class;
 
     TypedData_Get_Struct(method, struct METHOD, &method_data_type, data);
     str = rb_str_buf_new2("#<");
@@ -2317,6 +2325,17 @@ method_inspect(VALUE method)
     rb_str_buf_cat2(str, ": ");
 
     mklass = data->klass;
+
+    if (data->me && data->me->def->type == VM_METHOD_TYPE_ALIAS) {
+	defined_class = data->me->def->body.alias.original_me->owner;
+    }
+    else {
+	defined_class = data->me->defined_class ? data->me->defined_class : data->me->owner;
+    }
+
+    if (RB_TYPE_P(defined_class, T_ICLASS)) {
+	defined_class = RBASIC_CLASS(defined_class);
+    }
 
     if (FL_TEST(mklass, FL_SINGLETON)) {
 	VALUE v = rb_ivar_get(mklass, attached);
@@ -2338,9 +2357,9 @@ method_inspect(VALUE method)
     }
     else {
 	rb_str_buf_append(str, rb_class_name(mklass));
-	if (data->me->owner != mklass) {
+	if (defined_class != mklass) {
 	    rb_str_buf_cat2(str, "(");
-	    rb_str_buf_append(str, rb_class_name(data->me->owner));
+	    rb_str_buf_append(str, rb_class_name(defined_class));
 	    rb_str_buf_cat2(str, ")");
 	}
     }

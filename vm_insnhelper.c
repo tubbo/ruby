@@ -1918,7 +1918,7 @@ static rb_method_definition_t *method_definition_create(rb_method_type_t type, I
 static void method_definition_set(const rb_method_entry_t *me, rb_method_definition_t *def, void *opts);
 
 static const rb_callable_method_entry_t *
-alias_orig_callable_method_entry(const rb_callable_method_entry_t *me)
+aliased_callable_method_entry(const rb_callable_method_entry_t *me)
 {
     const rb_method_entry_t *orig_me = me->def->body.alias.original_me;
     const rb_callable_method_entry_t *cme;
@@ -2039,7 +2039,7 @@ vm_call_method(rb_thread_t *th, rb_control_frame_t *cfp, rb_call_info_t *ci)
 		}
 	      }
 	      case VM_METHOD_TYPE_ALIAS:
-		ci->me = alias_orig_callable_method_entry(ci->me);
+		ci->me = aliased_callable_method_entry(ci->me);
 		goto normal_method_dispatch;
 	      case VM_METHOD_TYPE_OPTIMIZED:{
 		switch (ci->me->def->body.optimize_type) {

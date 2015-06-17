@@ -214,7 +214,7 @@ vm_call0_body(rb_thread_t* th, rb_call_info_t *ci, const VALUE *argv)
 	    goto again;
 	}
       case VM_METHOD_TYPE_ALIAS:
-	ci->me = alias_orig_callable_method_entry(ci->me);
+	ci->me = aliased_callable_method_entry(ci->me);
 	goto again;
       case VM_METHOD_TYPE_MISSING:
 	{
