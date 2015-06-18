@@ -1270,7 +1270,7 @@ rb_vm_check_redefinition_by_prepend(VALUE klass)
 static void
 add_opt_method(VALUE klass, ID mid, VALUE bop)
 {
-    rb_method_entry_t *me = rb_method_entry_at(klass, mid);
+    const rb_method_entry_t *me = rb_method_entry_at(klass, mid);
 
     if (me && me->def->type == VM_METHOD_TYPE_CFUNC) {
 	st_insert(vm_opt_method_table, (st_data_t)me, (st_data_t)bop);
