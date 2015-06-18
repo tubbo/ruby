@@ -199,7 +199,6 @@ vm_call0_body(rb_thread_t* th, rb_call_info_t *ci, const VALUE *argv)
 
 	    if (type == VM_METHOD_TYPE_REFINED && ci->me->def->body.refined.orig_me) {
 		ci->me = refined_method_callable_without_refinement(ci->me);
-		/* TODO */
 		goto again;
 	    }
 
