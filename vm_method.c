@@ -854,7 +854,7 @@ refiend_method_original_method_entry(VALUE refinements, const rb_method_entry_t 
     VALUE super;
 
     if (me->def->body.refined.orig_me) {
-	if (defined_class_ptr) *defined_class_ptr = me->def->body.refined.orig_me->defined_class; /* TODO: check */
+	if (defined_class_ptr) *defined_class_ptr = me->def->body.refined.orig_me->defined_class;
 	return me->def->body.refined.orig_me;
     }
     else if (!(super = RCLASS_SUPER(me->owner))) {
