@@ -371,7 +371,7 @@ rb_method_entry_create(ID called_id, VALUE klass, rb_method_visibility_t visi, c
     return me;
 }
 
-rb_method_entry_t *
+const rb_method_entry_t *
 rb_method_entry_clone(const rb_method_entry_t *src_me)
 {
     rb_method_entry_t *me = rb_method_entry_alloc(src_me->called_id, src_me->owner, src_me->defined_class,
@@ -1515,7 +1515,7 @@ rb_alias(VALUE klass, ID alias_name, ID original_name)
     if (orig_me->defined_class == 0) {
 	rb_method_entry_t *alias_me;
 
-	alias_me = rb_add_method(target_klass, alias_name, VM_METHOD_TYPE_ALIAS, rb_method_entry_clone(orig_me), visi);
+	alias_me = rb_add_method(target_klass, alias_name, VM_METHOD_TYPE_ALIAS, (void *)rb_method_entry_clone(orig_me), visi);
 	alias_me->def->original_id = orig_me->called_id;
 	METHOD_ENTRY_SAFE_SET(alias_me, METHOD_ENTRY_SAFE(orig_me));
     }
