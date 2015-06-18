@@ -580,18 +580,6 @@ static inline VALUE
 vm_get_iclass(rb_control_frame_t *cfp, VALUE klass)
 {
     return klass;
-#if 0
-    /* TODO: ‚È‚ñ‚¾‚±‚ê */
-    if (RB_TYPE_P(klass, T_MODULE) &&
-	FL_TEST(klass, RMODULE_IS_OVERLAID) &&
-	RB_TYPE_P(cfp->klass, T_ICLASS) &&
-	RBASIC(cfp->klass)->klass == klass) {
-	return cfp->klass;
-    }
-    else {
-	return klass;
-    }
-#endif
 }
 
 static inline VALUE
