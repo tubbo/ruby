@@ -1513,23 +1513,16 @@ rb_alias(VALUE klass, ID alias_name, ID original_name)
     if (visi == METHOD_VISI_UNDEF) visi = METHOD_ENTRY_VISI(orig_me);
 
     if (orig_me->defined_class == 0) {
-	VALUE owner;
 	rb_method_entry_t *alias_me;
-
-	if (RB_TYPE_P(defined_class, T_ICLASS)) {
-	    owner = RBASIC_CLASS(defined_class);
-	}
-	else {
-	    owner = defined_class;
-	}
-	VM_ASSERT(RB_TYPE_P(owner, T_MODULE));
 
 	alias_me = rb_add_method(target_klass, alias_name, VM_METHOD_TYPE_ALIAS, rb_method_entry_clone(orig_me), visi);
 	alias_me->def->original_id = orig_me->called_id;
 	METHOD_ENTRY_SAFE_SET(alias_me, METHOD_ENTRY_SAFE(orig_me));
     }
     else {
-	rb_method_entry_t *alias_me = method_entry_set(target_klass, alias_name, orig_me, visi, orig_me->owner);
+	rb_method_entry_t *alias_me;
+
+	alias_me = method_entry_set(target_klass, alias_name, orig_me, visi, orig_me->owner);
 	RB_OBJ_WRITE(alias_me, &alias_me->owner, target_klass);
 	RB_OBJ_WRITE(alias_me, &alias_me->defined_class, defined_class);
     }
