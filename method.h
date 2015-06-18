@@ -179,7 +179,7 @@ rb_method_entry_t *rb_add_method(VALUE klass, ID mid, rb_method_type_t type, voi
 rb_method_entry_t *rb_method_entry_at(VALUE obj, ID id);
 void rb_add_refined_method_entry(VALUE refined_class, ID mid);
 
-      rb_method_entry_t *rb_method_entry(VALUE klass, ID id);
+const rb_method_entry_t *rb_method_entry(VALUE klass, ID id);
 const rb_method_entry_t *rb_method_entry_with_refinements(VALUE klass, ID id);
 const rb_method_entry_t *rb_method_entry_without_refinements(VALUE klass, ID id);
 const rb_method_entry_t *rb_resolve_refined_method(VALUE refinements, const rb_method_entry_t *me);

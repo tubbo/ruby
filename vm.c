@@ -1250,12 +1250,12 @@ static int
 check_redefined_method(st_data_t key, st_data_t value, st_data_t data)
 {
     ID mid = (ID)key;
-    rb_method_entry_t *me = (rb_method_entry_t *)value;
     VALUE klass = (VALUE)data;
-    rb_method_entry_t *newme = rb_method_entry(klass, mid);
+    const rb_method_entry_t *me = (rb_method_entry_t *)value;
+    const rb_method_entry_t *newme = rb_method_entry(klass, mid);
 
-    if (newme != me)
-	rb_vm_check_redefinition_opt_method(me, me->owner);
+    if (newme != me) rb_vm_check_redefinition_opt_method(me, me->owner);
+
     return ST_CONTINUE;
 }
 

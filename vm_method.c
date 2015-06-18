@@ -749,7 +749,7 @@ method_entry_get(VALUE klass, ID id, VALUE *defined_class_ptr)
     return method_entry_get_without_cache(klass, id, defined_class_ptr);
 }
 
-rb_method_entry_t *
+const rb_method_entry_t *
 rb_method_entry(VALUE klass, ID id)
 {
     return method_entry_get(klass, id, NULL);
