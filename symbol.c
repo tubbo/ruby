@@ -371,7 +371,7 @@ rb_str_symname_type(VALUE name, unsigned int allowed_attrset)
 }
 
 static void
-set_id_entry(ID num, VALUE str, VALUE sym)
+set_id_entry(rb_id_serial_t num, VALUE str, VALUE sym)
 {
     size_t idx = num / ID_ENTRY_UNIT;
     VALUE ary, ids = global_symbols.ids;
