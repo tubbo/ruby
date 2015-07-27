@@ -7,7 +7,7 @@
  * 1: using st.
  */
 #ifndef ID_TABLE_IMPL
-#define ID_TABLE_IMPL 0
+#define ID_TABLE_IMPL 1
 #endif
 
 /***************************************************************
