@@ -15,6 +15,8 @@
 #include "gc.h"
 #include "probes.h"
 
+#include "id_table.c"
+
 #ifndef SYMBOL_DEBUG
 # define SYMBOL_DEBUG 0
 #endif
