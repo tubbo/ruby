@@ -15,8 +15,6 @@
 #include "gc.h"
 #include "probes.h"
 
-#include "id_table.c"
-
 #ifndef SYMBOL_DEBUG
 # define SYMBOL_DEBUG 0
 #endif
@@ -399,6 +397,18 @@ get_id_entry(rb_id_serial_t num, const enum id_entry_type t)
 	}
     }
     return 0;
+}
+
+static inline ID
+rb_id_serial_to_id(rb_id_serial_t num)
+{
+    if (is_notop_id((ID)num)) {
+	VALUE sym = get_id_entry(num, ID_ENTRY_SYM);
+	return SYM2ID(sym);
+    }
+    else {
+	return (ID)num;
+    }
 }
 
 #if SYMBOL_DEBUG
@@ -1124,3 +1134,5 @@ rb_is_junk_name(VALUE name)
 {
     return rb_str_symname_type(name, IDSET_ATTRSET_FOR_SYNTAX) == -1;
 }
+
+#include "id_table.c"

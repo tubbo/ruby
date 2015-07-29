@@ -2,21 +2,69 @@
 
 #include "id_table.h"
 
+#ifndef ID_TABLE_DEBUG
+#define ID_TABLE_DEBUG 0
+#endif
+
+#include <assert.h>
+#if ID_TABLE_DEBUG == 0
+#define NDEBUG
+#endif
+
 /*
  * 0: using st with debug information.
  * 1: using st.
+ * 2: simple array. ids = [ID1, ID2, ...], values = [val1, val2, ...]
+ * 3: simple array, but use rb_id_serial_t instead of ID.
+ * 4: simple array, but use rb_id_serial_t instead of ID. Swap recent access.
+ * 5: sorted array, and use rb_id_serial_t instead of ID. !! unstable !!
  */
+
 #ifndef ID_TABLE_IMPL
-#define ID_TABLE_IMPL 1
+#define ID_TABLE_IMPL 5
+#endif
+
+#if ID_TABLE_IMPL == 0
+#define ID_TABLE_USE_ST 1
+#define ID_TABLE_USE_ST_DEBUG 1
+
+#elif ID_TABLE_IMPL == 1
+#define ID_TABLE_USE_ST 1
+#define ID_TABLE_USE_ST_DEBUG 0
+
+#elif ID_TABLE_IMPL == 2
+#define ID_TABLE_USE_LIST 1
+
+#elif ID_TABLE_IMPL == 3
+#define ID_TABLE_USE_LIST 1
+#define ID_TABLE_USE_ID_SERIAL 1
+
+#elif ID_TABLE_IMPL == 4
+#define ID_TABLE_USE_LIST 1
+#define ID_TABLE_USE_ID_SERIAL 1
+#define ID_TABLE_SWAP_RECENT_ACCESS 1
+
+#elif ID_TABLE_IMPL == 5
+#define ID_TABLE_USE_LIST 1
+#define ID_TABLE_USE_ID_SERIAL 1
+#define ID_TABLE_USE_LIST_SORTED 1
+
+#else
+#error
+#endif
+
+
+#if ID_TABLE_SWAP_RECENT_ACCESS && ID_TABLE_USE_LIST_SORTED
+#error
 #endif
 
 /***************************************************************
  * 0: using st with debug information.
  * 1: using st.
  ***************************************************************/
-#if ID_TABLE_IMPL == 0 || ID_TABLE_IMPL == 1
+#if ID_TABLE_USE_ST
 
-#if ID_TABLE_IMPL == 0
+#if ID_TABLE_USE_ST_DEBUG
 #define ID_TABLE_MARK 0x12345678
 
 struct rb_id_table {
@@ -45,7 +93,9 @@ rb_id_table_free(struct rb_id_table *tbl)
     st_free_table(tbl->st);
     xfree(tbl);
 }
-#elif ID_TABLE_IMPL == 1
+
+#else /* ID_TABLE_USE_ST_DEBUG */
+
 struct rb_id_table {
     struct st_table st;
 };
@@ -66,9 +116,8 @@ rb_id_table_free(struct rb_id_table *tbl)
 {
     st_free_table((struct st_table*)tbl);
 }
-#else
-#error
-#endif
+
+#endif /* ID_TABLE_USE_ST_DEBUG */
 
 void
 rb_id_table_clear(struct rb_id_table *tbl)
@@ -85,7 +134,7 @@ rb_id_table_size(struct rb_id_table *tbl)
 size_t
 rb_id_table_memsize(struct rb_id_table *tbl)
 {
-    size_t header_size = (ID_TABLE_IMPL == 0) ? sizeof(struct rb_id_table) : 0;
+    size_t header_size = ID_TABLE_USE_ST_DEBUG ? sizeof(struct rb_id_table) : 0;
     return header_size + st_memsize(tbl2st(tbl));
 }
 
@@ -134,6 +183,309 @@ rb_id_table_foreach_values(struct rb_id_table *tbl, enum rb_id_table_iterator_re
     st_foreach(tbl2st(tbl), each_values, (st_data_t)&values_iter_data);
 }
 
-#else
-#error "Not supported ID_TABLE_IMPL."
+#endif /* ID_TABLE_USE_ST */
+
+#if ID_TABLE_USE_LIST
+
+#if ID_TABLE_USE_ID_SERIAL
+
+typedef rb_id_serial_t id_key_t;
+static inline ID
+key2id(id_key_t key)
+{
+    return rb_id_serial_to_id(key);
+}
+
+static inline id_key_t
+id2key(ID id)
+{
+    return rb_id_to_serial(id);
+}
+
+#else /* ID_TABLE_USE_ID_SERIAL */
+
+typedef ID id_key_t;
+#define key2id(key) key
+#define id2key(id)  id
+
+#endif /* ID_TABLE_USE_ID_SERIAL */
+
+#define TABLE_MIN_CAPA 8
+
+struct rb_id_table {
+    int capa;
+    int num;
+    id_key_t *keys;
+    VALUE *values;
+};
+
+struct
+rb_id_table *rb_id_table_create(size_t capa)
+{
+    struct rb_id_table *tbl = ZALLOC(struct rb_id_table);
+
+    if (capa > 0) {
+	tbl->capa = (int)capa;
+	tbl->keys = ALLOC_N(id_key_t, capa);
+	tbl->values = ALLOC_N(VALUE, capa);
+    }
+    return tbl;
+}
+
+void
+rb_id_table_free(struct rb_id_table *tbl)
+{
+    xfree(tbl->keys);
+    xfree(tbl->values);
+    xfree(tbl);
+}
+
+void
+rb_id_table_clear(struct rb_id_table *tbl)
+{
+    tbl->num = 0;
+}
+
+size_t
+rb_id_table_size(struct rb_id_table *tbl)
+{
+    return (size_t)tbl->num;
+}
+
+size_t
+rb_id_table_memsize(struct rb_id_table *tbl)
+{
+    return (sizeof(ID) + sizeof(VALUE)) * tbl->capa + sizeof(struct rb_id_table);
+}
+
+static void
+table_extend(struct rb_id_table *tbl)
+{
+    if (tbl->capa == tbl->num) {
+	tbl->capa = tbl->capa == 0 ? TABLE_MIN_CAPA : (tbl->capa * 2);
+	tbl->keys = (id_key_t *)xrealloc(tbl->keys, sizeof(id_key_t) * tbl->capa);
+	tbl->values = (VALUE *)xrealloc(tbl->values, sizeof(VALUE) * tbl->capa);
+    }
+}
+
+#if ID_TABLE_USE_LIST_SORTED
+static int
+my_bsearch(const id_key_t *keys, id_key_t key, int num)
+{
+    int p, min = 0, max = num;
+
+    while (min < max) {
+	p = (max + min) / 2;
+	if      (keys[p] > key) max = p;
+	else if (keys[p] < key) min = p+1;
+	else return p;
+    }
+
+    if (min == 0) return -1;
+    else return -min;
+}
+
+#if ID_TABLE_DEBUG
+static void
+show_sorted(const id_key_t *keys, const int num)
+{
+    int i;
+    for (i=0; i<num; i++) {
+	fprintf(stderr, " -> [%d] %d\n", i, (int)keys[i]);
+    }
+}
 #endif
+
+static void
+assert_sorted(const id_key_t *keys, const int num)
+{
+#if ID_TABLE_DEBUG
+    int i;
+    for (i=0; i<num-1; i++) {
+	if (keys[i] >= keys[i+1]) {
+	    show_sorted(keys, num);
+	    rb_bug("assert_sorted: failed.");
+	}
+    }
+#endif
+}
+#endif
+
+static int
+table_index(struct rb_id_table *tbl, id_key_t key)
+{
+    const int num = tbl->num;
+    const id_key_t *keys = tbl->keys;
+
+#if ID_TABLE_USE_LIST_SORTED
+    return my_bsearch(keys, key, num);
+#else /* ID_TABLE_USE_LIST_SORTED */
+    int i;
+
+    for (i=0; i<num; i++) {
+	assert(keys[i] != 0);
+
+	if (keys[i] == key) {
+	    return (int)i;
+	}
+    }
+    return -1;
+#endif
+}
+
+int
+rb_id_table_lookup(struct rb_id_table *tbl, ID id, VALUE *valp)
+{
+    id_key_t key = id2key(id);
+    int index = table_index(tbl, key);
+
+    if (index >= 0) {
+	*valp = tbl->values[index];
+
+#if ID_TABLE_SWAP_RECENT_ACCESS
+	if (index > 0) {
+	    id_key_t tk = tbl->keys[index-1];
+	    VALUE tv = tbl->values[index-1];
+	    tbl->keys[index-1] = tbl->keys[index];
+	    tbl->keys[index] = tk;
+	    tbl->values[index-1] = tbl->values[index];
+	    tbl->values[index] = tv;
+	}
+#endif /* ID_TABLE_SWAP_RECENT_ACCESS */
+	return TRUE;
+    }
+    else {
+	return FALSE;
+    }
+}
+
+int
+rb_id_table_insert(struct rb_id_table *tbl, ID id, VALUE val)
+{
+    const id_key_t key = id2key(id);
+    const int index = table_index(tbl, key);
+
+    if (index >= 0) {
+	tbl->values[index] = val;
+    }
+    else {
+	table_extend(tbl);
+	{
+	    const int num = tbl->num++;
+#if ID_TABLE_USE_LIST_SORTED
+	    id_key_t *keys = tbl->keys;
+	    VALUE *values = tbl->values;
+	    int i, p = -index;
+	    int p1 = p-1;
+	    int p2 = p+0;
+	    int p3 = p+1;
+	    int p4 = p+2;
+
+	    if      (num <= p1                  ) p = 0;
+	    else if (             key < keys[p1]) p = p1;
+	    else if (num <= p2 || key < keys[p2]) p = p2;
+	    else if (num <= p3 || key < keys[p3]) p = p3;
+	    else if (num <= p4                  ) p = p4;
+
+	    // fprintf(stderr, "insert %d into %d\n", (int)key, p);
+	    // show_sorted(keys, num);
+
+	    for (i=num-1; i>=p; i--) {
+		keys[i+1] = keys[i];
+		values[i+1] = values[i];
+	    }
+	    keys[p] = key;
+	    values[p] = val;
+
+	    assert_sorted(keys, num+1);
+#else
+	    tbl->keys[num] = key;
+	    tbl->values[num] = val;
+#endif
+	}
+    }
+
+    return TRUE;
+}
+
+int
+rb_id_table_delete(struct rb_id_table *tbl, ID id)
+{
+    const id_key_t key = id2key(id);
+    int index = table_index(tbl, key);
+
+    if (index >= 0) {
+#if ID_TABLE_USE_LIST_SORTED
+	int i;
+	const int num = tbl->num;
+	id_key_t *keys = tbl->keys;
+	VALUE *values = tbl->values;
+
+	for (i=index+1; i<num; i++) { /* compaction */
+	    keys[i-1] = keys[i];
+	    values[i-1] = values[i-1];
+	}
+
+	assert_sorted(keys, num-1);
+#else
+	tbl->keys[index] = tbl->keys[tbl->num];
+	tbl->values[index] = tbl->values[tbl->num];
+#endif
+	tbl->num--;
+
+	return TRUE;
+    }
+    else {
+	return FALSE;
+    }
+}
+
+void
+rb_id_table_foreach(struct rb_id_table *tbl, enum rb_id_table_iterator_result (*func)(ID id, VALUE val, void *data), void *data)
+{
+    const int num = tbl->num;
+    int i;
+    const id_key_t *keys = tbl->keys;
+
+    for (i=0; i<num; i++) {
+	if (keys[i] != 0) {
+	    enum rb_id_table_iterator_result ret = (*func)(key2id(keys[i]), tbl->values[i], data);
+
+	    switch (ret) {
+	      case ID_TABLE_CONTINUE:
+		break;
+	      case ID_TABLE_STOP:
+		return;
+	      default:
+		rb_warn("unknown return value of id_table_foreach(): %d", ret);
+		break;
+	    }
+	}
+    }
+}
+
+void
+rb_id_table_foreach_values(struct rb_id_table *tbl, enum rb_id_table_iterator_result (*func)(VALUE val, void *data), void *data)
+{
+    const int num = tbl->num;
+    int i;
+    const id_key_t *keys = tbl->keys;
+
+    for (i=0; i<num; i++) {
+	if (keys[i] != 0) {
+	    enum rb_id_table_iterator_result ret = (*func)(tbl->values[i], data);
+
+	    switch (ret) {
+	      case ID_TABLE_CONTINUE:
+		break;
+	      case ID_TABLE_STOP:
+		return;
+	      default:
+		rb_warn("unknown return value of rb_id_table_foreach_values(): %d", ret);
+		break;
+	    }
+	}
+    }
+}
+
+#endif /* ID_TABLE_USE_LIST */
