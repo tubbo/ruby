@@ -21,7 +21,7 @@
  */
 
 #ifndef ID_TABLE_IMPL
-#define ID_TABLE_IMPL 5
+#define ID_TABLE_IMPL 1
 #endif
 
 #if ID_TABLE_IMPL == 0
