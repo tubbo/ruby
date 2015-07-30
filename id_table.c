@@ -6,22 +6,22 @@
 #define ID_TABLE_DEBUG 0
 #endif
 
-#include <assert.h>
 #if ID_TABLE_DEBUG == 0
 #define NDEBUG
 #endif
+#include <assert.h>
 
 /*
  * 0: using st with debug information.
  * 1: using st.
  * 2: simple array. ids = [ID1, ID2, ...], values = [val1, val2, ...]
- * 3: simple array, but use rb_id_serial_t instead of ID.
- * 4: simple array, but use rb_id_serial_t instead of ID. Swap recent access.
- * 5: sorted array, and use rb_id_serial_t instead of ID. !! unstable !!
+ * 3: simple array, and use rb_id_serial_t instead of ID.
+ * 4: simple array, and use rb_id_serial_t instead of ID. Swap recent access.
+ * 5: sorted array, and use rb_id_serial_t instead of ID.
  */
 
 #ifndef ID_TABLE_IMPL
-#define ID_TABLE_IMPL 1
+#define ID_TABLE_IMPL 5
 #endif
 
 #if ID_TABLE_IMPL == 0
@@ -268,48 +268,73 @@ table_extend(struct rb_id_table *tbl)
     }
 }
 
-#if ID_TABLE_USE_LIST_SORTED
-static int
-my_bsearch(const id_key_t *keys, id_key_t key, int num)
-{
-    int p, min = 0, max = num;
-
-    while (min < max) {
-	p = (max + min) / 2;
-	if      (keys[p] > key) max = p;
-	else if (keys[p] < key) min = p+1;
-	else return p;
-    }
-
-    if (min == 0) return -1;
-    else return -min;
-}
-
 #if ID_TABLE_DEBUG
 static void
-show_sorted(const id_key_t *keys, const int num)
+tbl_show(struct rb_id_table *tbl)
 {
+    const id_key_t *keys = tbl->keys;
+    const int num = tbl->num;
     int i;
+
+    fprintf(stderr, "tbl: %p (num: %d)\n", tbl, num);
     for (i=0; i<num; i++) {
-	fprintf(stderr, " -> [%d] %d\n", i, (int)keys[i]);
+	fprintf(stderr, " -> [%d] %s %d\n", i, rb_id2name(key2id(keys[i])), (int)keys[i]);
     }
 }
 #endif
 
 static void
-assert_sorted(const id_key_t *keys, const int num)
+tbl_assert(struct rb_id_table *tbl)
 {
 #if ID_TABLE_DEBUG
+#if ID_TABLE_USE_LIST_SORTED
+    const id_key_t *keys = tbl->keys;
+    const int num = tbl->num;
     int i;
+
     for (i=0; i<num-1; i++) {
 	if (keys[i] >= keys[i+1]) {
-	    show_sorted(keys, num);
-	    rb_bug("assert_sorted: failed.");
+	    tbl_show(tbl);
+	    rb_bug(": not sorted.");
 	}
     }
 #endif
-}
 #endif
+}
+
+#if ID_TABLE_USE_LIST_SORTED
+static int
+ids_bsearch(const id_key_t *keys, id_key_t key, int num)
+{
+    int p, min = 0, max = num;
+
+    while (1) {
+	p = min + (max - min) / 2;
+
+	if (min >= max) {
+	    break;
+	}
+	else {
+	    id_key_t kp = keys[p];
+	    assert(p < max);
+	    assert(p >= min);
+
+	    if      (kp > key) max = p;
+	    else if (kp < key) min = p+1;
+	    else {
+		assert(kp == key);
+		assert(p >= 0);
+		assert(p < num);
+		return p;
+	    }
+	}
+    }
+
+    assert(min == max);
+    assert(min == p);
+    return -p-1;
+}
+#endif /* ID_TABLE_USE_LIST_SORTED */
 
 static int
 table_index(struct rb_id_table *tbl, id_key_t key)
@@ -318,7 +343,7 @@ table_index(struct rb_id_table *tbl, id_key_t key)
     const id_key_t *keys = tbl->keys;
 
 #if ID_TABLE_USE_LIST_SORTED
-    return my_bsearch(keys, key, num);
+    return ids_bsearch(keys, key, num);
 #else /* ID_TABLE_USE_LIST_SORTED */
     int i;
 
@@ -373,31 +398,21 @@ rb_id_table_insert(struct rb_id_table *tbl, ID id, VALUE val)
 	{
 	    const int num = tbl->num++;
 #if ID_TABLE_USE_LIST_SORTED
+	    const int insert_index = -(index + 1);
 	    id_key_t *keys = tbl->keys;
 	    VALUE *values = tbl->values;
-	    int i, p = -index;
-	    int p1 = p-1;
-	    int p2 = p+0;
-	    int p3 = p+1;
-	    int p4 = p+2;
+	    int i;
 
-	    if      (num <= p1                  ) p = 0;
-	    else if (             key < keys[p1]) p = p1;
-	    else if (num <= p2 || key < keys[p2]) p = p2;
-	    else if (num <= p3 || key < keys[p3]) p = p3;
-	    else if (num <= p4                  ) p = p4;
+	    if (0) fprintf(stderr, "insert: %d into %d on\n", (int)key, insert_index);
 
-	    // fprintf(stderr, "insert %d into %d\n", (int)key, p);
-	    // show_sorted(keys, num);
-
-	    for (i=num-1; i>=p; i--) {
-		keys[i+1] = keys[i];
-		values[i+1] = values[i];
+	    for (i=num; i>insert_index; i--) {
+		keys[i] = keys[i-1];
+		values[i] = values[i-1];
 	    }
-	    keys[p] = key;
-	    values[p] = val;
+	    keys[i] = key;
+	    values[i] = val;
 
-	    assert_sorted(keys, num+1);
+	    tbl_assert(tbl);
 #else
 	    tbl->keys[num] = key;
 	    tbl->values[num] = val;
@@ -421,17 +436,18 @@ rb_id_table_delete(struct rb_id_table *tbl, ID id)
 	id_key_t *keys = tbl->keys;
 	VALUE *values = tbl->values;
 
+	if (0) fprintf(stderr, "delete: %s from %d\n", rb_id2name(id), index);
+
 	for (i=index+1; i<num; i++) { /* compaction */
 	    keys[i-1] = keys[i];
-	    values[i-1] = values[i-1];
+	    values[i-1] = values[i];
 	}
-
-	assert_sorted(keys, num-1);
 #else
 	tbl->keys[index] = tbl->keys[tbl->num];
 	tbl->values[index] = tbl->values[tbl->num];
 #endif
 	tbl->num--;
+	tbl_assert(tbl);
 
 	return TRUE;
     }
