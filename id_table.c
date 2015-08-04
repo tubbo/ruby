@@ -53,7 +53,6 @@
 #error
 #endif
 
-
 #if ID_TABLE_SWAP_RECENT_ACCESS && ID_TABLE_USE_LIST_SORTED
 #error
 #endif
@@ -423,20 +422,15 @@ rb_id_table_insert(struct rb_id_table *tbl, ID id, VALUE val)
     return TRUE;
 }
 
-int
-rb_id_table_delete(struct rb_id_table *tbl, ID id)
+static int
+id_table_delete(struct rb_id_table *tbl, id_key_t key, int index)
 {
-    const id_key_t key = id2key(id);
-    int index = table_index(tbl, key);
-
     if (index >= 0) {
 #if ID_TABLE_USE_LIST_SORTED
 	int i;
 	const int num = tbl->num;
 	id_key_t *keys = tbl->keys;
 	VALUE *values = tbl->values;
-
-	if (0) fprintf(stderr, "delete: %s from %d\n", rb_id2name(id), index);
 
 	for (i=index+1; i<num; i++) { /* compaction */
 	    keys[i-1] = keys[i];
@@ -456,51 +450,58 @@ rb_id_table_delete(struct rb_id_table *tbl, ID id)
     }
 }
 
+int
+rb_id_table_delete(struct rb_id_table *tbl, ID id)
+{
+    const id_key_t key = id2key(id);
+    int index = table_index(tbl, key);
+    return id_table_delete(tbl, key, index);
+}
+
+#define FOREACH_LAST() do {   \
+    switch (ret) {            \
+      case ID_TABLE_CONTINUE: \
+      case ID_TABLE_STOP:     \
+	break;                \
+      case ID_TABLE_DELETE:   \
+	id_table_delete(tbl, key, i); \
+	num = tbl->num;               \
+	i--; /* redo smae index */    \
+	break; \
+    } \
+} while (0)
+
 void
 rb_id_table_foreach(struct rb_id_table *tbl, enum rb_id_table_iterator_result (*func)(ID id, VALUE val, void *data), void *data)
 {
-    const int num = tbl->num;
+    int num = tbl->num;
     int i;
     const id_key_t *keys = tbl->keys;
 
     for (i=0; i<num; i++) {
-	if (keys[i] != 0) {
-	    enum rb_id_table_iterator_result ret = (*func)(key2id(keys[i]), tbl->values[i], data);
+	const id_key_t key = keys[i];
+	enum rb_id_table_iterator_result ret = (*func)(key2id(key), tbl->values[i], data);
+	assert(key != 0);
 
-	    switch (ret) {
-	      case ID_TABLE_CONTINUE:
-		break;
-	      case ID_TABLE_STOP:
-		return;
-	      default:
-		rb_warn("unknown return value of id_table_foreach(): %d", ret);
-		break;
-	    }
-	}
+	FOREACH_LAST();
+	if (ret == ID_TABLE_STOP) return;
     }
 }
 
 void
 rb_id_table_foreach_values(struct rb_id_table *tbl, enum rb_id_table_iterator_result (*func)(VALUE val, void *data), void *data)
 {
-    const int num = tbl->num;
+    int num = tbl->num;
     int i;
     const id_key_t *keys = tbl->keys;
 
     for (i=0; i<num; i++) {
-	if (keys[i] != 0) {
-	    enum rb_id_table_iterator_result ret = (*func)(tbl->values[i], data);
+	const id_key_t key = keys[i];
+	enum rb_id_table_iterator_result ret = (*func)(tbl->values[i], data);
+	assert(key != 0);
 
-	    switch (ret) {
-	      case ID_TABLE_CONTINUE:
-		break;
-	      case ID_TABLE_STOP:
-		return;
-	      default:
-		rb_warn("unknown return value of rb_id_table_foreach_values(): %d", ret);
-		break;
-	    }
-	}
+	FOREACH_LAST();
+	if (ret == ID_TABLE_STOP) return;
     }
 }
 
