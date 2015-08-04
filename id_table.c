@@ -18,10 +18,11 @@
  * 3: simple array, and use rb_id_serial_t instead of ID.
  * 4: simple array, and use rb_id_serial_t instead of ID. Swap recent access.
  * 5: sorted array, and use rb_id_serial_t instead of ID.
+ * 10: funny falcon's Coalesced Hashing implementation [Feature #6962]
  */
 
 #ifndef ID_TABLE_IMPL
-#define ID_TABLE_IMPL 5
+#define ID_TABLE_IMPL 10
 #endif
 
 #if ID_TABLE_IMPL == 0
@@ -48,6 +49,9 @@
 #define ID_TABLE_USE_LIST 1
 #define ID_TABLE_USE_ID_SERIAL 1
 #define ID_TABLE_USE_LIST_SORTED 1
+
+#elif ID_TABLE_IMPL == 10
+#define ID_TABLE_USE_COALESCED_HASHING 1
 
 #else
 #error
@@ -504,5 +508,359 @@ rb_id_table_foreach_values(struct rb_id_table *tbl, enum rb_id_table_iterator_re
 	if (ret == ID_TABLE_STOP) return;
     }
 }
-
 #endif /* ID_TABLE_USE_LIST */
+
+
+#if ID_TABLE_USE_COALESCED_HASHING
+
+typedef rb_id_serial_t id_key_t;
+typedef unsigned int sa_index_t;
+
+static inline ID
+key2id(id_key_t key)
+{
+    return rb_id_serial_to_id(key);
+}
+
+static inline id_key_t
+id2key(ID id)
+{
+    return rb_id_to_serial(id);
+}
+
+#define SA_EMPTY    0
+#define SA_LAST     1
+#define SA_OFFSET   2
+#define SA_MIN_SIZE 4
+
+typedef struct sa_entry {
+    sa_index_t next;
+    id_key_t key;
+    VALUE value;
+} sa_entry;
+
+typedef struct rb_id_table {
+    sa_index_t num_bins;
+    sa_index_t num_entries;
+    sa_index_t free_pos;
+    sa_entry *entries;
+} sa_table;
+
+static void
+sa_init_table(register sa_table *table, sa_index_t num_bins)
+{
+    if (num_bins) {
+        table->num_entries = 0;
+        table->entries = ZALLOC_N(sa_entry, num_bins);
+        table->num_bins = num_bins;
+        table->free_pos = num_bins;
+    }
+}
+
+sa_table*
+rb_id_table_create(size_t size)
+{
+    sa_table* table = ZALLOC(sa_table);
+    sa_init_table(table, size);
+    return table;
+}
+
+static inline sa_index_t
+calc_pos(register sa_table* table, id_key_t key)
+{
+    /* this formula is empirical */
+    /* it has no good avalance, but works well in our case */
+    key ^= key >> 16;
+    key *= 0x445229;
+    return (key + (key >> 16)) % table->num_bins;
+}
+
+static void
+fix_empty(register sa_table* table)
+{
+    while(--table->free_pos &&
+            table->entries[table->free_pos-1].next != SA_EMPTY);
+}
+
+#define FLOOR_TO_4 ((~((sa_index_t)0)) << 2)
+static sa_index_t
+find_empty(register sa_table* table, register sa_index_t pos)
+{
+    sa_index_t new_pos = table->free_pos-1;
+    sa_entry *entry;
+    pos &= FLOOR_TO_4;
+    entry = table->entries+pos;
+
+    if (entry->next == SA_EMPTY) { new_pos = pos; goto check; }
+    pos++; entry++;
+    if (entry->next == SA_EMPTY) { new_pos = pos; goto check; }
+    pos++; entry++;
+    if (entry->next == SA_EMPTY) { new_pos = pos; goto check; }
+    pos++; entry++;
+    if (entry->next == SA_EMPTY) { new_pos = pos; goto check; }
+
+  check:
+    if (new_pos+1 == table->free_pos) fix_empty(table);
+    return new_pos;
+}
+
+static void resize(register sa_table* table);
+static int insert_into_chain(register sa_table*, register sa_index_t, st_data_t, sa_index_t pos);
+static int insert_into_main(register sa_table*, sa_index_t, st_data_t, sa_index_t pos, sa_index_t prev_pos);
+
+static int
+sa_insert(register sa_table* table, id_key_t key, VALUE value)
+{
+    register sa_entry *entry;
+    sa_index_t pos, main_pos;
+
+    if (table->num_bins == 0) {
+        sa_init_table(table, SA_MIN_SIZE);
+    }
+
+    pos = calc_pos(table, key);
+    entry = table->entries + pos;
+
+    if (entry->next == SA_EMPTY) {
+        entry->next = SA_LAST;
+        entry->key = key;
+        entry->value = value;
+        table->num_entries++;
+        if (pos+1 == table->free_pos) fix_empty(table);
+        return 0;
+    }
+
+    if (entry->key == key) {
+        entry->value = value;
+        return 1;
+    }
+
+    if (table->num_entries + (table->num_entries >> 2) > table->num_bins) {
+        resize(table);
+	return sa_insert(table, key, value);
+    }
+
+    main_pos = calc_pos(table, entry->key);
+    if (main_pos == pos) {
+        return insert_into_chain(table, key, value, pos);
+    }
+    else {
+        if (!table->free_pos) {
+            resize(table);
+            return sa_insert(table, key, value);
+        }
+        return insert_into_main(table, key, value, pos, main_pos);
+    }
+}
+
+int
+rb_id_table_insert(register sa_table* table, ID id, VALUE value)
+{
+    return sa_insert(table, id2key(id), value);
+}
+
+static int
+insert_into_chain(register sa_table* table, id_key_t key, st_data_t value, sa_index_t pos)
+{
+    sa_entry *entry = table->entries + pos, *new_entry;
+    sa_index_t new_pos;
+
+    while (entry->next != SA_LAST) {
+        pos = entry->next - SA_OFFSET;
+        entry = table->entries + pos;
+        if (entry->key == key) {
+            entry->value = value;
+            return 1;
+        }
+    }
+
+    if (!table->free_pos) {
+        resize(table);
+        return sa_insert(table, key, value);
+    }
+
+    new_pos = find_empty(table, pos);
+    new_entry = table->entries + new_pos;
+    entry->next = new_pos + SA_OFFSET;
+
+    new_entry->next = SA_LAST;
+    new_entry->key = key;
+    new_entry->value = value;
+    table->num_entries++;
+    return 0;
+}
+
+static int
+insert_into_main(register sa_table* table, id_key_t key, st_data_t value, sa_index_t pos, sa_index_t prev_pos)
+{
+    sa_entry *entry = table->entries + pos;
+    sa_index_t new_pos = find_empty(table, pos);
+    sa_entry *new_entry = table->entries + new_pos;
+    sa_index_t npos;
+
+    *new_entry = *entry;
+
+    while((npos = table->entries[prev_pos].next - SA_OFFSET) != pos) {
+        prev_pos = npos;
+    }
+    table->entries[prev_pos].next = new_pos + SA_OFFSET;
+
+    entry->next = SA_LAST;
+    entry->key = key;
+    entry->value = value;
+    table->num_entries++;
+    return 0;
+}
+
+static sa_index_t
+new_size(sa_index_t num_entries)
+{
+    sa_index_t msb = num_entries;
+    msb |= msb >> 1;
+    msb |= msb >> 2;
+    msb |= msb >> 4;
+    msb |= msb >> 8;
+    msb |= msb >> 16;
+    msb = ((msb >> 4) + 1) << 3;
+    return (num_entries & (msb | (msb >> 1))) + (msb >> 1);
+}
+
+static void
+resize(register sa_table *table)
+{
+    sa_table tmp_table;
+    sa_entry *entry;
+    sa_index_t i;
+
+    if (table->num_entries == 0) {
+        xfree(table->entries);
+	memset(table, 0, sizeof(sa_table));
+        return;
+    }
+
+    sa_init_table(&tmp_table, new_size(table->num_entries + (table->num_entries >> 2)));
+    entry = table->entries;
+
+    for(i = 0; i < table->num_bins; i++, entry++) {
+        if (entry->next != SA_EMPTY) {
+            sa_insert(&tmp_table, entry->key, entry->value);
+        }
+    }
+    xfree(table->entries);
+    *table = tmp_table;
+}
+
+int
+rb_id_table_lookup(register sa_table *table, ID id, VALUE *valuep)
+{
+    register sa_entry *entry;
+    id_key_t key = id2key(id);
+
+    if (table->num_entries == 0) return 0;
+
+    entry = table->entries + calc_pos(table, key);
+    if (entry->next == SA_EMPTY) return 0;
+
+    if (entry->key == key) goto found;
+    if (entry->next == SA_LAST) return 0;
+
+    entry = table->entries + (entry->next - SA_OFFSET);
+    if (entry->key == key) goto found;
+
+    while(entry->next != SA_LAST) {
+        entry = table->entries + (entry->next - SA_OFFSET);
+        if (entry->key == key) goto found;
+    }
+    return 0;
+found:
+    if (valuep) *valuep = entry->value;
+    return 1;
+}
+
+void
+rb_id_table_clear(sa_table *table)
+{
+    xfree(table->entries);
+    memset(table, 0, sizeof(sa_table));
+}
+
+void
+rb_id_table_free(sa_table *table)
+{
+    xfree(table->entries);
+    xfree(table);
+}
+
+size_t
+rb_id_table_memsize(sa_table *table)
+{
+    return sizeof(sa_table) + table->num_bins * sizeof (sa_entry);
+}
+
+size_t
+rb_id_table_size(sa_table *table)
+{
+    return table->num_entries;
+}
+
+int
+rb_id_table_delete(sa_table *table, ID id)
+{
+    sa_index_t pos, prev_pos = ~0;
+    sa_entry *entry;
+    id_key_t key = id2key(id);
+
+    if (table->num_entries == 0) goto not_found;
+
+    pos = calc_pos(table, key);
+    entry = table->entries + pos;
+
+    if (entry->next == SA_EMPTY) goto not_found;
+
+    do {
+        if (entry->key == key) {
+            if (entry->next != SA_LAST) {
+                sa_index_t npos = entry->next - SA_OFFSET;
+                *entry = table->entries[npos];
+                memset(table->entries + npos, 0, sizeof(sa_entry));
+            }
+            else {
+                memset(table->entries + pos, 0, sizeof(sa_entry));
+                if (~prev_pos) {
+                    table->entries[prev_pos].next = SA_LAST;
+                }
+            }
+            table->num_entries--;
+            if (table->num_entries < table->num_bins / 4) {
+                resize(table);
+            }
+            return 1;
+        }
+        if (entry->next == SA_LAST) break;
+        prev_pos = pos;
+        pos = entry->next - SA_OFFSET;
+        entry = table->entries + pos;
+    } while(1);
+
+not_found:
+    return 0;
+}
+
+void
+rb_id_table_foreach(sa_table *table, enum rb_id_table_iterator_result (*func)(ID, VALUE, void *), void *arg)
+{
+    sa_index_t i;
+
+    if (table->num_bins > 0) {
+	for(i = 0; i < table->num_bins ; i++) {
+	    if (table->entries[i].next != SA_EMPTY) {
+		id_key_t key = table->entries[i].key;
+		st_data_t val = table->entries[i].value;
+		enum rb_id_table_iterator_result ret = (*func)(key2id(key), val, arg);
+		if (ret == ID_TABLE_STOP) break;
+	    }
+	}
+    }
+}
+
+#endif /* ID_TABLE_USE_COALESCED_HASHING */
