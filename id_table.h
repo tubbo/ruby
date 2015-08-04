@@ -5,7 +5,8 @@ struct rb_id_table;
 /* compatible with ST_* */
 enum rb_id_table_iterator_result {
     ID_TABLE_CONTINUE = ST_CONTINUE,
-    ID_TABLE_STOP     = ST_STOP
+    ID_TABLE_STOP     = ST_STOP,
+    ID_TABLE_DELETE   = ST_DELETE,
 };
 
 struct rb_id_table *rb_id_table_create(size_t size);
