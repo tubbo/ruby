@@ -22,7 +22,7 @@
  */
 
 #ifndef ID_TABLE_IMPL
-#define ID_TABLE_IMPL 10
+#define ID_TABLE_IMPL 1
 #endif
 
 #if ID_TABLE_IMPL == 0
@@ -258,7 +258,7 @@ rb_id_table_size(struct rb_id_table *tbl)
 size_t
 rb_id_table_memsize(struct rb_id_table *tbl)
 {
-    return (sizeof(ID) + sizeof(VALUE)) * tbl->capa + sizeof(struct rb_id_table);
+    return (sizeof(id_key_t) + sizeof(VALUE)) * tbl->capa + sizeof(struct rb_id_table);
 }
 
 static void
@@ -857,6 +857,13 @@ rb_id_table_foreach(sa_table *table, enum rb_id_table_iterator_result (*func)(ID
 		id_key_t key = table->entries[i].key;
 		st_data_t val = table->entries[i].value;
 		enum rb_id_table_iterator_result ret = (*func)(key2id(key), val, arg);
+		switch (ret) {
+		  case ID_TABLE_DELETE:
+		    rb_warn("unsupported yet");
+		    break;
+		  default:
+		    break;
+		}
 		if (ret == ID_TABLE_STOP) break;
 	    }
 	}
