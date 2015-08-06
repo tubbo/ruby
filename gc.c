@@ -3962,9 +3962,8 @@ mark_method_entry(rb_objspace_t *objspace, const rb_method_entry_t *me)
 }
 
 static enum rb_id_table_iterator_result
-mark_method_entry_i(ID key, VALUE value, void *data)
+mark_method_entry_i(VALUE me, void *data)
 {
-    VALUE me = (VALUE)value;
     rb_objspace_t *objspace = (rb_objspace_t *)data;
 
     gc_mark(objspace, me);
@@ -3975,7 +3974,7 @@ static void
 mark_m_tbl(rb_objspace_t *objspace, struct rb_id_table *tbl)
 {
     if (tbl) {
-	rb_id_table_foreach(tbl, mark_method_entry_i, objspace);
+	rb_id_table_foreach_values(tbl, mark_method_entry_i, objspace);
     }
 }
 

@@ -22,7 +22,7 @@
  */
 
 #ifndef ID_TABLE_IMPL
-#define ID_TABLE_IMPL 1
+#define ID_TABLE_IMPL 10
 #endif
 
 #if ID_TABLE_IMPL == 0
@@ -565,6 +565,26 @@ rb_id_table_create(size_t size)
     return table;
 }
 
+void
+rb_id_table_clear(sa_table *table)
+{
+    xfree(table->entries);
+    memset(table, 0, sizeof(sa_table));
+}
+
+void
+rb_id_table_free(sa_table *table)
+{
+    xfree(table->entries);
+    xfree(table);
+}
+
+size_t
+rb_id_table_memsize(sa_table *table)
+{
+    return sizeof(sa_table) + table->num_bins * sizeof (sa_entry);
+}
+
 static inline sa_index_t
 calc_pos(register sa_table* table, id_key_t key)
 {
@@ -777,26 +797,6 @@ found:
     return 1;
 }
 
-void
-rb_id_table_clear(sa_table *table)
-{
-    xfree(table->entries);
-    memset(table, 0, sizeof(sa_table));
-}
-
-void
-rb_id_table_free(sa_table *table)
-{
-    xfree(table->entries);
-    xfree(table);
-}
-
-size_t
-rb_id_table_memsize(sa_table *table)
-{
-    return sizeof(sa_table) + table->num_bins * sizeof (sa_entry);
-}
-
 size_t
 rb_id_table_size(sa_table *table)
 {
@@ -846,8 +846,13 @@ not_found:
     return 0;
 }
 
-void
-rb_id_table_foreach(sa_table *table, enum rb_id_table_iterator_result (*func)(ID, VALUE, void *), void *arg)
+enum foreach_type {
+    foreach_key_values,
+    foreach_values
+};
+
+static void
+id_table_foreach(sa_table *table, enum rb_id_table_iterator_result (*func)(ANYARGS), void *arg, enum foreach_type type)
 {
     sa_index_t i;
 
@@ -856,7 +861,17 @@ rb_id_table_foreach(sa_table *table, enum rb_id_table_iterator_result (*func)(ID
 	    if (table->entries[i].next != SA_EMPTY) {
 		id_key_t key = table->entries[i].key;
 		st_data_t val = table->entries[i].value;
-		enum rb_id_table_iterator_result ret = (*func)(key2id(key), val, arg);
+		enum rb_id_table_iterator_result ret;
+
+		switch (type) {
+		  case foreach_key_values:
+		    ret = (*func)(key2id(key), val, arg);
+		    break;
+		  case foreach_values:
+		    ret = (*func)(val, arg);
+		    break;
+		}
+
 		switch (ret) {
 		  case ID_TABLE_DELETE:
 		    rb_warn("unsupported yet");
@@ -868,6 +883,18 @@ rb_id_table_foreach(sa_table *table, enum rb_id_table_iterator_result (*func)(ID
 	    }
 	}
     }
+}
+
+void
+rb_id_table_foreach(sa_table *table, enum rb_id_table_iterator_result (*func)(ID, VALUE, void *), void *arg)
+{
+    id_table_foreach(table, func, arg, foreach_key_values);
+}
+
+void
+rb_id_table_foreach_values(sa_table *table, enum rb_id_table_iterator_result (*func)(VALUE, void *), void *arg)
+{
+    id_table_foreach(table, func, arg, foreach_values);
 }
 
 #endif /* ID_TABLE_USE_COALESCED_HASHING */
