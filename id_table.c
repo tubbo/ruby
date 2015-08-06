@@ -23,7 +23,7 @@
  */
 
 #ifndef ID_TABLE_IMPL
-#define ID_TABLE_IMPL 1
+#define ID_TABLE_IMPL 11
 #endif
 
 #if ID_TABLE_IMPL == 0
@@ -53,9 +53,11 @@
 
 #elif ID_TABLE_IMPL == 10
 #define ID_TABLE_USE_COALESCED_HASHING 1
+#define ID_TABLE_USE_ID_SERIAL 1
 
 #elif ID_TABLE_IMPL == 11
 #define ID_TABLE_USE_SMALL_HASH 1
+#define ID_TABLE_USE_ID_SERIAL 1
 
 #else
 #error
@@ -64,6 +66,29 @@
 #if ID_TABLE_SWAP_RECENT_ACCESS && ID_TABLE_USE_LIST_SORTED
 #error
 #endif
+
+#if ID_TABLE_USE_ID_SERIAL
+
+typedef rb_id_serial_t id_key_t;
+static inline ID
+key2id(id_key_t key)
+{
+    return rb_id_serial_to_id(key);
+}
+
+static inline id_key_t
+id2key(ID id)
+{
+    return rb_id_to_serial(id);
+}
+
+#else /* ID_TABLE_USE_ID_SERIAL */
+
+typedef ID id_key_t;
+#define key2id(key) key
+#define id2key(id)  id
+
+#endif /* ID_TABLE_USE_ID_SERIAL */
 
 /***************************************************************
  * 0: using st with debug information.
@@ -193,29 +218,6 @@ rb_id_table_foreach_values(struct rb_id_table *tbl, enum rb_id_table_iterator_re
 #endif /* ID_TABLE_USE_ST */
 
 #if ID_TABLE_USE_LIST
-
-#if ID_TABLE_USE_ID_SERIAL
-
-typedef rb_id_serial_t id_key_t;
-static inline ID
-key2id(id_key_t key)
-{
-    return rb_id_serial_to_id(key);
-}
-
-static inline id_key_t
-id2key(ID id)
-{
-    return rb_id_to_serial(id);
-}
-
-#else /* ID_TABLE_USE_ID_SERIAL */
-
-typedef ID id_key_t;
-#define key2id(key) key
-#define id2key(id)  id
-
-#endif /* ID_TABLE_USE_ID_SERIAL */
 
 #define TABLE_MIN_CAPA 8
 
@@ -516,25 +518,11 @@ rb_id_table_foreach_values(struct rb_id_table *tbl, enum rb_id_table_iterator_re
 
 
 #if ID_TABLE_USE_COALESCED_HASHING
-
 /* implementation is based on
  * https://bugs.ruby-lang.org/issues/6962 by funny_falcon
  */
 
-typedef rb_id_serial_t id_key_t;
 typedef unsigned int sa_index_t;
-
-static inline ID
-key2id(id_key_t key)
-{
-    return rb_id_serial_to_id(key);
-}
-
-static inline id_key_t
-id2key(ID id)
-{
-    return rb_id_to_serial(id);
-}
 
 #define SA_EMPTY    0
 #define SA_LAST     1
@@ -911,19 +899,6 @@ rb_id_table_foreach_values(sa_table *table, enum rb_id_table_iterator_result (*f
 /* simple open addressing with quadratic probing.
    uses mark-bit on collisions - need extra 1 bit,
    ID is strictly 3 bits larger than rb_id_serial_t */
-typedef ID id_key_t;
-
-static inline ID
-key2id(id_key_t key)
-{
-    return rb_id_serial_to_id(key);
-}
-
-static inline id_key_t
-id2key(ID id)
-{
-    return rb_id_to_serial(id);
-}
 
 typedef struct rb_id_item {
     id_key_t key;
