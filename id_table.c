@@ -19,10 +19,11 @@
  * 4: simple array, and use rb_id_serial_t instead of ID. Swap recent access.
  * 5: sorted array, and use rb_id_serial_t instead of ID.
  * 10: funny falcon's Coalesced Hashing implementation [Feature #6962]
+ * 11: simple open addressing with quadratic probing.
  */
 
 #ifndef ID_TABLE_IMPL
-#define ID_TABLE_IMPL 11
+#define ID_TABLE_IMPL 1
 #endif
 
 #if ID_TABLE_IMPL == 0
@@ -515,6 +516,10 @@ rb_id_table_foreach_values(struct rb_id_table *tbl, enum rb_id_table_iterator_re
 
 
 #if ID_TABLE_USE_COALESCED_HASHING
+
+/* implementation is based on
+ * https://bugs.ruby-lang.org/issues/6962 by funny_falcon
+ */
 
 typedef rb_id_serial_t id_key_t;
 typedef unsigned int sa_index_t;
