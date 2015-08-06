@@ -584,11 +584,7 @@ rb_id_table_memsize(sa_table *table)
 static inline sa_index_t
 calc_pos(register sa_table* table, id_key_t key)
 {
-    /* this formula is empirical */
-    /* it has no good avalance, but works well in our case */
-    key ^= key >> 16;
-    key *= 0x445229;
-    return (key + (key >> 16)) % table->num_bins;
+    return key & (table->num_bins - 1);
 }
 
 static void
@@ -731,14 +727,13 @@ insert_into_main(register sa_table* table, id_key_t key, st_data_t value, sa_ind
 static sa_index_t
 new_size(sa_index_t num_entries)
 {
-    sa_index_t msb = num_entries;
-    msb |= msb >> 1;
-    msb |= msb >> 2;
-    msb |= msb >> 4;
-    msb |= msb >> 8;
-    msb |= msb >> 16;
-    msb = ((msb >> 4) + 1) << 3;
-    return (num_entries & (msb | (msb >> 1))) + (msb >> 1);
+    sa_index_t size = num_entries >> 3;
+    size |= size >> 1;
+    size |= size >> 2;
+    size |= size >> 4;
+    size |= size >> 8;
+    size |= size >> 16;
+    return (size + 1) << 3;
 }
 
 static void
