@@ -910,7 +910,6 @@ struct rb_id_table {
     item_t *items;
 };
 
-#define TBL_ID_MASK (~(id_key_t)1)
 #define ITEM_GET_KEY(tbl, i) ((tbl)->items[i].key >> 1)
 #define ITEM_KEY_ISSET(tbl, i) ((tbl)->items[i].key > 1)
 #define ITEM_COLLIDED(tbl, i) ((tbl)->items[i].key & 1)
@@ -918,7 +917,7 @@ struct rb_id_table {
 static inline void
 ITEM_SET_KEY(struct rb_id_table *tbl, int i, id_key_t key)
 {
-	tbl->items[i].key = (key << 1) | ITEM_COLLIDED(tbl, i);
+    tbl->items[i].key = (key << 1) | ITEM_COLLIDED(tbl, i);
 }
 
 static inline int
@@ -987,9 +986,8 @@ table_index(struct rb_id_table* tbl, id_key_t key)
 	    d++;
 	}
 	return ix;
-    } else {
-	return -1;
     }
+    return -1;
 }
 
 static void
@@ -998,13 +996,14 @@ table_raw_insert(struct rb_id_table *tbl, id_key_t key, VALUE val)
     int mask = tbl->capa - 1;
     int ix = key & mask;
     int d = 1;
+    assert(key != 0);
     while (ITEM_KEY_ISSET(tbl, ix)) {
 	ITEM_SET_COLLIDED(tbl, ix);
 	ix = (ix + d) & mask;
 	d++;
     }
     tbl->num++;
-    if (ITEM_COLLIDED(tbl, ix) == 0) {
+    if (!ITEM_COLLIDED(tbl, ix)) {
 	tbl->used++;
     }
     ITEM_SET_KEY(tbl, ix, key);
@@ -1012,15 +1011,15 @@ table_raw_insert(struct rb_id_table *tbl, id_key_t key, VALUE val)
 }
 
 static int
-id_table_delete(struct rb_id_table *tbl, int index)
+id_table_delete(struct rb_id_table *tbl, int ix)
 {
-    if (index >= 0) {
-	ITEM_SET_KEY(tbl, index, 0);
-	tbl->items[index].val = 0;
-	if (ITEM_COLLIDED(tbl, index) == 0) {
+    if (ix >= 0) {
+	if (!ITEM_COLLIDED(tbl, ix)) {
 	    tbl->used--;
 	}
 	tbl->num--;
+	ITEM_SET_KEY(tbl, ix, 0);
+	tbl->items[ix].val = 0;
 	return TRUE;
     } else {
 	return FALSE;
@@ -1131,7 +1130,6 @@ rb_id_table_foreach_values(struct rb_id_table *tbl, enum rb_id_table_iterator_re
     for (i=0; i<capa; i++) {
 	if (ITEM_KEY_ISSET(tbl, i)) {
 	    enum rb_id_table_iterator_result ret = (*func)(tbl->items[i].val, data);
-	    assert(key != 0);
 
 	    if (ret == ID_TABLE_DELETE)
 		id_table_delete(tbl, i);
