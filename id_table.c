@@ -600,16 +600,19 @@ find_empty(register sa_table* table, register sa_index_t pos)
 {
     sa_index_t new_pos = table->free_pos-1;
     sa_entry *entry;
+    static unsigned offsets[][3] = {
+	    {1, 2, 3},
+	    {2, 3, 0},
+	    {3, 1, 0},
+	    {2, 1, 0}
+    };
+    unsigned *check = offsets[pos&3];
     pos &= FLOOR_TO_4;
     entry = table->entries+pos;
 
-    if (entry->next == SA_EMPTY) { new_pos = pos; goto check; }
-    pos++; entry++;
-    if (entry->next == SA_EMPTY) { new_pos = pos; goto check; }
-    pos++; entry++;
-    if (entry->next == SA_EMPTY) { new_pos = pos; goto check; }
-    pos++; entry++;
-    if (entry->next == SA_EMPTY) { new_pos = pos; goto check; }
+    if (entry[check[0]].next == SA_EMPTY) { new_pos = pos + check[0]; goto check; }
+    if (entry[check[1]].next == SA_EMPTY) { new_pos = pos + check[1]; goto check; }
+    if (entry[check[2]].next == SA_EMPTY) { new_pos = pos + check[2]; goto check; }
 
   check:
     if (new_pos+1 == table->free_pos) fix_empty(table);
