@@ -317,6 +317,20 @@ ids_bsearch(const id_key_t *keys, id_key_t key, int num)
 {
     int p, min = 0, max = num;
 
+    if (num <= 64) {
+	if (num  > 32) {
+	    if (keys[num/2] <= key) {
+		min = num/2;
+	    } else {
+		max = num/2;
+	    }
+	}
+	for (p = min; p<num && keys[p] < key; p++) {
+	    assert(keys[p] != 0);
+	}
+	return (p<num && keys[p] == key) ? p : -p-1;
+    }
+
     while (1) {
 	p = min + (max - min) / 2;
 
