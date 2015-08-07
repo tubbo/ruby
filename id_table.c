@@ -900,6 +900,9 @@ rb_id_table_foreach_values(sa_table *table, enum rb_id_table_iterator_result (*f
 
 typedef struct rb_id_item {
     id_key_t key;
+#if SIZEOF_VALUE == 8
+    int      collision;
+#endif
     VALUE    val;
 } item_t;
 
@@ -910,6 +913,17 @@ struct rb_id_table {
     item_t *items;
 };
 
+#if SIZEOF_VALUE == 8
+#define ITEM_GET_KEY(tbl, i) ((tbl)->items[i].key)
+#define ITEM_KEY_ISSET(tbl, i) ((tbl)->items[i].key)
+#define ITEM_COLLIDED(tbl, i) ((tbl)->items[i].collision)
+#define ITEM_SET_COLLIDED(tbl, i) ((tbl)->items[i].collision = 1)
+static inline void
+ITEM_SET_KEY(struct rb_id_table *tbl, int i, id_key_t key)
+{
+    tbl->items[i].key = key;
+}
+#else
 #define ITEM_GET_KEY(tbl, i) ((tbl)->items[i].key >> 1)
 #define ITEM_KEY_ISSET(tbl, i) ((tbl)->items[i].key > 1)
 #define ITEM_COLLIDED(tbl, i) ((tbl)->items[i].key & 1)
@@ -919,6 +933,7 @@ ITEM_SET_KEY(struct rb_id_table *tbl, int i, id_key_t key)
 {
     tbl->items[i].key = (key << 1) | ITEM_COLLIDED(tbl, i);
 }
+#endif
 
 static inline int
 round_capa(int capa) {
