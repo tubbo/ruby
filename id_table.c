@@ -317,6 +317,20 @@ ids_bsearch(const id_key_t *keys, id_key_t key, int num)
 {
     int p, min = 0, max = num;
 
+    if (num <= 64) {
+	if (num  > 32) {
+	    if (keys[num/2] <= key) {
+		min = num/2;
+	    } else {
+		max = num/2;
+	    }
+	}
+	for (p = min; p<num && keys[p] < key; p++) {
+	    assert(keys[p] != 0);
+	}
+	return (p<num && keys[p] == key) ? p : -p-1;
+    }
+
     while (1) {
 	p = min + (max - min) / 2;
 
@@ -584,11 +598,7 @@ rb_id_table_memsize(sa_table *table)
 static inline sa_index_t
 calc_pos(register sa_table* table, id_key_t key)
 {
-    /* this formula is empirical */
-    /* it has no good avalance, but works well in our case */
-    key ^= key >> 16;
-    key *= 0x445229;
-    return (key + (key >> 16)) % table->num_bins;
+    return key & (table->num_bins - 1);
 }
 
 static void
@@ -604,16 +614,19 @@ find_empty(register sa_table* table, register sa_index_t pos)
 {
     sa_index_t new_pos = table->free_pos-1;
     sa_entry *entry;
+    static unsigned offsets[][3] = {
+	    {1, 2, 3},
+	    {2, 3, 0},
+	    {3, 1, 0},
+	    {2, 1, 0}
+    };
+    unsigned *check = offsets[pos&3];
     pos &= FLOOR_TO_4;
     entry = table->entries+pos;
 
-    if (entry->next == SA_EMPTY) { new_pos = pos; goto check; }
-    pos++; entry++;
-    if (entry->next == SA_EMPTY) { new_pos = pos; goto check; }
-    pos++; entry++;
-    if (entry->next == SA_EMPTY) { new_pos = pos; goto check; }
-    pos++; entry++;
-    if (entry->next == SA_EMPTY) { new_pos = pos; goto check; }
+    if (entry[check[0]].next == SA_EMPTY) { new_pos = pos + check[0]; goto check; }
+    if (entry[check[1]].next == SA_EMPTY) { new_pos = pos + check[1]; goto check; }
+    if (entry[check[2]].next == SA_EMPTY) { new_pos = pos + check[2]; goto check; }
 
   check:
     if (new_pos+1 == table->free_pos) fix_empty(table);
@@ -731,14 +744,13 @@ insert_into_main(register sa_table* table, id_key_t key, st_data_t value, sa_ind
 static sa_index_t
 new_size(sa_index_t num_entries)
 {
-    sa_index_t msb = num_entries;
-    msb |= msb >> 1;
-    msb |= msb >> 2;
-    msb |= msb >> 4;
-    msb |= msb >> 8;
-    msb |= msb >> 16;
-    msb = ((msb >> 4) + 1) << 3;
-    return (num_entries & (msb | (msb >> 1))) + (msb >> 1);
+    sa_index_t size = num_entries >> 3;
+    size |= size >> 1;
+    size |= size >> 2;
+    size |= size >> 4;
+    size |= size >> 8;
+    size |= size >> 16;
+    return (size + 1) << 3;
 }
 
 static void
@@ -902,6 +914,9 @@ rb_id_table_foreach_values(sa_table *table, enum rb_id_table_iterator_result (*f
 
 typedef struct rb_id_item {
     id_key_t key;
+#if SIZEOF_VALUE == 8
+    int      collision;
+#endif
     VALUE    val;
 } item_t;
 
@@ -912,7 +927,17 @@ struct rb_id_table {
     item_t *items;
 };
 
-#define TBL_ID_MASK (~(id_key_t)1)
+#if SIZEOF_VALUE == 8
+#define ITEM_GET_KEY(tbl, i) ((tbl)->items[i].key)
+#define ITEM_KEY_ISSET(tbl, i) ((tbl)->items[i].key)
+#define ITEM_COLLIDED(tbl, i) ((tbl)->items[i].collision)
+#define ITEM_SET_COLLIDED(tbl, i) ((tbl)->items[i].collision = 1)
+static inline void
+ITEM_SET_KEY(struct rb_id_table *tbl, int i, id_key_t key)
+{
+    tbl->items[i].key = key;
+}
+#else
 #define ITEM_GET_KEY(tbl, i) ((tbl)->items[i].key >> 1)
 #define ITEM_KEY_ISSET(tbl, i) ((tbl)->items[i].key > 1)
 #define ITEM_COLLIDED(tbl, i) ((tbl)->items[i].key & 1)
@@ -920,8 +945,9 @@ struct rb_id_table {
 static inline void
 ITEM_SET_KEY(struct rb_id_table *tbl, int i, id_key_t key)
 {
-	tbl->items[i].key = (key << 1) | ITEM_COLLIDED(tbl, i);
+    tbl->items[i].key = (key << 1) | ITEM_COLLIDED(tbl, i);
 }
+#endif
 
 static inline int
 round_capa(int capa) {
@@ -989,9 +1015,8 @@ table_index(struct rb_id_table* tbl, id_key_t key)
 	    d++;
 	}
 	return ix;
-    } else {
-	return -1;
     }
+    return -1;
 }
 
 static void
@@ -1000,13 +1025,14 @@ table_raw_insert(struct rb_id_table *tbl, id_key_t key, VALUE val)
     int mask = tbl->capa - 1;
     int ix = key & mask;
     int d = 1;
+    assert(key != 0);
     while (ITEM_KEY_ISSET(tbl, ix)) {
 	ITEM_SET_COLLIDED(tbl, ix);
 	ix = (ix + d) & mask;
 	d++;
     }
     tbl->num++;
-    if (ITEM_COLLIDED(tbl, ix) == 0) {
+    if (!ITEM_COLLIDED(tbl, ix)) {
 	tbl->used++;
     }
     ITEM_SET_KEY(tbl, ix, key);
@@ -1014,15 +1040,15 @@ table_raw_insert(struct rb_id_table *tbl, id_key_t key, VALUE val)
 }
 
 static int
-id_table_delete(struct rb_id_table *tbl, int index)
+id_table_delete(struct rb_id_table *tbl, int ix)
 {
-    if (index >= 0) {
-	ITEM_SET_KEY(tbl, index, 0);
-	tbl->items[index].val = 0;
-	if (ITEM_COLLIDED(tbl, index) == 0) {
+    if (ix >= 0) {
+	if (!ITEM_COLLIDED(tbl, ix)) {
 	    tbl->used--;
 	}
 	tbl->num--;
+	ITEM_SET_KEY(tbl, ix, 0);
+	tbl->items[ix].val = 0;
 	return TRUE;
     } else {
 	return FALSE;
@@ -1133,7 +1159,6 @@ rb_id_table_foreach_values(struct rb_id_table *tbl, enum rb_id_table_iterator_re
     for (i=0; i<capa; i++) {
 	if (ITEM_KEY_ISSET(tbl, i)) {
 	    enum rb_id_table_iterator_result ret = (*func)(tbl->items[i].val, data);
-	    assert(key != 0);
 
 	    if (ret == ID_TABLE_DELETE)
 		id_table_delete(tbl, i);
