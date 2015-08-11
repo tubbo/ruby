@@ -18,6 +18,7 @@
  * 3: simple array, and use rb_id_serial_t instead of ID.
  * 4: simple array, and use rb_id_serial_t instead of ID. Swap recent access.
  * 5: sorted array, and use rb_id_serial_t instead of ID.
+ * 6: sorted array, and use rb_id_serial_t instead of ID, linear small part.
  * 10: funny falcon's Coalesced Hashing implementation [Feature #6962]
  * 11: simple open addressing with quadratic probing.
  */
@@ -50,6 +51,12 @@
 #define ID_TABLE_USE_LIST 1
 #define ID_TABLE_USE_ID_SERIAL 1
 #define ID_TABLE_USE_LIST_SORTED 1
+
+#elif ID_TABLE_IMPL == 6
+#define ID_TABLE_USE_LIST 1
+#define ID_TABLE_USE_ID_SERIAL 1
+#define ID_TABLE_USE_LIST_SORTED 1
+#define ID_TABLE_USE_LIST_SORTED_LINEAR_SMALL_RANGE 1
 
 #elif ID_TABLE_IMPL == 10
 #define ID_TABLE_USE_COALESCED_HASHING 1
@@ -317,6 +324,7 @@ ids_bsearch(const id_key_t *keys, id_key_t key, int num)
 {
     int p, min = 0, max = num;
 
+#if ID_TABLE_USE_LIST_SORTED_LINEAR_SMALL_RANGE
     if (num <= 64) {
 	if (num  > 32) {
 	    if (keys[num/2] <= key) {
@@ -330,6 +338,7 @@ ids_bsearch(const id_key_t *keys, id_key_t key, int num)
 	}
 	return (p<num && keys[p] == key) ? p : -p-1;
     }
+#endif /* ID_TABLE_USE_LIST_SORTED_LINEAR_SMALL_RANGE */
 
     while (1) {
 	p = min + (max - min) / 2;
