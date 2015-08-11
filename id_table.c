@@ -3,7 +3,7 @@
 #include "id_table.h"
 
 #ifndef ID_TABLE_DEBUG
-#define ID_TABLE_DEBUG 1
+#define ID_TABLE_DEBUG 0
 #endif
 
 #if ID_TABLE_DEBUG == 0
