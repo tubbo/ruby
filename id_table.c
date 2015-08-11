@@ -12,15 +12,18 @@
 #include <assert.h>
 
 /*
- * 0: using st with debug information.
- * 1: using st.
- * 2: simple array. ids = [ID1, ID2, ...], values = [val1, val2, ...]
- * 3: simple array, and use rb_id_serial_t instead of ID.
- * 4: simple array, and use rb_id_serial_t instead of ID. Swap recent access.
- * 5: sorted array, and use rb_id_serial_t instead of ID.
- * 6: sorted array, and use rb_id_serial_t instead of ID, linear small part.
- * 10: funny falcon's Coalesced Hashing implementation [Feature #6962]
- * 11: simple open addressing with quadratic probing.
+ * st
+ *    0: using st with debug information.
+ *    1: using st.
+ * list
+ *   11: simple array. ids = [ID1, ID2, ...], values = [val1, val2, ...]
+ *   12: simple array, and use rb_id_serial_t instead of ID.
+ *   13: simple array, and use rb_id_serial_t instead of ID. Swap recent access.
+ *   14: sorted array, and use rb_id_serial_t instead of ID.
+ *   15: sorted array, and use rb_id_serial_t instead of ID, linear small part.
+ * hash
+ *   21: funny falcon's Coalesced Hashing implementation [Feature #6962]
+ *   22: simple open addressing with quadratic probing.
  */
 
 #ifndef ID_TABLE_IMPL
@@ -28,41 +31,68 @@
 #endif
 
 #if ID_TABLE_IMPL == 0
+#define ID_TABLE_NAME st
+#define ID_TABLE_IMPL_TYPE struct st_id_table
+
 #define ID_TABLE_USE_ST 1
 #define ID_TABLE_USE_ST_DEBUG 1
 
 #elif ID_TABLE_IMPL == 1
+#define ID_TABLE_NAME st
+#define ID_TABLE_IMPL_TYPE struct st_id_table
+
 #define ID_TABLE_USE_ST 1
 #define ID_TABLE_USE_ST_DEBUG 0
 
-#elif ID_TABLE_IMPL == 2
+#elif ID_TABLE_IMPL == 11
+#define ID_TABLE_NAME list
+#define ID_TABLE_IMPL_TYPE struct list_id_table
+
 #define ID_TABLE_USE_LIST 1
 
-#elif ID_TABLE_IMPL == 3
+#elif ID_TABLE_IMPL == 12
+#define ID_TABLE_NAME list
+#define ID_TABLE_IMPL_TYPE struct list_id_table
+
 #define ID_TABLE_USE_LIST 1
 #define ID_TABLE_USE_ID_SERIAL 1
 
-#elif ID_TABLE_IMPL == 4
+#elif ID_TABLE_IMPL == 13
+#define ID_TABLE_NAME list
+#define ID_TABLE_IMPL_TYPE struct list_id_table
+
 #define ID_TABLE_USE_LIST 1
 #define ID_TABLE_USE_ID_SERIAL 1
 #define ID_TABLE_SWAP_RECENT_ACCESS 1
 
-#elif ID_TABLE_IMPL == 5
+#elif ID_TABLE_IMPL == 14
+#define ID_TABLE_NAME list
+#define ID_TABLE_IMPL_TYPE struct list_id_table
+
 #define ID_TABLE_USE_LIST 1
 #define ID_TABLE_USE_ID_SERIAL 1
 #define ID_TABLE_USE_LIST_SORTED 1
 
-#elif ID_TABLE_IMPL == 6
+#elif ID_TABLE_IMPL == 15
+#define ID_TABLE_NAME list
+#define ID_TABLE_IMPL_TYPE struct list_id_table
+
 #define ID_TABLE_USE_LIST 1
 #define ID_TABLE_USE_ID_SERIAL 1
 #define ID_TABLE_USE_LIST_SORTED 1
 #define ID_TABLE_USE_LIST_SORTED_LINEAR_SMALL_RANGE 1
 
-#elif ID_TABLE_IMPL == 10
+#elif ID_TABLE_IMPL == 21
+#define ID_TABLE_NAME hash
+#define ID_TABLE_IMPL_TYPE sa_table
+
 #define ID_TABLE_USE_COALESCED_HASHING 1
 #define ID_TABLE_USE_ID_SERIAL 1
 
-#elif ID_TABLE_IMPL == 11
+#elif ID_TABLE_IMPL == 22
+#define ID_TABLE_NAME hash
+#define ID_TABLE_IMPL_TYPE struct hash_id_table
+
 #define ID_TABLE_USE_SMALL_HASH 1
 #define ID_TABLE_USE_ID_SERIAL 1
 
@@ -75,7 +105,6 @@
 #endif
 
 #if ID_TABLE_USE_ID_SERIAL
-
 typedef rb_id_serial_t id_key_t;
 static inline ID
 key2id(id_key_t key)
@@ -88,7 +117,6 @@ id2key(ID id)
 {
     return rb_id_to_serial(id);
 }
-
 #else /* ID_TABLE_USE_ID_SERIAL */
 
 typedef ID id_key_t;
@@ -102,32 +130,31 @@ typedef ID id_key_t;
  * 1: using st.
  ***************************************************************/
 #if ID_TABLE_USE_ST
-
 #if ID_TABLE_USE_ST_DEBUG
 #define ID_TABLE_MARK 0x12345678
 
-struct rb_id_table {
+struct st_id_table {
     struct st_table *st;
     unsigned int check;
 };
 
 static struct st_table *
-tbl2st(struct rb_id_table *tbl) {
+tbl2st(struct st_id_table *tbl) {
     if (tbl->check != ID_TABLE_MARK) rb_bug("tbl2st: check error %x", tbl->check);
     return tbl->st;
 }
 
-struct rb_id_table *
-rb_id_table_create(size_t size)
+static struct st_id_table *
+st_id_table_create(size_t size)
 {
-    struct rb_id_table *tbl = ALLOC(struct rb_id_table);
+    struct st_id_table *tbl = ALLOC(struct st_id_table);
     tbl->st = st_init_numtable_with_size(size);
     tbl->check = ID_TABLE_MARK;
     return tbl;
 }
 
-void
-rb_id_table_free(struct rb_id_table *tbl)
+static void
+st_id_table_free(struct st_id_table *tbl)
 {
     st_free_table(tbl->st);
     xfree(tbl);
@@ -135,68 +162,68 @@ rb_id_table_free(struct rb_id_table *tbl)
 
 #else /* ID_TABLE_USE_ST_DEBUG */
 
-struct rb_id_table {
+struct st_id_table {
     struct st_table st;
 };
 
 static struct st_table *
-tbl2st(struct rb_id_table *tbl) {
+tbl2st(struct st_id_table *tbl) {
     return (struct st_table *)tbl;
 }
 
-struct rb_id_table *
-rb_id_table_create(size_t size)
+static struct st_id_table *
+st_id_table_create(size_t size)
 {
-    return (struct rb_id_table *)st_init_numtable_with_size(size);
+    return (struct st_id_table *)st_init_numtable_with_size(size);
 }
 
-void
-rb_id_table_free(struct rb_id_table *tbl)
+static void
+st_id_table_free(struct st_id_table *tbl)
 {
     st_free_table((struct st_table*)tbl);
 }
 
 #endif /* ID_TABLE_USE_ST_DEBUG */
 
-void
-rb_id_table_clear(struct rb_id_table *tbl)
+static void
+st_id_table_clear(struct st_id_table *tbl)
 {
     st_clear(tbl2st(tbl));
 }
 
-size_t
-rb_id_table_size(struct rb_id_table *tbl)
+static size_t
+st_id_table_size(struct st_id_table *tbl)
 {
     return tbl2st(tbl)->num_entries;
 }
 
-size_t
-rb_id_table_memsize(struct rb_id_table *tbl)
+static size_t
+st_id_table_memsize(struct st_id_table *tbl)
 {
-    size_t header_size = ID_TABLE_USE_ST_DEBUG ? sizeof(struct rb_id_table) : 0;
+    size_t header_size = ID_TABLE_USE_ST_DEBUG ? sizeof(struct st_id_table) : 0;
     return header_size + st_memsize(tbl2st(tbl));
 }
 
-int
-rb_id_table_lookup(struct rb_id_table *tbl, ID id, VALUE *val)
+static int
+st_id_table_lookup(struct st_id_table *tbl, ID id, VALUE *val)
 {
     return st_lookup(tbl2st(tbl), (st_data_t)id, (st_data_t *)val);
 }
 
-int
-rb_id_table_insert(struct rb_id_table *tbl, ID id, VALUE val)
+static int
+st_id_table_insert(struct st_id_table *tbl, ID id, VALUE val)
 {
     return st_insert(tbl2st(tbl), id, val);
 }
 
-int
-rb_id_table_delete(struct rb_id_table *tbl, ID id)
+static int
+st_id_table_delete(struct st_id_table *tbl, ID id)
 {
     return st_delete(tbl2st(tbl), (st_data_t *)&id, NULL);
 }
 
-void
-rb_id_table_foreach(struct rb_id_table *tbl, enum rb_id_table_iterator_result (*func)(ID id, VALUE val, void *data), void *data)
+static void
+st_id_table_foreach(struct st_id_table *tbl, enum rb_id_table_iterator_result (*func)(ID id, VALUE val, void *data), void *data)
 {
     st_foreach(tbl2st(tbl), (int (*)(ANYARGS))func, (st_data_t)data);
 }
@@ -213,32 +240,31 @@ each_values(st_data_t key, st_data_t val, st_data_t ptr)
     return values_iter_data->values_i(val, values_iter_data->data);
 }
 
-void
-rb_id_table_foreach_values(struct rb_id_table *tbl, enum rb_id_table_iterator_result (*func)(VALUE val, void *data), void *data)
+static void
+st_id_table_foreach_values(struct st_id_table *tbl, enum rb_id_table_iterator_result (*func)(VALUE val, void *data), void *data)
 {
     struct values_iter_data values_iter_data;
     values_iter_data.values_i = func;
     values_iter_data.data = data;
     st_foreach(tbl2st(tbl), each_values, (st_data_t)&values_iter_data);
 }
-
 #endif /* ID_TABLE_USE_ST */
 
 #if ID_TABLE_USE_LIST
 
 #define TABLE_MIN_CAPA 8
 
-struct rb_id_table {
+struct list_id_table {
     int capa;
     int num;
     id_key_t *keys;
     VALUE *values;
 };
 
-struct
-rb_id_table *rb_id_table_create(size_t capa)
+static struct list_id_table *
+list_id_table_create(size_t capa)
 {
-    struct rb_id_table *tbl = ZALLOC(struct rb_id_table);
+    struct list_id_table *tbl = ZALLOC(struct list_id_table);
 
     if (capa > 0) {
 	tbl->capa = (int)capa;
@@ -248,34 +274,34 @@ rb_id_table *rb_id_table_create(size_t capa)
     return tbl;
 }
 
-void
-rb_id_table_free(struct rb_id_table *tbl)
+static void
+list_id_table_free(struct list_id_table *tbl)
 {
     xfree(tbl->keys);
     xfree(tbl->values);
     xfree(tbl);
 }
 
-void
-rb_id_table_clear(struct rb_id_table *tbl)
+static void
+list_id_table_clear(struct list_id_table *tbl)
 {
     tbl->num = 0;
 }
 
-size_t
-rb_id_table_size(struct rb_id_table *tbl)
+static size_t
+list_id_table_size(struct list_id_table *tbl)
 {
     return (size_t)tbl->num;
 }
 
-size_t
-rb_id_table_memsize(struct rb_id_table *tbl)
+static size_t
+list_id_table_memsize(struct list_id_table *tbl)
 {
-    return (sizeof(id_key_t) + sizeof(VALUE)) * tbl->capa + sizeof(struct rb_id_table);
+    return (sizeof(id_key_t) + sizeof(VALUE)) * tbl->capa + sizeof(struct list_id_table);
 }
 
 static void
-table_extend(struct rb_id_table *tbl)
+table_extend(struct list_id_table *tbl)
 {
     if (tbl->capa == tbl->num) {
 	tbl->capa = tbl->capa == 0 ? TABLE_MIN_CAPA : (tbl->capa * 2);
@@ -286,7 +312,7 @@ table_extend(struct rb_id_table *tbl)
 
 #if ID_TABLE_DEBUG
 static void
-tbl_show(struct rb_id_table *tbl)
+tbl_show(struct list_id_table *tbl)
 {
     const id_key_t *keys = tbl->keys;
     const int num = tbl->num;
@@ -300,7 +326,7 @@ tbl_show(struct rb_id_table *tbl)
 #endif
 
 static void
-tbl_assert(struct rb_id_table *tbl)
+tbl_assert(struct list_id_table *tbl)
 {
 #if ID_TABLE_DEBUG
 #if ID_TABLE_USE_LIST_SORTED
@@ -369,7 +395,7 @@ ids_bsearch(const id_key_t *keys, id_key_t key, int num)
 #endif /* ID_TABLE_USE_LIST_SORTED */
 
 static int
-table_index(struct rb_id_table *tbl, id_key_t key)
+table_index(struct list_id_table *tbl, id_key_t key)
 {
     const int num = tbl->num;
     const id_key_t *keys = tbl->keys;
@@ -390,8 +416,8 @@ table_index(struct rb_id_table *tbl, id_key_t key)
 #endif
 }
 
-int
-rb_id_table_lookup(struct rb_id_table *tbl, ID id, VALUE *valp)
+static int
+list_id_table_lookup(struct list_id_table *tbl, ID id, VALUE *valp)
 {
     id_key_t key = id2key(id);
     int index = table_index(tbl, key);
@@ -416,8 +442,8 @@ rb_id_table_lookup(struct rb_id_table *tbl, ID id, VALUE *valp)
     }
 }
 
-int
-rb_id_table_insert(struct rb_id_table *tbl, ID id, VALUE val)
+static int
+list_id_table_insert(struct list_id_table *tbl, ID id, VALUE val)
 {
     const id_key_t key = id2key(id);
     const int index = table_index(tbl, key);
@@ -456,7 +482,7 @@ rb_id_table_insert(struct rb_id_table *tbl, ID id, VALUE val)
 }
 
 static int
-id_table_delete(struct rb_id_table *tbl, id_key_t key, int index)
+list_delete_index(struct list_id_table *tbl, id_key_t key, int index)
 {
     if (index >= 0) {
 #if ID_TABLE_USE_LIST_SORTED
@@ -483,12 +509,12 @@ id_table_delete(struct rb_id_table *tbl, id_key_t key, int index)
     }
 }
 
-int
-rb_id_table_delete(struct rb_id_table *tbl, ID id)
+static int
+list_id_table_delete(struct list_id_table *tbl, ID id)
 {
     const id_key_t key = id2key(id);
     int index = table_index(tbl, key);
-    return id_table_delete(tbl, key, index);
+    return list_delete_index(tbl, key, index);
 }
 
 #define FOREACH_LAST() do {   \
@@ -497,15 +523,15 @@ rb_id_table_delete(struct rb_id_table *tbl, ID id)
       case ID_TABLE_STOP:     \
 	break;                \
       case ID_TABLE_DELETE:   \
-	id_table_delete(tbl, key, i); \
+	list_delete_index(tbl, key, i); \
 	num = tbl->num;               \
 	i--; /* redo smae index */    \
 	break; \
     } \
 } while (0)
 
-void
-rb_id_table_foreach(struct rb_id_table *tbl, enum rb_id_table_iterator_result (*func)(ID id, VALUE val, void *data), void *data)
+static void
+list_id_table_foreach(struct list_id_table *tbl, enum rb_id_table_iterator_result (*func)(ID id, VALUE val, void *data), void *data)
 {
     int num = tbl->num;
     int i;
@@ -521,8 +547,8 @@ rb_id_table_foreach(struct rb_id_table *tbl, enum rb_id_table_iterator_result (*
     }
 }
 
-void
-rb_id_table_foreach_values(struct rb_id_table *tbl, enum rb_id_table_iterator_result (*func)(VALUE val, void *data), void *data)
+static void
+list_id_table_foreach_values(struct list_id_table *tbl, enum rb_id_table_iterator_result (*func)(VALUE val, void *data), void *data)
 {
     int num = tbl->num;
     int i;
@@ -558,7 +584,7 @@ typedef struct sa_entry {
     VALUE value;
 } sa_entry;
 
-typedef struct rb_id_table {
+typedef struct {
     sa_index_t num_bins;
     sa_index_t num_entries;
     sa_index_t free_pos;
@@ -576,30 +602,30 @@ sa_init_table(register sa_table *table, sa_index_t num_bins)
     }
 }
 
-sa_table*
-rb_id_table_create(size_t size)
+static sa_table*
+hash_id_table_create(size_t size)
 {
     sa_table* table = ZALLOC(sa_table);
     sa_init_table(table, size);
     return table;
 }
 
-void
-rb_id_table_clear(sa_table *table)
+static void
+hash_id_table_clear(sa_table *table)
 {
     xfree(table->entries);
     memset(table, 0, sizeof(sa_table));
 }
 
-void
-rb_id_table_free(sa_table *table)
+static void
+hash_id_table_free(sa_table *table)
 {
     xfree(table->entries);
     xfree(table);
 }
 
-size_t
-rb_id_table_memsize(sa_table *table)
+static size_t
+hash_id_table_memsize(sa_table *table)
 {
     return sizeof(sa_table) + table->num_bins * sizeof (sa_entry);
 }
@@ -691,8 +717,8 @@ sa_insert(register sa_table* table, id_key_t key, VALUE value)
     }
 }
 
-int
-rb_id_table_insert(register sa_table* table, ID id, VALUE value)
+static int
+hash_id_table_insert(register sa_table* table, ID id, VALUE value)
 {
     return sa_insert(table, id2key(id), value);
 }
@@ -787,8 +813,8 @@ resize(register sa_table *table)
     *table = tmp_table;
 }
 
-int
-rb_id_table_lookup(register sa_table *table, ID id, VALUE *valuep)
+static int
+hash_id_table_lookup(register sa_table *table, ID id, VALUE *valuep)
 {
     register sa_entry *entry;
     id_key_t key = id2key(id);
@@ -814,14 +840,14 @@ found:
     return 1;
 }
 
-size_t
-rb_id_table_size(sa_table *table)
+static size_t
+hash_id_table_size(sa_table *table)
 {
     return table->num_entries;
 }
 
-int
-rb_id_table_delete(sa_table *table, ID id)
+static int
+hash_id_table_delete(sa_table *table, ID id)
 {
     sa_index_t pos, prev_pos = ~0;
     sa_entry *entry;
@@ -869,7 +895,7 @@ enum foreach_type {
 };
 
 static void
-id_table_foreach(sa_table *table, enum rb_id_table_iterator_result (*func)(ANYARGS), void *arg, enum foreach_type type)
+hash_foreach(sa_table *table, enum rb_id_table_iterator_result (*func)(ANYARGS), void *arg, enum foreach_type type)
 {
     sa_index_t i;
 
@@ -902,18 +928,17 @@ id_table_foreach(sa_table *table, enum rb_id_table_iterator_result (*func)(ANYAR
     }
 }
 
-void
-rb_id_table_foreach(sa_table *table, enum rb_id_table_iterator_result (*func)(ID, VALUE, void *), void *arg)
+static void
+hash_id_table_foreach(sa_table *table, enum rb_id_table_iterator_result (*func)(ID, VALUE, void *), void *arg)
 {
-    id_table_foreach(table, func, arg, foreach_key_values);
+    hash_foreach(table, func, arg, foreach_key_values);
 }
 
-void
-rb_id_table_foreach_values(sa_table *table, enum rb_id_table_iterator_result (*func)(VALUE, void *), void *arg)
+static void
+hash_id_table_foreach_values(sa_table *table, enum rb_id_table_iterator_result (*func)(VALUE, void *), void *arg)
 {
-    id_table_foreach(table, func, arg, foreach_values);
+    hash_foreach(table, func, arg, foreach_values);
 }
-
 #endif /* ID_TABLE_USE_COALESCED_HASHING */
 
 #ifdef ID_TABLE_USE_SMALL_HASH
@@ -929,7 +954,7 @@ typedef struct rb_id_item {
     VALUE    val;
 } item_t;
 
-struct rb_id_table {
+struct hash_id_table {
     int capa;
     int num;
     int used;
@@ -942,7 +967,7 @@ struct rb_id_table {
 #define ITEM_COLLIDED(tbl, i) ((tbl)->items[i].collision)
 #define ITEM_SET_COLLIDED(tbl, i) ((tbl)->items[i].collision = 1)
 static inline void
-ITEM_SET_KEY(struct rb_id_table *tbl, int i, id_key_t key)
+ITEM_SET_KEY(struct hash_id_table *tbl, int i, id_key_t key)
 {
     tbl->items[i].key = key;
 }
@@ -952,7 +977,7 @@ ITEM_SET_KEY(struct rb_id_table *tbl, int i, id_key_t key)
 #define ITEM_COLLIDED(tbl, i) ((tbl)->items[i].key & 1)
 #define ITEM_SET_COLLIDED(tbl, i) ((tbl)->items[i].key |= 1)
 static inline void
-ITEM_SET_KEY(struct rb_id_table *tbl, int i, id_key_t key)
+ITEM_SET_KEY(struct hash_id_table *tbl, int i, id_key_t key)
 {
     tbl->items[i].key = (key << 1) | ITEM_COLLIDED(tbl, i);
 }
@@ -970,10 +995,10 @@ round_capa(int capa) {
     return (capa + 1) << 2;
 }
 
-struct
-rb_id_table *rb_id_table_create(size_t capa)
+static struct
+hash_id_table *hash_id_table_create(size_t capa)
 {
-    struct rb_id_table *tbl = ZALLOC(struct rb_id_table);
+    struct hash_id_table *tbl = ZALLOC(struct hash_id_table);
 
     if (capa > 0) {
 	capa = round_capa(capa);
@@ -983,35 +1008,35 @@ rb_id_table *rb_id_table_create(size_t capa)
     return tbl;
 }
 
-void
-rb_id_table_free(struct rb_id_table *tbl)
+static void
+hash_id_table_free(struct hash_id_table *tbl)
 {
     xfree(tbl->items);
     xfree(tbl);
 }
 
-void
-rb_id_table_clear(struct rb_id_table *tbl)
+static void
+hash_id_table_clear(struct hash_id_table *tbl)
 {
     tbl->num = 0;
     tbl->used = 0;
     MEMZERO(tbl->items, item_t, tbl->capa);
 }
 
-size_t
-rb_id_table_size(struct rb_id_table *tbl)
+static size_t
+hash_id_table_size(struct hash_id_table *tbl)
 {
     return (size_t)tbl->num;
 }
 
-size_t
-rb_id_table_memsize(struct rb_id_table *tbl)
+static size_t
+hash_id_table_memsize(struct hash_id_table *tbl)
 {
-    return sizeof(item_t) * tbl->capa + sizeof(struct rb_id_table);
+    return sizeof(item_t) * tbl->capa + sizeof(struct hash_id_table);
 }
 
 static int
-table_index(struct rb_id_table* tbl, id_key_t key)
+hash_table_index(struct hash_id_table* tbl, id_key_t key)
 {
     if (tbl->capa > 0) {
 	int mask = tbl->capa - 1;
@@ -1029,7 +1054,7 @@ table_index(struct rb_id_table* tbl, id_key_t key)
 }
 
 static void
-table_raw_insert(struct rb_id_table *tbl, id_key_t key, VALUE val)
+hash_table_raw_insert(struct hash_id_table *tbl, id_key_t key, VALUE val)
 {
     int mask = tbl->capa - 1;
     int ix = key & mask;
@@ -1049,7 +1074,7 @@ table_raw_insert(struct rb_id_table *tbl, id_key_t key, VALUE val)
 }
 
 static int
-id_table_delete(struct rb_id_table *tbl, int ix)
+hash_delete_index(struct hash_id_table *tbl, int ix)
 {
     if (ix >= 0) {
 	if (!ITEM_COLLIDED(tbl, ix)) {
@@ -1065,18 +1090,18 @@ id_table_delete(struct rb_id_table *tbl, int ix)
 }
 
 static void
-table_extend(struct rb_id_table* tbl)
+hash_table_extend(struct hash_id_table* tbl)
 {
     if (tbl->used + (tbl->used >> 1) >= tbl->capa) {
 	int new_cap = round_capa(tbl->num + (tbl->num >> 1));
 	int i;
 	item_t* old;
-	struct rb_id_table tmp_tbl = {new_cap, 0, 0};
+	struct hash_id_table tmp_tbl = {new_cap, 0, 0};
 	tmp_tbl.items = ZALLOC_N(item_t, new_cap);
 	for (i = 0; i < tbl->capa; i++) {
 	    id_key_t key = ITEM_GET_KEY(tbl, i);
 	    if (key != 0) {
-		table_raw_insert(&tmp_tbl, key, tbl->items[i].val);
+		hash_table_raw_insert(&tmp_tbl, key, tbl->items[i].val);
 	    }
 	}
 	old = tbl->items;
@@ -1087,7 +1112,7 @@ table_extend(struct rb_id_table* tbl)
 
 #if ID_TABLE_DEBUG
 static void
-tbl_show(struct rb_id_table *tbl)
+tbl_show(struct hash_id_table *tbl)
 {
     const id_key_t *keys = tbl->keys;
     const int capa = tbl->capa;
@@ -1102,11 +1127,11 @@ tbl_show(struct rb_id_table *tbl)
 }
 #endif
 
-int
-rb_id_table_lookup(struct rb_id_table *tbl, ID id, VALUE *valp)
+static int
+hash_id_table_lookup(struct hash_id_table *tbl, ID id, VALUE *valp)
 {
     id_key_t key = id2key(id);
-    int index = table_index(tbl, key);
+    int index = hash_table_index(tbl, key);
 
     if (index >= 0) {
 	*valp = tbl->items[index].val;
@@ -1117,32 +1142,32 @@ rb_id_table_lookup(struct rb_id_table *tbl, ID id, VALUE *valp)
     }
 }
 
-int
-rb_id_table_insert(struct rb_id_table *tbl, ID id, VALUE val)
+static int
+hash_id_table_insert(struct hash_id_table *tbl, ID id, VALUE val)
 {
     const id_key_t key = id2key(id);
-    const int index = table_index(tbl, key);
+    const int index = hash_table_index(tbl, key);
 
     if (index >= 0) {
 	tbl->items[index].val = val;
     }
     else {
-	table_extend(tbl);
-	table_raw_insert(tbl, key, val);
+	hash_table_extend(tbl);
+	hash_table_raw_insert(tbl, key, val);
     }
     return TRUE;
 }
 
-int
-rb_id_table_delete(struct rb_id_table *tbl, ID id)
+static int
+hash_id_table_delete(struct hash_id_table *tbl, ID id)
 {
     const id_key_t key = id2key(id);
-    int index = table_index(tbl, key);
-    return id_table_delete(tbl, index);
+    int index = hash_table_index(tbl, key);
+    return hash_delete_index(tbl, index);
 }
 
-void
-rb_id_table_foreach(struct rb_id_table *tbl, enum rb_id_table_iterator_result (*func)(ID id, VALUE val, void *data), void *data)
+static void
+hash_id_table_foreach(struct hash_id_table *tbl, enum rb_id_table_iterator_result (*func)(ID id, VALUE val, void *data), void *data)
 {
     int i, capa = tbl->capa;
 
@@ -1153,15 +1178,15 @@ rb_id_table_foreach(struct rb_id_table *tbl, enum rb_id_table_iterator_result (*
 	    assert(key != 0);
 
 	    if (ret == ID_TABLE_DELETE)
-		id_table_delete(tbl, i);
+		hash_delete_index(tbl, i);
 	    else if (ret == ID_TABLE_STOP)
 		return;
 	}
     }
 }
 
-void
-rb_id_table_foreach_values(struct rb_id_table *tbl, enum rb_id_table_iterator_result (*func)(VALUE val, void *data), void *data)
+static void
+hash_id_table_foreach_values(struct hash_id_table *tbl, enum rb_id_table_iterator_result (*func)(VALUE val, void *data), void *data)
 {
     int i, capa = tbl->capa;
 
@@ -1170,10 +1195,30 @@ rb_id_table_foreach_values(struct rb_id_table *tbl, enum rb_id_table_iterator_re
 	    enum rb_id_table_iterator_result ret = (*func)(tbl->items[i].val, data);
 
 	    if (ret == ID_TABLE_DELETE)
-		id_table_delete(tbl, i);
+	      hash_delete_index(tbl, i);
 	    else if (ret == ID_TABLE_STOP)
 		return;
 	}
     }
 }
 #endif /* ID_TABLE_USE_SMALL_HASH */
+
+/* IMPL(create) will be "hash_id_table_create" and so on */
+#define IMPL2(name, op) name##_id_table_##op
+#define IMPL1(name, op) IMPL2(name, op)
+#define IMPL(op)        IMPL1(ID_TABLE_NAME, op)
+
+struct rb_id_table *rb_id_table_create(size_t size) {return (struct rb_id_table *)IMPL(create)(size);}
+void rb_id_table_free(struct rb_id_table *tbl)      {return IMPL(free)((ID_TABLE_IMPL_TYPE *)tbl);}
+void rb_id_table_clear(struct rb_id_table *tbl)     {       IMPL(clear)((ID_TABLE_IMPL_TYPE *)tbl);}
+size_t rb_id_table_size(struct rb_id_table *tbl)    {return IMPL(size)((ID_TABLE_IMPL_TYPE *)tbl);}
+size_t rb_id_table_memsize(struct rb_id_table *tbl) {return IMPL(memsize)((ID_TABLE_IMPL_TYPE *)tbl);}
+
+int rb_id_table_insert(struct rb_id_table *tbl, ID id, VALUE val)   {return IMPL(insert)((ID_TABLE_IMPL_TYPE *)tbl, id, val);}
+int rb_id_table_lookup(struct rb_id_table *tbl, ID id, VALUE *valp) {return IMPL(lookup)((ID_TABLE_IMPL_TYPE *)tbl, id, valp);}
+int rb_id_table_delete(struct rb_id_table *tbl, ID id)              {return IMPL(delete)((ID_TABLE_IMPL_TYPE *)tbl, id);}
+
+void rb_id_table_foreach(struct rb_id_table *tbl, enum rb_id_table_iterator_result (*func)(ID id, VALUE val, void *data), void *data) {
+     IMPL(foreach)((ID_TABLE_IMPL_TYPE *)tbl, func, data);}
+void rb_id_table_foreach_values(struct rb_id_table *tbl, enum rb_id_table_iterator_result (*func)(VALUE val, void *data), void *data) {
+     IMPL(foreach_values)((ID_TABLE_IMPL_TYPE *)tbl, func, data);}
