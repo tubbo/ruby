@@ -3,7 +3,7 @@
 #include "id_table.h"
 
 #ifndef ID_TABLE_DEBUG
-#define ID_TABLE_DEBUG 0
+#define ID_TABLE_DEBUG 1
 #endif
 
 #if ID_TABLE_DEBUG == 0
@@ -27,7 +27,7 @@
  */
 
 #ifndef ID_TABLE_IMPL
-#define ID_TABLE_IMPL 11
+#define ID_TABLE_IMPL 14
 #endif
 
 #if ID_TABLE_IMPL == 0
@@ -49,12 +49,14 @@
 #define ID_TABLE_IMPL_TYPE struct list_id_table
 
 #define ID_TABLE_USE_LIST 1
+#define ID_TABLE_USE_CALC_VALUES 1
 
 #elif ID_TABLE_IMPL == 12
 #define ID_TABLE_NAME list
 #define ID_TABLE_IMPL_TYPE struct list_id_table
 
 #define ID_TABLE_USE_LIST 1
+#define ID_TABLE_USE_CALC_VALUES 1
 #define ID_TABLE_USE_ID_SERIAL 1
 
 #elif ID_TABLE_IMPL == 13
@@ -62,6 +64,7 @@
 #define ID_TABLE_IMPL_TYPE struct list_id_table
 
 #define ID_TABLE_USE_LIST 1
+#define ID_TABLE_USE_CALC_VALUES 1
 #define ID_TABLE_USE_ID_SERIAL 1
 #define ID_TABLE_SWAP_RECENT_ACCESS 1
 
@@ -70,6 +73,7 @@
 #define ID_TABLE_IMPL_TYPE struct list_id_table
 
 #define ID_TABLE_USE_LIST 1
+#define ID_TABLE_USE_CALC_VALUES 1
 #define ID_TABLE_USE_ID_SERIAL 1
 #define ID_TABLE_USE_LIST_SORTED 1
 
@@ -78,6 +82,7 @@
 #define ID_TABLE_IMPL_TYPE struct list_id_table
 
 #define ID_TABLE_USE_LIST 1
+#define ID_TABLE_USE_CALC_VALUES 1
 #define ID_TABLE_USE_ID_SERIAL 1
 #define ID_TABLE_USE_LIST_SORTED 1
 #define ID_TABLE_USE_LIST_SORTED_LINEAR_SMALL_RANGE 1
@@ -258,8 +263,16 @@ struct list_id_table {
     int capa;
     int num;
     id_key_t *keys;
-    VALUE *values;
+#if ID_TABLE_USE_CALC_VALUES == 0
+    VALUE *values_;
+#endif
 };
+
+#if ID_TABLE_USE_CALC_VALUES
+#define TABLE_VALUES(tbl) ((VALUE *)((tbl)->keys + (tbl)->capa))
+#else
+#define TABLE_VALUES(tbl) (tbl)->values_
+#endif
 
 static struct list_id_table *
 list_id_table_create(size_t capa)
@@ -268,8 +281,12 @@ list_id_table_create(size_t capa)
 
     if (capa > 0) {
 	tbl->capa = (int)capa;
+#if ID_TABLE_USE_CALC_VALUES
+	tbl->keys = (id_key_t *)xmalloc(sizeof(id_key_t) * capa + sizeof(VALUE) * capa);
+#else
 	tbl->keys = ALLOC_N(id_key_t, capa);
-	tbl->values = ALLOC_N(VALUE, capa);
+	tbl->values_ = ALLOC_N(VALUE, capa);
+#endif
     }
     return tbl;
 }
@@ -278,7 +295,9 @@ static void
 list_id_table_free(struct list_id_table *tbl)
 {
     xfree(tbl->keys);
-    xfree(tbl->values);
+#if ID_TABLE_USE_CALC_VALUES == 0
+    xfree(tbl->values_);
+#endif
     xfree(tbl);
 }
 
@@ -301,18 +320,78 @@ list_id_table_memsize(struct list_id_table *tbl)
 }
 
 static void
-table_extend(struct list_id_table *tbl)
+list_table_extend(struct list_id_table *tbl)
 {
     if (tbl->capa == tbl->num) {
-	tbl->capa = tbl->capa == 0 ? TABLE_MIN_CAPA : (tbl->capa * 2);
-	tbl->keys = (id_key_t *)xrealloc(tbl->keys, sizeof(id_key_t) * tbl->capa);
-	tbl->values = (VALUE *)xrealloc(tbl->values, sizeof(VALUE) * tbl->capa);
+	const int capa = tbl->capa == 0 ? TABLE_MIN_CAPA : (tbl->capa * 2);
+#if ID_TABLE_USE_CALC_VALUES
+	{
+	    VALUE *old_values, *new_values;
+	    VALUE *debug_values = NULL;
+	    const int num = tbl->num;
+	    const int size = sizeof(id_key_t) * capa + sizeof(VALUE) * capa;
+	    int i;
+
+	    if (num > 0) {
+		VALUE *orig_values = (VALUE *)(tbl->keys + num);
+		debug_values = ALLOC_N(VALUE, num);
+
+		for (i=0; i<num; i++) {
+		    debug_values[i] = orig_values[i];
+		}
+
+		if (0)
+		  for (i=0; i< 2 * num; i++) {
+		    unsigned char *cs = (unsigned char *)&tbl->keys[i];
+		    size_t j;
+		    fprintf(stderr, ">> %3d | %p - ", i, cs);
+		    for (j=0; j<sizeof(VALUE); j++) {
+			fprintf(stderr, "%x ", cs[j]);
+		    }
+		    fprintf(stderr, "\n");
+		  }
+	    }
+
+	    tbl->keys = (id_key_t *)xrealloc(tbl->keys, size);
+	    old_values = (VALUE *)(tbl->keys + num);
+	    new_values = (VALUE *)(tbl->keys + capa);
+
+	    /*  [ keys (num) ] [ values (num) ]
+	     *                 ^ old_values
+	     * realloc =>
+	     *  [ keys (capa = num * 2)  ] [ values (capa = num * 2) ]
+	     *                             ^ new_values
+	     */
+
+	    /* memmove */
+	    // fprintf(stderr, "memmove: %p -> %p (%d, capa: %d)\n", old_values, new_values, num, capa);
+	    assert(num < capa);
+	    assert(num == 0 || old_values < new_values);
+
+	    for (i=num-1; i>=0; i--) {
+		new_values[i] = old_values[i];
+	    }
+
+	    if (num > 0) {
+		for (i=0; i<num; i++) {
+		    assert(debug_values[i] == new_values[i]);
+		}
+		xfree(debug_values);
+	    }
+	}
+
+	tbl->capa = capa;
+#else
+	tbl->capa = capa;
+	tbl->keys = (id_key_t *)xrealloc(tbl->keys, sizeof(id_key_t) * capa);
+	tbl->values_ = (VALUE *)xrealloc(tbl->values_, sizeof(VALUE) * capa);
+#endif
     }
 }
 
 #if ID_TABLE_DEBUG
 static void
-tbl_show(struct list_id_table *tbl)
+list_table_show(struct list_id_table *tbl)
 {
     const id_key_t *keys = tbl->keys;
     const int num = tbl->num;
@@ -336,7 +415,7 @@ tbl_assert(struct list_id_table *tbl)
 
     for (i=0; i<num-1; i++) {
 	if (keys[i] >= keys[i+1]) {
-	    tbl_show(tbl);
+	    list_table_show(tbl);
 	    rb_bug(": not sorted.");
 	}
     }
@@ -346,7 +425,7 @@ tbl_assert(struct list_id_table *tbl)
 
 #if ID_TABLE_USE_LIST_SORTED
 static int
-ids_bsearch(const id_key_t *keys, id_key_t key, int num)
+list_ids_bsearch(const id_key_t *keys, id_key_t key, int num)
 {
     int p, min = 0, max = num;
 
@@ -395,13 +474,13 @@ ids_bsearch(const id_key_t *keys, id_key_t key, int num)
 #endif /* ID_TABLE_USE_LIST_SORTED */
 
 static int
-table_index(struct list_id_table *tbl, id_key_t key)
+list_table_index(struct list_id_table *tbl, id_key_t key)
 {
     const int num = tbl->num;
     const id_key_t *keys = tbl->keys;
 
 #if ID_TABLE_USE_LIST_SORTED
-    return ids_bsearch(keys, key, num);
+    return list_ids_bsearch(keys, key, num);
 #else /* ID_TABLE_USE_LIST_SORTED */
     int i;
 
@@ -420,19 +499,20 @@ static int
 list_id_table_lookup(struct list_id_table *tbl, ID id, VALUE *valp)
 {
     id_key_t key = id2key(id);
-    int index = table_index(tbl, key);
+    int index = list_table_index(tbl, key);
 
     if (index >= 0) {
-	*valp = tbl->values[index];
+	*valp = TABLE_VALUES(tbl)[index];
 
 #if ID_TABLE_SWAP_RECENT_ACCESS
 	if (index > 0) {
+	    VALUE *values = TABLE_VALUES(tbl);
 	    id_key_t tk = tbl->keys[index-1];
-	    VALUE tv = tbl->values[index-1];
+	    VALUE tv = values[index-1];
 	    tbl->keys[index-1] = tbl->keys[index];
 	    tbl->keys[index] = tk;
-	    tbl->values[index-1] = tbl->values[index];
-	    tbl->values[index] = tv;
+	    values[index-1] = values[index];
+	    values[index] = tv;
 	}
 #endif /* ID_TABLE_SWAP_RECENT_ACCESS */
 	return TRUE;
@@ -446,19 +526,19 @@ static int
 list_id_table_insert(struct list_id_table *tbl, ID id, VALUE val)
 {
     const id_key_t key = id2key(id);
-    const int index = table_index(tbl, key);
+    const int index = list_table_index(tbl, key);
 
     if (index >= 0) {
-	tbl->values[index] = val;
+	TABLE_VALUES(tbl)[index] = val;
     }
     else {
-	table_extend(tbl);
+	list_table_extend(tbl);
 	{
 	    const int num = tbl->num++;
 #if ID_TABLE_USE_LIST_SORTED
 	    const int insert_index = -(index + 1);
 	    id_key_t *keys = tbl->keys;
-	    VALUE *values = tbl->values;
+	    VALUE *values = TABLE_VALUES(tbl);
 	    int i;
 
 	    if (0) fprintf(stderr, "insert: %d into %d on\n", (int)key, insert_index);
@@ -473,7 +553,7 @@ list_id_table_insert(struct list_id_table *tbl, ID id, VALUE val)
 	    tbl_assert(tbl);
 #else
 	    tbl->keys[num] = key;
-	    tbl->values[num] = val;
+	    TABLE_VALUES(tbl)[num] = val;
 #endif
 	}
     }
@@ -485,19 +565,20 @@ static int
 list_delete_index(struct list_id_table *tbl, id_key_t key, int index)
 {
     if (index >= 0) {
+	VALUE *values = TABLE_VALUES(tbl);
+
 #if ID_TABLE_USE_LIST_SORTED
 	int i;
 	const int num = tbl->num;
 	id_key_t *keys = tbl->keys;
-	VALUE *values = tbl->values;
 
 	for (i=index+1; i<num; i++) { /* compaction */
 	    keys[i-1] = keys[i];
 	    values[i-1] = values[i];
 	}
 #else
-	tbl->keys[index] = tbl->keys[tbl->num];
-	tbl->values[index] = tbl->values[tbl->num];
+	tbl->keys[index] = tbl->keys[tbl->num-1];
+	values[index] = values[tbl->num-1];
 #endif
 	tbl->num--;
 	tbl_assert(tbl);
@@ -513,7 +594,7 @@ static int
 list_id_table_delete(struct list_id_table *tbl, ID id)
 {
     const id_key_t key = id2key(id);
-    int index = table_index(tbl, key);
+    int index = list_table_index(tbl, key);
     return list_delete_index(tbl, key, index);
 }
 
@@ -524,8 +605,9 @@ list_id_table_delete(struct list_id_table *tbl, ID id)
 	break;                \
       case ID_TABLE_DELETE:   \
 	list_delete_index(tbl, key, i); \
-	num = tbl->num;               \
-	i--; /* redo smae index */    \
+	values = TABLE_VALUES(tbl);     \
+	num = tbl->num;                 \
+	i--; /* redo smae index */      \
 	break; \
     } \
 } while (0)
@@ -536,10 +618,11 @@ list_id_table_foreach(struct list_id_table *tbl, enum rb_id_table_iterator_resul
     int num = tbl->num;
     int i;
     const id_key_t *keys = tbl->keys;
+    const VALUE *values = TABLE_VALUES(tbl);
 
     for (i=0; i<num; i++) {
 	const id_key_t key = keys[i];
-	enum rb_id_table_iterator_result ret = (*func)(key2id(key), tbl->values[i], data);
+	enum rb_id_table_iterator_result ret = (*func)(key2id(key), values[i], data);
 	assert(key != 0);
 
 	FOREACH_LAST();
@@ -553,10 +636,11 @@ list_id_table_foreach_values(struct list_id_table *tbl, enum rb_id_table_iterato
     int num = tbl->num;
     int i;
     const id_key_t *keys = tbl->keys;
+    VALUE *values = TABLE_VALUES(tbl);
 
     for (i=0; i<num; i++) {
 	const id_key_t key = keys[i];
-	enum rb_id_table_iterator_result ret = (*func)(tbl->values[i], data);
+	enum rb_id_table_iterator_result ret = (*func)(values[i], data);
 	assert(key != 0);
 
 	FOREACH_LAST();
@@ -1112,7 +1196,7 @@ hash_table_extend(struct hash_id_table* tbl)
 
 #if ID_TABLE_DEBUG
 static void
-tbl_show(struct hash_id_table *tbl)
+hash_table_show(struct hash_id_table *tbl)
 {
     const id_key_t *keys = tbl->keys;
     const int capa = tbl->capa;
