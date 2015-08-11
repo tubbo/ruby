@@ -24,10 +24,15 @@
  * hash
  *   21: funny falcon's Coalesced Hashing implementation [Feature #6962]
  *   22: simple open addressing with quadratic probing.
+ * mix (list + hash)
+ *   31: list(12) (capa <= 32) + hash(22)
+ *   32: list(14) (capa <= 32) + hash(22)
+ *   31: list(12) (capa <= 64) + hash(22)
+ *   32: list(14) (capa <= 64) + hash(22)
  */
 
 #ifndef ID_TABLE_IMPL
-#define ID_TABLE_IMPL 22
+#define ID_TABLE_IMPL 31
 #endif
 
 #if ID_TABLE_IMPL == 0
@@ -100,6 +105,62 @@
 
 #define ID_TABLE_USE_SMALL_HASH 1
 #define ID_TABLE_USE_ID_SERIAL 1
+
+#elif ID_TABLE_IMPL == 31
+#define ID_TABLE_NAME mix
+#define ID_TABLE_IMPL_TYPE struct mix_id_table
+
+#define ID_TABLE_USE_MIX 1
+#define ID_TABLE_USE_MIX_LIST_MAX_MASK (0x40-1)
+
+#define ID_TABLE_USE_ID_SERIAL 1
+
+#define ID_TABLE_USE_LIST 1
+#define ID_TABLE_USE_CALC_VALUES 1
+#define ID_TABLE_USE_SMALL_HASH 1
+
+#elif ID_TABLE_IMPL == 32
+#define ID_TABLE_NAME mix
+#define ID_TABLE_IMPL_TYPE struct mix_id_table
+
+#define ID_TABLE_USE_MIX 1
+#define ID_TABLE_USE_MIX_LIST_MAX_MASK (0x40-1)
+
+#define ID_TABLE_USE_ID_SERIAL 1
+
+#define ID_TABLE_USE_LIST 1
+#define ID_TABLE_USE_CALC_VALUES 1
+#define ID_TABLE_USE_LIST_SORTED 1
+
+#define ID_TABLE_USE_SMALL_HASH 1
+
+#elif ID_TABLE_IMPL == 33
+#define ID_TABLE_NAME mix
+#define ID_TABLE_IMPL_TYPE struct mix_id_table
+
+#define ID_TABLE_USE_MIX 1
+#define ID_TABLE_USE_MIX_LIST_MAX_MASK (0x80-1)
+
+#define ID_TABLE_USE_ID_SERIAL 1
+
+#define ID_TABLE_USE_LIST 1
+#define ID_TABLE_USE_CALC_VALUES 1
+#define ID_TABLE_USE_SMALL_HASH 1
+
+#elif ID_TABLE_IMPL == 34
+#define ID_TABLE_NAME mix
+#define ID_TABLE_IMPL_TYPE struct mix_id_table
+
+#define ID_TABLE_USE_MIX 1
+#define ID_TABLE_USE_MIX_LIST_MAX_MASK (0x80-1)
+
+#define ID_TABLE_USE_ID_SERIAL 1
+
+#define ID_TABLE_USE_LIST 1
+#define ID_TABLE_USE_CALC_VALUES 1
+#define ID_TABLE_USE_LIST_SORTED 1
+
+#define ID_TABLE_USE_SMALL_HASH 1
 
 #else
 #error
@@ -257,7 +318,7 @@ st_id_table_foreach_values(struct st_id_table *tbl, enum rb_id_table_iterator_re
 
 #if ID_TABLE_USE_LIST
 
-#define TABLE_MIN_CAPA 8
+#define LIST_MIN_CAPA 4
 
 struct list_id_table {
     int capa;
@@ -275,10 +336,8 @@ struct list_id_table {
 #endif
 
 static struct list_id_table *
-list_id_table_create(size_t capa)
+list_id_table_init(struct list_id_table *tbl, size_t capa)
 {
-    struct list_id_table *tbl = ZALLOC(struct list_id_table);
-
     if (capa > 0) {
 	tbl->capa = (int)capa;
 #if ID_TABLE_USE_CALC_VALUES
@@ -290,6 +349,15 @@ list_id_table_create(size_t capa)
     }
     return tbl;
 }
+
+#ifndef ID_TABLE_USE_MIX
+static struct list_id_table *
+list_id_table_create(size_t capa)
+{
+    struct list_id_table *tbl = ZALLOC(struct list_id_table);
+    return list_id_table_init(tbl, capa);
+}
+#endif
 
 static void
 list_id_table_free(struct list_id_table *tbl)
@@ -323,7 +391,8 @@ static void
 list_table_extend(struct list_id_table *tbl)
 {
     if (tbl->capa == tbl->num) {
-	const int capa = tbl->capa == 0 ? TABLE_MIN_CAPA : (tbl->capa * 2);
+	const int capa = tbl->capa == 0 ? LIST_MIN_CAPA : (tbl->capa * 2);
+
 #if ID_TABLE_USE_CALC_VALUES
 	{
 	    VALUE *old_values, *new_values;
@@ -1079,11 +1148,9 @@ round_capa(int capa) {
     return (capa + 1) << 2;
 }
 
-static struct
-hash_id_table *hash_id_table_create(size_t capa)
+static struct hash_id_table *
+hash_id_table_init(struct hash_id_table *tbl, size_t capa)
 {
-    struct hash_id_table *tbl = ZALLOC(struct hash_id_table);
-
     if (capa > 0) {
 	capa = round_capa(capa);
 	tbl->capa = (int)capa;
@@ -1091,6 +1158,15 @@ hash_id_table *hash_id_table_create(size_t capa)
     }
     return tbl;
 }
+
+#ifndef ID_TABLE_USE_MIX
+static struct hash_id_table *
+hash_id_table_create(size_t capa)
+{
+    struct hash_id_table *tbl = ZALLOC(struct hash_id_table);
+    return hash_id_table_init(tbl, capa);
+}
+#endif
 
 static void
 hash_id_table_free(struct hash_id_table *tbl)
@@ -1194,7 +1270,7 @@ hash_table_extend(struct hash_id_table* tbl)
     }
 }
 
-#if ID_TABLE_DEBUG
+#if ID_TABLE_DEBUG && 0
 static void
 hash_table_show(struct hash_id_table *tbl)
 {
@@ -1287,13 +1363,124 @@ hash_id_table_foreach_values(struct hash_id_table *tbl, enum rb_id_table_iterato
 }
 #endif /* ID_TABLE_USE_SMALL_HASH */
 
+#if ID_TABLE_USE_MIX
+
+struct mix_id_table {
+    union {
+	struct {
+	    int capa;
+	    int num;
+	} size;
+	struct list_id_table list;
+	struct hash_id_table hash;
+    } aux;
+};
+
+#define LIST_P(mix) ((mix->aux.size.capa & ~ID_TABLE_USE_MIX_LIST_MAX_MASK) == 0)
+
+static struct mix_id_table *
+mix_id_table_create(size_t size)
+{
+    struct mix_id_table *mix = ZALLOC(struct mix_id_table);
+    list_id_table_init((struct list_id_table *)mix, size);
+    return mix;
+}
+
+static void
+mix_id_table_free(struct mix_id_table *tbl)
+{
+    if (LIST_P(tbl)) list_id_table_free(&tbl->aux.list);
+    else             hash_id_table_free(&tbl->aux.hash);
+}
+
+static void
+mix_id_table_clear(struct mix_id_table *tbl)
+{
+    if (LIST_P(tbl)) list_id_table_clear(&tbl->aux.list);
+    else             hash_id_table_clear(&tbl->aux.hash);
+}
+
+static size_t
+mix_id_table_size(struct mix_id_table *tbl)
+{
+    if (LIST_P(tbl)) return list_id_table_size(&tbl->aux.list);
+    else             return hash_id_table_size(&tbl->aux.hash);
+}
+
+static size_t
+mix_id_table_memsize(struct mix_id_table *tbl)
+{
+    if (LIST_P(tbl)) return list_id_table_memsize(&tbl->aux.list);
+    else             return hash_id_table_memsize(&tbl->aux.hash);
+}
+
+static int
+mix_id_table_insert(struct mix_id_table *tbl, ID id, VALUE val)
+{
+    if (LIST_P(tbl)) {
+	int r = list_id_table_insert(&tbl->aux.list, id, val);
+
+	if (!LIST_P(tbl)) {
+	    /* overflow. TODO: this promotion should be done in list_extend_table */
+	    struct list_id_table *list = &tbl->aux.list;
+	    struct hash_id_table *hash = &tbl->aux.hash;
+	    id_key_t *keys = list->keys;
+	    VALUE *values = TABLE_VALUES(list);
+	    const int num = list->num;
+	    int i;
+
+	    hash_id_table_init(hash, tbl->aux.size.capa);
+
+	    for (i=0; i<num; i++) {
+		hash_table_raw_insert(hash, keys[i], values[i]);
+	    }
+
+	    assert(LIST_P(tbl) == 0);
+	}
+	return r;
+    }
+    else {
+	return hash_id_table_insert(&tbl->aux.hash, id, val);
+    }
+}
+
+static int
+mix_id_table_lookup(struct mix_id_table *tbl, ID id, VALUE *valp)
+{
+    if (LIST_P(tbl)) return list_id_table_lookup(&tbl->aux.list, id, valp);
+    else             return hash_id_table_lookup(&tbl->aux.hash, id, valp);
+}
+
+static int
+mix_id_table_delete(struct mix_id_table *tbl, ID id)
+{
+    if (LIST_P(tbl)) return list_id_table_delete(&tbl->aux.list, id);
+    else             return hash_id_table_delete(&tbl->aux.hash, id);
+}
+
+static void
+mix_id_table_foreach(struct mix_id_table *tbl, enum rb_id_table_iterator_result (*func)(ID id, VALUE val, void *data), void *data)
+{
+    if (LIST_P(tbl)) list_id_table_foreach(&tbl->aux.list, func, data);
+    else             hash_id_table_foreach(&tbl->aux.hash, func, data);
+}
+
+static void
+mix_id_table_foreach_values(struct mix_id_table *tbl, enum rb_id_table_iterator_result (*func)(VALUE val, void *data), void *data)
+{
+    if (LIST_P(tbl)) list_id_table_foreach_values(&tbl->aux.list, func, data);
+    else             hash_id_table_foreach_values(&tbl->aux.hash, func, data);
+}
+
+#endif /* ID_TABLE_USE_MIX */
+
 /* IMPL(create) will be "hash_id_table_create" and so on */
 #define IMPL2(name, op) name##_id_table_##op
 #define IMPL1(name, op) IMPL2(name, op)
 #define IMPL(op)        IMPL1(ID_TABLE_NAME, op)
 
 struct rb_id_table *rb_id_table_create(size_t size) {return (struct rb_id_table *)IMPL(create)(size);}
-void rb_id_table_free(struct rb_id_table *tbl)      {return IMPL(free)((ID_TABLE_IMPL_TYPE *)tbl);}
+void rb_id_table_free(struct rb_id_table *tbl)      {       IMPL(free)((ID_TABLE_IMPL_TYPE *)tbl);}
 void rb_id_table_clear(struct rb_id_table *tbl)     {       IMPL(clear)((ID_TABLE_IMPL_TYPE *)tbl);}
 size_t rb_id_table_size(struct rb_id_table *tbl)    {return IMPL(size)((ID_TABLE_IMPL_TYPE *)tbl);}
 size_t rb_id_table_memsize(struct rb_id_table *tbl) {return IMPL(memsize)((ID_TABLE_IMPL_TYPE *)tbl);}
