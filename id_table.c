@@ -759,7 +759,7 @@ static sa_table*
 hash_id_table_create(size_t size)
 {
     sa_table* table = ZALLOC(sa_table);
-    sa_init_table(table, size);
+    sa_init_table(table, (sa_index_t)size);
     return table;
 }
 
