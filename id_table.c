@@ -32,7 +32,7 @@
  */
 
 #ifndef ID_TABLE_IMPL
-#define ID_TABLE_IMPL 1
+#define ID_TABLE_IMPL 31
 #endif
 
 #if ID_TABLE_IMPL == 0
@@ -111,7 +111,7 @@
 #define ID_TABLE_IMPL_TYPE struct mix_id_table
 
 #define ID_TABLE_USE_MIX 1
-#define ID_TABLE_USE_MIX_LIST_MAX_MASK (0x40-1)
+#define ID_TABLE_USE_MIX_LIST_MAX_CAPA 32
 
 #define ID_TABLE_USE_ID_SERIAL 1
 
@@ -124,7 +124,7 @@
 #define ID_TABLE_IMPL_TYPE struct mix_id_table
 
 #define ID_TABLE_USE_MIX 1
-#define ID_TABLE_USE_MIX_LIST_MAX_MASK (0x40-1)
+#define ID_TABLE_USE_MIX_LIST_MAX_CAPA 32
 
 #define ID_TABLE_USE_ID_SERIAL 1
 
@@ -139,7 +139,7 @@
 #define ID_TABLE_IMPL_TYPE struct mix_id_table
 
 #define ID_TABLE_USE_MIX 1
-#define ID_TABLE_USE_MIX_LIST_MAX_MASK (0x80-1)
+#define ID_TABLE_USE_MIX_LIST_MAX_CAPA 64
 
 #define ID_TABLE_USE_ID_SERIAL 1
 
@@ -152,7 +152,7 @@
 #define ID_TABLE_IMPL_TYPE struct mix_id_table
 
 #define ID_TABLE_USE_MIX 1
-#define ID_TABLE_USE_MIX_LIST_MAX_MASK (0x80-1)
+#define ID_TABLE_USE_MIX_LIST_MAX_CAPA 64
 
 #define ID_TABLE_USE_ID_SERIAL 1
 
@@ -1151,6 +1151,7 @@ round_capa(int capa) {
 static struct hash_id_table *
 hash_id_table_init(struct hash_id_table *tbl, size_t capa)
 {
+    MEMZERO(tbl, struct hash_id_table, 1);
     if (capa > 0) {
 	capa = round_capa(capa);
 	tbl->capa = (int)capa;
@@ -1163,7 +1164,7 @@ hash_id_table_init(struct hash_id_table *tbl, size_t capa)
 static struct hash_id_table *
 hash_id_table_create(size_t capa)
 {
-    struct hash_id_table *tbl = ZALLOC(struct hash_id_table);
+    struct hash_id_table *tbl = ALLOC(struct hash_id_table);
     return hash_id_table_init(tbl, capa);
 }
 #endif
@@ -1303,9 +1304,8 @@ hash_id_table_lookup(struct hash_id_table *tbl, ID id, VALUE *valp)
 }
 
 static int
-hash_id_table_insert(struct hash_id_table *tbl, ID id, VALUE val)
+hash_id_table_insert_key(struct hash_id_table *tbl, const id_key_t key, const VALUE val)
 {
-    const id_key_t key = id2key(id);
     const int index = hash_table_index(tbl, key);
 
     if (index >= 0) {
@@ -1316,6 +1316,12 @@ hash_id_table_insert(struct hash_id_table *tbl, ID id, VALUE val)
 	hash_table_raw_insert(tbl, key, val);
     }
     return TRUE;
+}
+
+static int
+hash_id_table_insert(struct hash_id_table *tbl, ID id, VALUE val)
+{
+    return hash_id_table_insert_key(tbl, id2key(id), val);
 }
 
 static int
@@ -1376,7 +1382,7 @@ struct mix_id_table {
     } aux;
 };
 
-#define LIST_P(mix) ((mix->aux.size.capa & ~ID_TABLE_USE_MIX_LIST_MAX_MASK) == 0)
+#define LIST_P(mix) ((mix)->aux.size.capa <= ID_TABLE_USE_MIX_LIST_MAX_CAPA)
 
 static struct mix_id_table *
 mix_id_table_create(size_t size)
@@ -1429,10 +1435,10 @@ mix_id_table_insert(struct mix_id_table *tbl, ID id, VALUE val)
 	    const int num = list->num;
 	    int i;
 
-	    hash_id_table_init(hash, tbl->aux.size.num);
+	    hash_id_table_init(hash, 0);
 
 	    for (i=0; i<num; i++) {
-		hash_table_raw_insert(hash, keys[i], values[i]);
+		hash_id_table_insert_key(hash, keys[i], values[i]);
 	    }
 
 	    assert(LIST_P(tbl) == 0);
