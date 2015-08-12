@@ -1149,7 +1149,7 @@ round_capa(int capa) {
 }
 
 static struct hash_id_table *
-hash_id_table_init(struct hash_id_table *tbl, size_t capa)
+hash_id_table_init(struct hash_id_table *tbl, int capa)
 {
     MEMZERO(tbl, struct hash_id_table, 1);
     if (capa > 0) {
@@ -1165,7 +1165,7 @@ static struct hash_id_table *
 hash_id_table_create(size_t capa)
 {
     struct hash_id_table *tbl = ALLOC(struct hash_id_table);
-    return hash_id_table_init(tbl, capa);
+    return hash_id_table_init(tbl, (int)capa);
 }
 #endif
 

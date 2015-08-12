@@ -756,7 +756,7 @@ rb_sym2id(VALUE sym)
 
 	    RSYMBOL(sym)->id = id |= num;
 	    /* make it permanent object */
-	    set_id_entry(num >>= ID_SCOPE_SHIFT, fstr, sym);
+	    set_id_entry(rb_id_to_serial(num), fstr, sym);
 	    rb_hash_delete_entry(global_symbols.dsymbol_fstr_hash, fstr);
 	}
     }
