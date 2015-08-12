@@ -32,7 +32,7 @@
  */
 
 #ifndef ID_TABLE_IMPL
-#define ID_TABLE_IMPL 31
+#define ID_TABLE_IMPL 1
 #endif
 
 #if ID_TABLE_IMPL == 0
@@ -1410,7 +1410,7 @@ mix_id_table_size(struct mix_id_table *tbl)
 static size_t
 mix_id_table_memsize(struct mix_id_table *tbl)
 {
-    if (LIST_P(tbl)) return list_id_table_memsize(&tbl->aux.list);
+    if (LIST_P(tbl)) return list_id_table_memsize(&tbl->aux.list) - sizeof(struct list_id_table) + sizeof(struct mix_id_table);
     else             return hash_id_table_memsize(&tbl->aux.hash);
 }
 
@@ -1429,7 +1429,7 @@ mix_id_table_insert(struct mix_id_table *tbl, ID id, VALUE val)
 	    const int num = list->num;
 	    int i;
 
-	    hash_id_table_init(hash, tbl->aux.size.capa);
+	    hash_id_table_init(hash, tbl->aux.size.num);
 
 	    for (i=0; i<num; i++) {
 		hash_table_raw_insert(hash, keys[i], values[i]);
@@ -1493,3 +1493,12 @@ void rb_id_table_foreach(struct rb_id_table *tbl, enum rb_id_table_iterator_resu
      IMPL(foreach)((ID_TABLE_IMPL_TYPE *)tbl, func, data);}
 void rb_id_table_foreach_values(struct rb_id_table *tbl, enum rb_id_table_iterator_result (*func)(VALUE val, void *data), void *data) {
      IMPL(foreach_values)((ID_TABLE_IMPL_TYPE *)tbl, func, data);}
+
+#if ID_TABLE_STARTUP_SIG
+__attribute__((constructor))
+static void
+show_impl(void)
+{
+    fprintf(stderr, "impl: %d\n", ID_TABLE_IMPL);
+}
+#endif
