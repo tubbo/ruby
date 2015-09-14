@@ -137,6 +137,8 @@ struct iseq_compile_data {
     int last_coverable_line;
     int label_no;
     int node_level;
+    unsigned int ci_index;
+    unsigned int ci_kw_index;
     const rb_compile_option_t *option;
 #if SUPPORT_JOKE
     st_table *labels_table;
