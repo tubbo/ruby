@@ -1816,6 +1816,7 @@ vm_exec(rb_thread_t *th)
 
 	if (catch_iseq != NULL) { /* found catch table */
 	    /* enter catch scope */
+	    check_iseq(catch_iseq);
 	    cfp->sp = vm_base_ptr(cfp) + cont_sp;
 	    cfp->pc = cfp->iseq->body->iseq_encoded + cont_pc;
 

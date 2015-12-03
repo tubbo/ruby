@@ -1394,13 +1394,24 @@ vm_callee_setup_block_arg(rb_thread_t *th, struct rb_calling_info *calling, cons
     }
 }
 
+void ibf_load_iseq_complete(rb_iseq_t *iseq);
+
+static const rb_iseq_t *
+check_iseq(const rb_iseq_t *iseq)
+{
+    if (iseq->body == NULL) {
+	ibf_load_iseq_complete((rb_iseq_t *)iseq);
+    }
+    return iseq;
+}
+
 static const rb_iseq_t *
 def_iseq_ptr(rb_method_definition_t *def)
 {
 #if VM_CHECK_MODE > 0
     if (def->type != VM_METHOD_TYPE_ISEQ) rb_bug("def_iseq_ptr: not iseq (%d)", def->type);
 #endif
-    return def->body.iseq.iseqptr;
+    return check_iseq(def->body.iseq.iseqptr);
 }
 
 static VALUE
@@ -2639,15 +2650,4 @@ vm_defined(rb_thread_t *th, rb_control_frame_t *reg_cfp, rb_num_t op_type, VALUE
     else {
 	return Qnil;
     }
-}
-
-void ibf_load_iseq_complete(rb_iseq_t *iseq);
-
-static const rb_iseq_t *
-check_iseq(rb_iseq_t *iseq)
-{
-    if (iseq->body == NULL) {
-	ibf_load_iseq_complete(iseq);
-    }
-    return iseq;
 }
