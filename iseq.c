@@ -482,8 +482,8 @@ rb_iseq_new_with_opt(NODE *node, VALUE name, VALUE path, VALUE absolute_path,
 const rb_iseq_t *
 rb_iseq_load_binary(VALUE fname)
 {
-    if (rb_respond_to(rb_cISeq, rb_intern("load_compiled_file"))) {
-	VALUE iseqv = rb_funcall(rb_cISeq, rb_intern("load_compiled_file"), 1, fname);
+    if (rb_respond_to(rb_cISeq, rb_intern("load_iseq"))) {
+	VALUE iseqv = rb_funcall(rb_cISeq, rb_intern("load_iseq"), 1, fname);
 	if (CLASS_OF(iseqv) == rb_cISeq) {
 	    return  iseqw_check(iseqv);
 	}
