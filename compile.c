@@ -6967,7 +6967,7 @@ ibf_dump_iseq(struct ibf_dump *dump, const rb_iseq_t *iseq)
 	int iseq_index = ibf_table_lookup(dump->iseq_table, (st_data_t)iseq);
 	if (iseq_index < 0) {
 	    iseq_index = ibf_table_index(dump->iseq_table, (st_data_t)iseq);
-	    rb_ary_store(dump->iseq_list, iseq_index, LONG2NUM(ibf_dump_iseq_each(dump, iseq)));
+	    rb_ary_store(dump->iseq_list, iseq_index, LONG2NUM(ibf_dump_iseq_each(dump, rb_iseq_check(iseq))));
 	}
 	return (rb_iseq_t *)(VALUE)iseq_index;
     }
@@ -8083,6 +8083,13 @@ ibf_load_iseq_complete(rb_iseq_t *iseq)
     ISEQ_COMPILE_DATA(iseq) = NULL;
     FL_UNSET(iseq, ISEQ_NOT_LOADED_YET);
     load->iseq = prev_src_iseq;
+}
+
+const rb_iseq_t *
+rb_iseq_complete(const rb_iseq_t *iseq)
+{
+    ibf_load_iseq_complete((rb_iseq_t *)iseq);
+    return iseq;
 }
 
 #define ENABLE_LAZY_LOAD 0

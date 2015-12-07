@@ -1292,8 +1292,8 @@ rb_insn_operand_intern(const rb_iseq_t *iseq,
 
       case TS_ISEQ:		/* iseq */
 	{
-	    rb_iseq_t *iseq = (rb_iseq_t *)op;
-	    if (iseq) {
+	    if (op) {
+		const rb_iseq_t *iseq = rb_iseq_check((rb_iseq_t *)op);
 		ret = iseq->body->location.label;
 		if (child) {
 		    rb_ary_push(child, (VALUE)iseq);
@@ -1503,7 +1503,7 @@ rb_iseq_disasm(const rb_iseq_t *iseq)
 			catch_type((int)entry->type), (int)entry->start,
 			(int)entry->end, (int)entry->sp, (int)entry->cont);
 	    if (entry->iseq) {
-		rb_str_concat(str, rb_iseq_disasm(entry->iseq));
+		rb_str_concat(str, rb_iseq_disasm(rb_iseq_check(entry->iseq)));
 	    }
 	}
     }
@@ -1572,7 +1572,7 @@ rb_iseq_disasm(const rb_iseq_t *iseq)
 
     for (l = 0; l < RARRAY_LEN(child); l++) {
 	VALUE isv = rb_ary_entry(child, l);
-	rb_str_concat(str, rb_iseq_disasm((rb_iseq_t *)isv));
+	rb_str_concat(str, rb_iseq_disasm(rb_iseq_check((rb_iseq_t *)isv)));
     }
 
     return str;
@@ -1918,7 +1918,7 @@ iseq_data_to_ary(const rb_iseq_t *iseq)
 		{
 		    const rb_iseq_t *iseq = (rb_iseq_t *)*seq;
 		    if (iseq) {
-			VALUE val = iseq_data_to_ary(iseq);
+			VALUE val = iseq_data_to_ary(rb_iseq_check(iseq));
 			rb_ary_push(ary, val);
 		    }
 		    else {
@@ -2013,7 +2013,7 @@ iseq_data_to_ary(const rb_iseq_t *iseq)
 	const struct iseq_catch_table_entry *entry = &iseq->body->catch_table->entries[i];
 	rb_ary_push(ary, exception_type2symbol(entry->type));
 	if (entry->iseq) {
-	    rb_ary_push(ary, iseq_data_to_ary(entry->iseq));
+	    rb_ary_push(ary, iseq_data_to_ary(rb_iseq_check(entry->iseq)));
 	}
 	else {
 	    rb_ary_push(ary, Qnil);

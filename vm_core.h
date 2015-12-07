@@ -402,6 +402,17 @@ struct rb_iseq_struct {
     } aux;
 };
 
+const rb_iseq_t *rb_iseq_complete(const rb_iseq_t *iseq);
+
+static inline const rb_iseq_t *
+rb_iseq_check(const rb_iseq_t *iseq)
+{
+    if (iseq->body == NULL) {
+	rb_iseq_complete((rb_iseq_t *)iseq);
+    }
+    return iseq;
+}
+
 enum ruby_special_exceptions {
     ruby_error_reenter,
     ruby_error_nomemory,
@@ -969,7 +980,7 @@ rb_block_t *rb_vm_control_frame_block_ptr(const rb_control_frame_t *cfp);
   (!RUBY_VM_VALID_CONTROL_FRAME_P((cfp), RUBY_VM_END_CONTROL_FRAME(th)))
 
 #define RUBY_VM_IFUNC_P(ptr)        (RB_TYPE_P((VALUE)(ptr), T_IMEMO) && imemo_type((VALUE)ptr) == imemo_ifunc)
-#define RUBY_VM_NORMAL_ISEQ_P(ptr)  (RB_TYPE_P((VALUE)(ptr), T_IMEMO) && imemo_type((VALUE)ptr) == imemo_iseq)
+#define RUBY_VM_NORMAL_ISEQ_P(ptr)  (RB_TYPE_P((VALUE)(ptr), T_IMEMO) && imemo_type((VALUE)ptr) == imemo_iseq && rb_iseq_check((rb_iseq_t *)ptr))
 
 #define RUBY_VM_GET_BLOCK_PTR_IN_CFP(cfp) ((rb_block_t *)(&(cfp)->self))
 #define RUBY_VM_GET_CFP_FROM_BLOCK_PTR(b) \

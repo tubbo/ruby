@@ -928,7 +928,7 @@ defineclass
 	rb_bug("unknown defineclass type: %d", (int)type);
     }
 
-    check_iseq(class_iseq);
+    rb_iseq_check(class_iseq);
 
     /* enter scope */
     vm_push_frame(th, class_iseq, VM_FRAME_MAGIC_CLASS, klass,
