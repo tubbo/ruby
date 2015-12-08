@@ -16,8 +16,8 @@
 #
 #  * RUBY_ISEQ_LOADER_STORAGE to select storage type
 #    * dbm: use dbm
-#    * fs: [default] use file system. locate compiled file in same directory
-#      as script file like Rubinius. foo.rb.yarb will be created for foo.rb.
+#    * fs: [default] use file system. locate a compiled binary files in same
+#      directory of scripts like Rubinius. foo.rb.yarb will be created for foo.rb.
 #    * fs2: use file system. locate compiled file in specified directory.
 #    * nothing: do nothing.
 #
