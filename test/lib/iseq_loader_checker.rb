@@ -37,8 +37,8 @@ class RubyVM::InstructionSequence
     i2
   end
 
-  CHECK_TO_A      = ENV['RUBY_ISEQ_DUMP'] == 'to_a'
-  CHECK_TO_BINARY = ENV['RUBY_ISEQ_DUMP'] == 'to_binary'
+  CHECK_TO_A      = ENV['RUBY_ISEQ_DUMP_DEBUG'] == 'to_a'
+  CHECK_TO_BINARY = ENV['RUBY_ISEQ_DUMP_DEBUG'] == 'to_binary'
 
   def self.translate i1
     # check to_a/load_iseq
