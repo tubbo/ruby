@@ -37,8 +37,8 @@ class RubyVM::InstructionSequence
     i2
   end
 
-  CHECK_TO_A = false
-  CHECK_TO_BINARY = true
+  CHECK_TO_A      = ENV['RUBY_ISEQ_DUMP'] == 'to_a'
+  CHECK_TO_BINARY = ENV['RUBY_ISEQ_DUMP'] == 'to_binary'
 
   def self.translate i1
     # check to_a/load_iseq
@@ -57,13 +57,13 @@ class RubyVM::InstructionSequence
                                      begin
                                        iseq.to_binary_format
                                      rescue RuntimeError => e # not a toplevel
-                                       STDERR.puts [:failed, e, iseq].inspect
+                                       # STDERR.puts [:failed, e, iseq].inspect
                                        nil
                                      end
                                    },
                                    proc{|bin|
                                      iseq = RubyVM::InstructionSequence.from_binary_format(bin)
-                                     STDERR.puts iseq.inspect
+                                     # STDERR.puts iseq.inspect
                                      iseq
                                    }) if CHECK_TO_BINARY
     # return value
