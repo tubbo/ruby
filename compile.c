@@ -6846,7 +6846,7 @@ ibf_dump_pos(struct ibf_dump *dump)
 }
 
 static ibf_offset_t
-ibf_dump_write(struct ibf_dump *dump, const void *buff, unsigned int size)
+ibf_dump_write(struct ibf_dump *dump, const void *buff, unsigned long size)
 {
     ibf_offset_t pos = ibf_dump_pos(dump);
     rb_str_cat(dump->str, (const char *)buff, size);
@@ -6997,7 +6997,7 @@ ibf_dump_code(struct ibf_dump *dump, const rb_iseq_t *iseq)
     code = ALLOCA_N(VALUE, iseq_size);
 
     for (code_index=0; code_index<iseq_size;) {
-	const int insn = orig_code[code_index];
+	const VALUE insn = orig_code[code_index];
 	const char *types = insn_op_types(insn);
 	int op_index;
 
@@ -7063,7 +7063,7 @@ ibf_load_code(const struct ibf_load *load, const rb_iseq_t *iseq, const struct r
     union iseq_inline_storage_entry *is_entries = iseq->body->is_entries;
 
     for (code_index=0; code_index<iseq_size;) {
-	const int insn = code[code_index++];
+	const VALUE insn = code[code_index++];
 	const char *types = insn_op_types(insn);
 	int op_index;
 
@@ -7420,16 +7420,16 @@ ibf_load_iseq_each(const struct ibf_load *load, rb_iseq_t *iseq, ibf_offset_t of
 static void
 ibf_dump_iseq_list(struct ibf_dump *dump, struct ibf_header *header)
 {
-    const int size = RARRAY_LEN(dump->iseq_list);
+    const long size = RARRAY_LEN(dump->iseq_list);
     ibf_offset_t *list = ALLOCA_N(ibf_offset_t, size);
-    int i;
+    long i;
 
     for (i=0; i<size; i++) {
 	list[i] = (ibf_offset_t)NUM2LONG(rb_ary_entry(dump->iseq_list, i));
     }
 
     header->iseq_list_offset = ibf_dump_write(dump, list, sizeof(ibf_offset_t) * size);
-    header->iseq_list_size = size;
+    header->iseq_list_size = (unsigned int)size;
 }
 
 struct ibf_dump_id_list_i_arg {
@@ -7460,7 +7460,7 @@ ibf_dump_id_list_i(st_data_t key, st_data_t val, st_data_t ptr)
 static void
 ibf_dump_id_list(struct ibf_dump *dump, struct ibf_header *header)
 {
-    const int size = dump->id_table->num_entries;
+    const long size = dump->id_table->num_entries;
     struct ibf_dump_id_list_i_arg arg;
     arg.list = ALLOCA_N(long, size);
     arg.dump = dump;
@@ -7469,7 +7469,7 @@ ibf_dump_id_list(struct ibf_dump *dump, struct ibf_header *header)
     st_foreach(dump->id_table, ibf_dump_id_list_i, (st_data_t)&arg);
 
     header->id_list_offset = ibf_dump_write(dump, arg.list, sizeof(long) * size);
-    header->id_list_size = size;
+    header->id_list_size = (unsigned int)size;
 }
 
 #define IBF_OBJECT_INTERNAL FL_PROMOTED0
@@ -7618,7 +7618,7 @@ ibf_dump_object_string(struct ibf_dump *dump, VALUE obj)
     const char *ptr = RSTRING_PTR(obj);
 
     if (encindex > RUBY_ENCINDEX_BUILTIN_MAX) {
-	rb_encoding *enc = rb_enc_from_index(encindex);
+	rb_encoding *enc = rb_enc_from_index((int)encindex);
 	const char *enc_name = rb_enc_name(enc);
 	encindex = RUBY_ENCINDEX_BUILTIN_MAX + ibf_dump_object(dump, rb_str_new2(enc_name));
     }
@@ -7633,7 +7633,7 @@ ibf_load_object_string(const struct ibf_load *load, const struct ibf_object_head
 {
     const struct ibf_object_string *string = IBF_OBJBODY(struct ibf_object_string, offset);
     VALUE str = rb_str_new(string->ptr, string->len);
-    int encindex = string->encindex;
+    int encindex = (int)string->encindex;
 
     if (encindex > RUBY_ENCINDEX_BUILTIN_MAX) {
 	VALUE enc_name_str = ibf_load_object(load, encindex - RUBY_ENCINDEX_BUILTIN_MAX);
