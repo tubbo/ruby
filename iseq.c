@@ -25,9 +25,6 @@
 #include "insns.inc"
 #include "insns_info.inc"
 
-#define ISEQ_MAJOR_VERSION 2
-#define ISEQ_MINOR_VERSION 3
-
 VALUE rb_cISeq;
 static VALUE iseqw_new(const rb_iseq_t *iseq);
 static const rb_iseq_t *iseqw_check(VALUE iseqw);
@@ -590,8 +587,7 @@ static VALUE
 iseq_s_load(int argc, VALUE *argv, VALUE self)
 {
     VALUE data, opt=Qnil;
-    rb_scan_args(argc, argv, "11", &data, &opt);
-
+    rb_scan_args(argc, argv, "01", &opt);
     return iseq_load(data, NULL, opt);
 }
 
@@ -2337,15 +2333,23 @@ rb_iseqw_local_variables(VALUE iseqval)
 }
 
 static VALUE
-iseqw_to_binary_format(VALUE self)
+iseqw_to_binary_format(int argc, VALUE *argv, VALUE self)
 {
-    return iseq_ibf_dump(iseqw_check(self));
+    VALUE opt;
+    rb_scan_args(argc, argv, "01", &opt);
+    return iseq_ibf_dump(iseqw_check(self), opt);
 }
 
 static VALUE
 iseqw_s_from_binary_format(VALUE self, VALUE str)
 {
     return iseqw_new(iseq_ibf_load(str));
+}
+
+static VALUE
+iseqw_s_from_binary_format_extra_data(VALUE self, VALUE str)
+{
+    return  iseq_ibf_load_extra_data(str);
 }
 
 /*
@@ -2379,8 +2383,10 @@ Init_ISeq(void)
     rb_define_method(rb_cISeq, "to_a", iseqw_to_a, 0);
     rb_define_method(rb_cISeq, "eval", iseqw_eval, 0);
 
-    rb_define_method(rb_cISeq, "to_binary_format", iseqw_to_binary_format, 0);
+    rb_define_method(rb_cISeq, "to_binary_format", iseqw_to_binary_format, -1);
     rb_define_singleton_method(rb_cISeq, "from_binary_format", iseqw_s_from_binary_format, 1);
+    rb_define_singleton_method(rb_cISeq, "from_binary_format_extra_data", iseqw_s_from_binary_format_extra_data, 1);
+    
 
     /* location APIs */
     rb_define_method(rb_cISeq, "path", iseqw_path, 0);

@@ -12,6 +12,9 @@
 #ifndef RUBY_ISEQ_H
 #define RUBY_ISEQ_H 1
 
+#define ISEQ_MAJOR_VERSION 2
+#define ISEQ_MINOR_VERSION 3
+
 #ifndef rb_iseq_t
 typedef struct rb_iseq_struct rb_iseq_t;
 #define rb_iseq_t rb_iseq_t
@@ -80,9 +83,10 @@ iseq_imemo_alloc(void)
 
 #define ISEQ_NOT_LOADED_YET   IMEMO_FL_USER1
 
-VALUE iseq_ibf_dump(const rb_iseq_t *iseq);
-const rb_iseq_t *iseq_ibf_load(VALUE str);
+VALUE iseq_ibf_dump(const rb_iseq_t *iseq, VALUE opt);
 void ibf_load_iseq_complete(rb_iseq_t *iseq);
+const rb_iseq_t *iseq_ibf_load(VALUE str);
+VALUE iseq_ibf_load_extra_data(VALUE str);
 
 RUBY_SYMBOL_EXPORT_BEGIN
 

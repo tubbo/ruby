@@ -6799,6 +6799,7 @@ struct ibf_header {
     unsigned int major_version;
     unsigned int minor_version;
     unsigned int size;
+    unsigned int extra_size;
 
     unsigned int iseq_list_size;
     unsigned int id_list_size;
@@ -8025,7 +8026,7 @@ ibf_dump_object_list(struct ibf_dump *dump, struct ibf_header *header)
 }
 
 VALUE
-iseq_ibf_dump(const rb_iseq_t *iseq)
+iseq_ibf_dump(const rb_iseq_t *iseq, VALUE opt)
 {
     struct ibf_dump dump;
     struct ibf_header header;
@@ -8047,18 +8048,28 @@ iseq_ibf_dump(const rb_iseq_t *iseq)
     }
 
     ibf_dump_write(&dump, &header, sizeof(header));
+    ibf_dump_write(&dump, RUBY_PLATFORM, strlen(RUBY_PLATFORM) + 1);
     ibf_dump_iseq(&dump, iseq);
 
     header.magic[0] = 'Y'; /* YARB */
     header.magic[1] = 'A';
     header.magic[2] = 'R';
     header.magic[3] = 'B';
-    header.major_version = 2;
-    header.minor_version = 3;
+    header.major_version = ISEQ_MAJOR_VERSION;
+    header.minor_version = ISEQ_MINOR_VERSION;
     ibf_dump_iseq_list(&dump, &header);
     ibf_dump_id_list(&dump, &header);
     ibf_dump_object_list(&dump, &header);
     header.size = ibf_dump_pos(&dump);
+
+    if (RTEST(opt)) {
+	VALUE opt_str = rb_check_string_type(opt);
+	header.extra_size = RSTRING_LEN(opt_str) + 1;
+	ibf_dump_write(&dump, RSTRING_PTR(opt_str), header.extra_size);
+    }
+    else {
+	header.extra_size = 0;
+    }
 
     ibf_dump_overwrite(&dump, &header, sizeof(header), 0);
 
@@ -8193,3 +8204,17 @@ iseq_ibf_load(VALUE str)
     RB_GC_GUARD(loader_obj);
     return iseq;
 }
+
+VALUE
+iseq_ibf_load_extra_data(VALUE str)
+{
+    struct ibf_load *load;
+    VALUE loader_obj = TypedData_Make_Struct(0, struct ibf_load, &ibf_load_type, load);
+    VALUE extra_str;
+
+    ibf_setup_load(load, loader_obj, str);
+    extra_str = rb_str_new2(load->buff + load->header->extra_size);
+    RB_GC_GUARD(loader_obj);
+    return extra_str;
+}
+
