@@ -8038,7 +8038,8 @@ iseq_ibf_dump(const rb_iseq_t *iseq)
 
     ibf_table_index(dump.id_table, 0); /* id_index:0 is 0 */
 
-    if (iseq->body->parent_iseq != NULL || iseq->body->local_iseq != iseq) {
+    if (iseq->body->parent_iseq != NULL ||
+	iseq->body->local_iseq != iseq) {
 	rb_raise(rb_eRuntimeError, "should be top of iseq");
     }
     if (RTEST(ISEQ_COVERAGE(iseq))) {
@@ -8085,14 +8086,14 @@ ibf_load_iseq_complete(rb_iseq_t *iseq)
     load->iseq = prev_src_iseq;
 }
 
+#if USE_LAZY_LOAD
 const rb_iseq_t *
 rb_iseq_complete(const rb_iseq_t *iseq)
 {
     ibf_load_iseq_complete((rb_iseq_t *)iseq);
     return iseq;
 }
-
-#define ENABLE_LAZY_LOAD 0
+#endif
 
 static rb_iseq_t *
 ibf_load_iseq(const struct ibf_load *load, const rb_iseq_t *index_iseq)
@@ -8115,9 +8116,10 @@ ibf_load_iseq(const struct ibf_load *load, const rb_iseq_t *index_iseq)
 	    iseq->aux.loader.index = iseq_index;
 	    rb_ary_store(load->iseq_list, iseq_index, (VALUE)iseq);
 
-#if !ENABLE_LAZY_LOAD
+#if !USE_LAZY_LOAD
 	    ibf_load_iseq_complete(iseq);
-#endif /* !ENABLE_LAZY_LOAD */
+#endif /* !USE_LAZY_LOAD */
+
 	    if (load->iseq) {
 		iseq_add_mark_object(load->iseq, (VALUE)iseq);
 	    }
