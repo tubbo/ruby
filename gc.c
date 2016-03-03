@@ -108,7 +108,7 @@ rb_gc_guarded_ptr_val(volatile VALUE *ptr, VALUE val)
 #define GC_HEAP_FREE_SLOTS  4096
 #endif
 #ifndef GC_HEAP_GROWTH_FACTOR
-#define GC_HEAP_GROWTH_FACTOR 1.8
+#define GC_HEAP_GROWTH_FACTOR 2.0
 #endif
 #ifndef GC_HEAP_GROWTH_MAX_SLOTS
 #define GC_HEAP_GROWTH_MAX_SLOTS 0 /* 0 is disable */
@@ -124,7 +124,7 @@ rb_gc_guarded_ptr_val(volatile VALUE *ptr, VALUE val)
 #define GC_HEAP_FREE_SLOTS_GOAL_RATIO 0.40
 #endif
 #ifndef GC_HEAP_FREE_SLOTS_MAX_RATIO
-#define GC_HEAP_FREE_SLOTS_MAX_RATIO  0.80
+#define GC_HEAP_FREE_SLOTS_MAX_RATIO  0.60
 #endif
 
 #ifndef GC_MALLOC_LIMIT_MIN
@@ -731,9 +731,9 @@ VALUE *ruby_initial_gc_stress_ptr = &ruby_initial_gc_stress;
 #define heap_arenas             objspace->heap_pages.arenas
 #define heap_arena_num          objspace->heap_pages.arena_num
 #define heap_allocated_pages    objspace->heap_pages.allocated_pages
+#define heap_allocatable_pages	objspace->heap_pages.allocatable_pages
 #define heap_pages_lomem	objspace->heap_pages.range[0]
 #define heap_pages_himem	objspace->heap_pages.range[1]
-#define heap_allocatable_pages	objspace->heap_pages.allocatable_pages
 #define heap_pages_freeable_pages	objspace->heap_pages.freeable_pages
 #define heap_pages_final_slots		objspace->heap_pages.final_slots
 #define heap_pages_deferred_final	objspace->heap_pages.deferred_final
@@ -809,7 +809,7 @@ verify_arena(struct heap_arena *target_arena)
 }
 
 static inline struct heap_arena *
-arena_from_obj(VALUE obj, int maybe)
+heap_obj_to_arena(VALUE obj, int maybe)
 {
     struct heap_arena *arena = (struct heap_arena *)(obj & ~ARENA_ALIGN_MASK);
     if (maybe == FALSE) verify_arena(arena);
@@ -817,7 +817,7 @@ arena_from_obj(VALUE obj, int maybe)
 }
 
 static inline unsigned long
-arena_page_index(VALUE obj)
+heap_obj_to_arena_page_index(VALUE obj)
 {
     unsigned long index = (obj & ARENA_ALIGN_MASK) >> HEAP_PAGE_ALIGN_LOG;
 #if ARENA_CHECK > 0
@@ -827,16 +827,49 @@ arena_page_index(VALUE obj)
 }
 
 static inline struct heap_page *
-arena_heap_page(struct heap_arena *arena, unsigned long index)
+heap_arena_page_index_to_page(struct heap_arena *arena, unsigned long index)
 {
     struct heap_page *page = &arena->info.pages[index];
     return page;
 }
 
-#define GET_HEAP_ARENA(v) arena_from_obj((VALUE)v, FALSE)
-#define GET_HEAP_PAGE(v) arena_heap_page(GET_HEAP_ARENA(v), arena_page_index((VALUE)v))
+static inline struct heap_arena *
+heap_page_to_arena(struct heap_page *page)
+{
+    struct heap_arena *arena = (struct heap_arena *)(((size_t)page & ~ARENA_ALIGN_MASK));
+    verify_arena(arena);
+    return arena;
+}
 
-#define NUM_IN_ARENA(p)   (((bits_t)(p) & ARENA_ALIGN_MASK)/sizeof(RVALUE))
+static inline void *
+heap_page_to_body(struct heap_page *page)
+{
+    struct heap_arena *arena = heap_page_to_arena(page);
+    int page_index = (int)(page - arena->info.pages);
+    return (RVALUE *)&arena->page_bodies[page_index];
+}
+
+static inline RVALUE *
+heap_page_start_adjust(RVALUE *page_body)
+{
+    RVALUE *start = page_body;
+    if ((VALUE)start % sizeof(RVALUE) != 0) {
+	int delta = (int)(sizeof(RVALUE) - ((VALUE)start % sizeof(RVALUE)));
+	start = (RVALUE*)((VALUE)start + delta);
+    }
+    return start;
+}
+
+static inline RVALUE *
+heap_page_start(struct heap_page *page)
+{
+    return page->start;
+}
+
+#define GET_HEAP_ARENA(v) heap_obj_to_arena((VALUE)v, FALSE)
+#define GET_HEAP_PAGE(v) heap_arena_page_index_to_page(GET_HEAP_ARENA(v), heap_obj_to_arena_page_index((VALUE)v))
+
+#define NUM_IN_ARENA(p)  (((bits_t)(p) & ARENA_ALIGN_MASK)/sizeof(RVALUE))
 #define BITMAP_INDEX(p)  (NUM_IN_ARENA(p) / BITS_BITLENGTH)
 #define BITMAP_OFFSET(p) (NUM_IN_ARENA(p) & (BITS_BITLENGTH-1))
 #define BITMAP_BIT(p)    ((bits_t)1 << BITMAP_OFFSET(p))
@@ -1244,12 +1277,15 @@ static inline void
 RVALUE_UNCOLLECTIBLE_RESET(VALUE obj)
 {
     struct heap_page *page = GET_HEAP_PAGE(obj);
+
+    if (RVALUE_UNCOLLECTIBLE(obj)) {
 #if RGENGC_CHECK_MODE
-    assert(RVALUE_UNCOLLECTIBLE_BITMAP(obj) != 0);
-    assert(page->uncollectible_slots > 0);
+	assert(RVALUE_UNCOLLECTIBLE_BITMAP(obj) != 0);
+	assert(page->uncollectible_slots > 0);
 #endif
-    page->uncollectible_slots--;
-    CLEAR_IN_BITMAP(GET_HEAP_UNCOLLECTIBLE_BITS(obj), obj);
+	page->uncollectible_slots--;
+	CLEAR_IN_BITMAP(GET_HEAP_UNCOLLECTIBLE_BITS(obj), obj);
+    }
 }
 
 static inline void
@@ -1482,21 +1518,6 @@ heap_unlink_page(rb_objspace_t *objspace, rb_heap_t *heap, struct heap_page *pag
     heap->total_slots -= page->total_slots;
 }
 
-static struct heap_arena *
-heap_page_to_arena(rb_objspace_t *objspace, struct heap_page *page)
-{
-    return (struct heap_arena *)(((size_t)page & ~ARENA_ALIGN_MASK));
-}
-
-static RVALUE *
-heap_page_to_body(rb_objspace_t *objspace, struct heap_page *page)
-{
-    struct heap_arena *arena = heap_page_to_arena(objspace, page);
-    int page_index = (int)(page - arena->info.pages);
-    if (0) fprintf(stderr, "arena: %p, page_index: %d\n", arena, page_index);
-    return (RVALUE *)&arena->page_bodies[page_index];
-}
-
 #ifdef HAVE_MMAP
   #include <sys/mman.h>
   #ifdef MADV_FREE
@@ -1562,7 +1583,7 @@ system_memory_allocate(size_t size)
 static void
 heap_page_free(rb_objspace_t *objspace, struct heap_arena *arena, struct heap_page *page)
 {
-    RVALUE *body = heap_page_to_body(objspace, page);
+    void *body = heap_page_to_body(page);
 
     heap_allocated_pages--;
     objspace->profile.total_freed_pages++;
@@ -1597,14 +1618,13 @@ heap_pages_free_unused_pages(rb_objspace_t *objspace)
 {
     struct heap_page *tomb_page = heap_tomb->pages;
 
-    while (tomb_page && heap_pages_swept_slots > heap_pages_max_free_slots) {
+    while (tomb_page) {
 	if (tomb_page->free_slots == tomb_page->total_slots) {
 	    struct heap_page *empty_tomb_page = tomb_page;
 	    tomb_page = tomb_page->next;
 
-	    heap_pages_swept_slots -= empty_tomb_page->total_slots;
 	    heap_unlink_page(objspace, heap_tomb, empty_tomb_page);
-	    heap_page_free(objspace, heap_page_to_arena(objspace, empty_tomb_page), empty_tomb_page);
+	    heap_page_free(objspace, heap_page_to_arena(empty_tomb_page), empty_tomb_page);
 	}
 	else {
 	    tomb_page = tomb_page->next;
@@ -1710,20 +1730,16 @@ heap_page_allocate(rb_objspace_t *objspace)
 {
     RVALUE *start, *page_body, *end, *p;
     struct heap_page *page;
-    int limit = HEAP_PAGE_OBJ_LIMIT;
+    int limit;
 
     /* allocate page from arena */
     page = heap_page_allocate_from_arenas(objspace);
-    start = page_body = heap_page_to_body(objspace, page);
+    start = page_body = (RVALUE *)heap_page_to_body(page);
 
     if (0) fprintf(stderr, "allocated: page: %p, page_body: %p\n", page, page_body);
 
-    /* adjust obj_limit (object number available in this page) */
-    if ((VALUE)start % sizeof(RVALUE) != 0) {
-	int delta = (int)(sizeof(RVALUE) - ((VALUE)start % sizeof(RVALUE)));
-	start = (RVALUE*)((VALUE)start + delta);
-	limit = (HEAP_PAGE_SIZE - (int)((VALUE)start - (VALUE)page_body))/(int)sizeof(RVALUE);
-    }
+    start = heap_page_start_adjust(start);
+    limit = (HEAP_PAGE_SIZE - (int)((VALUE)start - (VALUE)page_body))/(int)sizeof(RVALUE);
     end = start + limit;
 
     if (heap_pages_lomem == 0 || heap_pages_lomem > start) heap_pages_lomem = start;
@@ -1824,12 +1840,10 @@ heap_extend_pages(rb_objspace_t *objspace, size_t free_slots, size_t total_slots
 	if (0) fprintf(stderr, "free_slots(%8ld)/total_slots(%8ld)=%1.2f, G(%1.2f), f(%1.2f), used(%8ld) => next_used(%8ld)\n",
 		       free_slots, total_slots, free_slots/(double)total_slots, goal_ratio, f, used, next_used);
     }
-
     if (gc_params.growth_max_slots > 0) {
 	size_t max_used = (size_t)(used + gc_params.growth_max_slots/HEAP_PAGE_OBJ_LIMIT);
 	if (next_used > max_used) next_used = max_used;
     }
-
     return next_used - used;
 }
 
@@ -2231,10 +2245,19 @@ is_pointer_to_heap(rb_objspace_t *objspace, void *ptr)
     if (p < heap_pages_lomem || p > heap_pages_himem) return FALSE;
     if ((VALUE)p % sizeof(RVALUE) != 0) return FALSE;
 
-    ptr_arena = arena_from_obj((VALUE)ptr, TRUE);
+    ptr_arena = heap_obj_to_arena((VALUE)ptr, TRUE);
     arena = heap_arenas;
+
     while (arena) {
-	if (ptr_arena == arena) return TRUE;
+	if (ptr_arena == arena) {
+	    int page_index = (int)heap_obj_to_arena_page_index((VALUE)ptr);
+	    if (ARENA_BEGGIN <= page_index && page_index < arena->info.allocated_pages) {
+		return TRUE;
+	    }
+	    else {
+		return FALSE;
+	    }
+	}
 	arena = arena->info.next;
     }
 
@@ -2529,7 +2552,7 @@ objspace_each_objects(VALUE arg)
 	    /* TODO: prevent infinite loop, but how? copy snapshot of arena? */
 	    page = &arena->info.pages[i];
 	    if (page->flags.allocated != FALSE) {
-		pstart = page->start;
+		pstart = heap_page_start(page);
 		pend = pstart + page->total_slots;
 
 		if ((*args->callback)(pstart, pend, sizeof(RVALUE), args->data)) {
@@ -3043,7 +3066,7 @@ rb_objspace_call_finalizer(rb_objspace_t *objspace)
 	for (i=ARENA_BEGGIN; i<arena->info.allocated_pages; i++) {
 	    struct heap_page *page = &arena->info.pages[i];
 	    if (page->flags.allocated) {
-		p = page->start; pend = p + page->total_slots;
+		p = heap_page_start(page); pend = p + page->total_slots;
 
 		while (p < pend) {
 		    switch (BUILTIN_TYPE(p)) {
@@ -3497,7 +3520,7 @@ count_objects(int argc, VALUE *argv, VALUE os)
 	for (i=ARENA_BEGGIN; i<arena->info.allocated_pages; i++) {
 	    struct heap_page *page = &arena->info.pages[i];
 	    if (page->flags.allocated) {
-		RVALUE *p = page->start, *pend = p + page->total_slots;
+		RVALUE *p = heap_page_start(page), *pend = p + page->total_slots;
 
 		for (;p < pend; p++) {
 		    if (p->as.basic.flags) {
@@ -3614,7 +3637,7 @@ bitmap_print(const bits_t *src_bits, const int index, const int offset, const in
 }
 
 static inline void
-bitmap_load(bits_t *dst_bits, const bits_t *src_bits, const int index, const int offset, short total_slots, const int rest_bit, RVALUE *start)
+bitmap_load(bits_t *dst_bits, const bits_t *src_bits, const int index, const int offset, short total_slots, const int rest_bit, const RVALUE *start)
 {
     int i;
 
@@ -3676,7 +3699,7 @@ bitmap_load(bits_t *dst_bits, const bits_t *src_bits, const int index, const int
 #define B_MARKED(bits, nth) B_MARKED0(bits, (nth)/BITS_BITLENGTH, (nth)%BITS_BITLENGTH)
 
 static inline void
-bitmap_clear(bits_t *dst_bits, const int index, const int offset, short total_slots, RVALUE *start)
+bitmap_clear(bits_t *dst_bits, const int index, const int offset, short total_slots, const RVALUE *start)
 {
     int i;
 
@@ -3796,10 +3819,8 @@ bitmap_copy(bits_t *dst_bits, const bits_t *src_bits, const int index, const int
 }
 
 static inline void
-gc_setup_mark_bits(rb_objspace_t *objspace, struct heap_page *page, const int index, const int offset, const int free_slots)
+gc_setup_mark_bits(rb_objspace_t *objspace, struct heap_page *page, const int index, const int offset, const int free_slots, RVALUE *start)
 {
-    RVALUE *start = page->start;
-
 #if USE_RGENGC
     /* copy oldgen bitmap to mark bitmap */
     bitmap_copy(GET_HEAP_MARK_BITS(start), GET_HEAP_UNCOLLECTIBLE_BITS(start), index, offset, page->total_slots, start);
@@ -3812,90 +3833,86 @@ gc_setup_mark_bits(rb_objspace_t *objspace, struct heap_page *page, const int in
 static inline void
 gc_page_sweep(rb_objspace_t *objspace, rb_heap_t *heap, struct heap_page *sweep_page)
 {
+    int i;
+    int empty_slots = 0, freed_slots = 0, final_slots = 0;
+    bits_t bits[HEAP_PAGE_BITMAP_LIMIT_], bitset;
+    RVALUE * const pstart = heap_page_start(sweep_page);
+    const int bitmap_index = BITMAP_INDEX(pstart);
+    const int bitmap_offset = BITMAP_OFFSET(pstart);
+
     gc_report(2, objspace, "page_sweep: start.\n");
 
-    if (sweep_page->uncollectible_slots == sweep_page->total_slots) {
-	/* skip */
-    }
-    else {
-	int i;
-	int empty_slots = 0, freed_slots = 0, final_slots = 0;
-	bits_t bits[HEAP_PAGE_BITMAP_LIMIT_], bitset;
-	RVALUE *pstart = sweep_page->start;
-	const int bitmap_index = BITMAP_INDEX(pstart);
-	const int bitmap_offset = BITMAP_OFFSET(pstart);
+    bitmap_load(bits, GET_HEAP_MARK_BITS(pstart), bitmap_index, bitmap_offset, sweep_page->total_slots, 1, pstart);
 
-	bitmap_load(bits, GET_HEAP_MARK_BITS(pstart), bitmap_index, bitmap_offset, sweep_page->total_slots, 1, sweep_page->start);
-
-	for (i=0; i < HEAP_PAGE_BITMAP_LIMIT_; i++) {
-	    bitset = ~bits[i];
-	    if (bitset) {
-		RVALUE *p = pstart + i * BITS_BITLENGTH;
-		do {
-		    if (bitset & 1) {
-			switch (BUILTIN_TYPE(p)) {
-			  default: { /* majority case */
-			      gc_report(2, objspace, "page_sweep: free %s\n", obj_info((VALUE)p));
+    for (i=0; i < HEAP_PAGE_BITMAP_LIMIT_; i++) {
+	bitset = ~bits[i];
+	if (bitset) {
+	    RVALUE *p = pstart + i * BITS_BITLENGTH;
+	    do {
+		if (bitset & 1) {
+		    switch (BUILTIN_TYPE(p)) {
+		      default: { /* majority case */
+			  gc_report(2, objspace, "page_sweep: free %s\n", obj_info((VALUE)p));
 #if USE_RGENGC && RGENGC_CHECK_MODE
-			      if (!is_full_marking(objspace)) {
-				  if (RVALUE_OLD_P((VALUE)p)) rb_bug("page_sweep: %s - old while minor GC.", obj_info((VALUE)p));
-				  if (rgengc_remembered(objspace, (VALUE)p)) rb_bug("page_sweep: %s - remembered.", obj_info((VALUE)p));
-			      }
-#endif
-			      if (obj_free(objspace, (VALUE)p)) {
-				  final_slots++;
-			      }
-			      else {
-				  (void)VALGRIND_MAKE_MEM_UNDEFINED((void*)p, sizeof(RVALUE));
-				  heap_page_add_freeobj(objspace, sweep_page, (VALUE)p);
-				  gc_report(3, objspace, "page_sweep: %s is added to freelist\n", obj_info((VALUE)p));
-				  freed_slots++;
-			      }
-			      break;
+			  if (!is_full_marking(objspace)) {
+			      if (RVALUE_OLD_P((VALUE)p)) rb_bug("page_sweep: %s - old while minor GC.", obj_info((VALUE)p));
+			      if (rgengc_remembered(objspace, (VALUE)p)) rb_bug("page_sweep: %s - remembered.", obj_info((VALUE)p));
 			  }
+#endif
+			  if (obj_free(objspace, (VALUE)p)) {
+			      final_slots++;
+			  }
+			  else {
+			      (void)VALGRIND_MAKE_MEM_UNDEFINED((void*)p, sizeof(RVALUE));
+			      heap_page_add_freeobj(objspace, sweep_page, (VALUE)p);
+			      gc_report(3, objspace, "page_sweep: %s is added to freelist\n", obj_info((VALUE)p));
+			      freed_slots++;
+			  }
+			  break;
+		      }
 
-			    /* minor cases */
-			  case T_ZOMBIE:
-			    /* already counted */
-			    break;
-			  case T_NONE:
-			    empty_slots++; /* already freed */
-			    break;
-			}
+			/* minor cases */
+		      case T_ZOMBIE:
+			/* already counted */
+			break;
+		      case T_NONE:
+			empty_slots++; /* already freed */
+			break;
 		    }
-		    p++;
-		    bitset >>= 1;
-		} while (bitset);
-	    }
+		}
+		p++;
+		bitset >>= 1;
+	    } while (bitset);
 	}
+    }
 
 #if GC_PROFILE_MORE_DETAIL
-	if (gc_prof_enabled(objspace)) {
-	    gc_profile_record *record = gc_prof_record(objspace);
-	    record->removing_objects += final_slots + freed_slots;
-	    record->empty_objects += empty_slots;
-	}
+    if (gc_prof_enabled(objspace)) {
+	gc_profile_record *record = gc_prof_record(objspace);
+	record->removing_objects += final_slots + freed_slots;
+	record->empty_objects += empty_slots;
+    }
 #endif
 
-	if (0) fprintf(stderr, "gc_page_sweep(%d): total_slots: %d, freed_slots: %d, empty_slots: %d, final_slots: %d\n",
-		       (int)rb_gc_count(),
-		       (int)sweep_page->total_slots,
-		       freed_slots, empty_slots, final_slots);
+    if (0) fprintf(stderr, "gc_page_sweep(%d): total_slots: %d, freed_slots: %d, empty_slots: %d, final_slots: %d\n",
+		   (int)rb_gc_count(),
+		   (int)sweep_page->total_slots,
+		   freed_slots, empty_slots, final_slots);
 
-	gc_setup_mark_bits(objspace, sweep_page, bitmap_index, bitmap_offset, freed_slots + empty_slots);
+    gc_setup_mark_bits(objspace, sweep_page, bitmap_index, bitmap_offset, freed_slots + empty_slots, pstart);
 
-	heap_pages_swept_slots += sweep_page->free_slots = freed_slots + empty_slots;
-	objspace->profile.total_freed_objects += freed_slots;
-	heap_pages_final_slots += final_slots;
-	sweep_page->final_slots += final_slots;
+    sweep_page->free_slots = freed_slots + empty_slots;
+    objspace->profile.total_freed_objects += freed_slots;
+    heap_pages_final_slots += final_slots;
+    sweep_page->final_slots += final_slots;
 
-	if (heap_pages_deferred_final && !finalizing) {
-	    rb_thread_t *th = GET_THREAD();
-	    if (th) {
-		gc_finalize_deferred_register(objspace);
-	    }
+    if (heap_pages_deferred_final && !finalizing) {
+	rb_thread_t *th = GET_THREAD();
+	if (th) {
+	    gc_finalize_deferred_register(objspace);
 	}
     }
+
     gc_report(2, objspace, "page_sweep: end.\n");
 }
 
@@ -3977,11 +3994,6 @@ gc_sweep_finish(rb_objspace_t *objspace)
     gc_prof_set_heap_info(objspace);
     heap_pages_free_unused_pages(objspace);
 
-    /* if heap_pages has unused pages, then assign them to increment */
-    if (heap_allocatable_pages < heap_tomb->total_pages) {
-	heap_allocatable_pages = heap_tomb->total_pages;
-    }
-
     gc_event_hook(objspace, RUBY_INTERNAL_EVENT_GC_END_SWEEP, 0);
     gc_mode_transition(objspace, gc_mode_none);
 
@@ -4024,22 +4036,23 @@ gc_sweep_step(rb_objspace_t *objspace, rb_heap_t *heap)
 	}
 	else if (free_slots > 0) {
 #if GC_ENABLE_INCREMENTAL_MARK
-	    if (need_pool) {
-		if (heap_add_poolpage(objspace, heap, sweep_page)) {
-		    need_pool = FALSE;
+		if (need_pool) {
+		    if (heap_add_poolpage(objspace, heap, sweep_page)) {
+			need_pool = FALSE;
+		    }
 		}
-	    }
-	    else {
+		else {
+		    heap_add_freepage(objspace, heap, sweep_page);
+		    break;
+		}
+#else
 		heap_add_freepage(objspace, heap, sweep_page);
 		break;
-	    }
-#else
-	    heap_add_freepage(objspace, heap, sweep_page);
-	    break;
 #endif
-	}
-	else {
-	    sweep_page->free_next = NULL;
+	    }
+	    else {
+		sweep_page->free_next = NULL;
+	    }
 	}
 
 	sweep_page = next_sweep_page;
@@ -4645,7 +4658,7 @@ gc_remember_unprotected(rb_objspace_t *objspace, VALUE obj)
 }
 #endif
 
-static void
+static inline void
 rgengc_check_relation(rb_objspace_t *objspace, VALUE obj)
 {
 #if USE_RGENGC
@@ -4701,7 +4714,7 @@ gc_grey(rb_objspace_t *objspace, VALUE obj)
     push_mark_stack(&objspace->mark_stack, obj);
 }
 
-static void
+static inline void
 gc_aging(rb_objspace_t *objspace, VALUE obj)
 {
 #if USE_RGENGC
@@ -5482,7 +5495,7 @@ gc_verify_heap_page(rb_objspace_t *objspace, struct heap_page *page, VALUE obj)
     int zombie_objects = 0;
 
     for (i=0; i<page->total_slots; i++) {
-	VALUE obj = (VALUE)&page->start[i];
+	VALUE obj = (VALUE)&heap_page_start(page)[i];
 	if (RBASIC(obj) == 0) free_objects++;
 	if (BUILTIN_TYPE(obj) == T_ZOMBIE) zombie_objects++;
 	if (RVALUE_UNCOLLECTIBLE_BITMAP(obj)) uncollectible_objects++;
@@ -5497,7 +5510,7 @@ gc_verify_heap_page(rb_objspace_t *objspace, struct heap_page *page, VALUE obj)
 	page->flags.has_remembered_objects == FALSE && has_remembered_old == TRUE) {
 
 	for (i=0; i<page->total_slots; i++) {
-	    VALUE obj = (VALUE)&page->start[i];
+	    VALUE obj = (VALUE)&heap_page_start(page)[i];
 	    if (RVALUE_MARKING(obj)) {
 		fprintf(stderr, "marking -> %s\n", obj_info(obj));
 	    }
@@ -5662,7 +5675,7 @@ gc_marks_start(rb_objspace_t *objspace, int full_mark)
 #if USE_RGENGC
     if (full_mark) {
 #if GC_ENABLE_INCREMENTAL_MARK
-	objspace->rincgc.step_slots = (objspace->marked_slots * 2) / ((objspace->rincgc.pooled_slots / HEAP_PAGE_OBJ_LIMIT) + 1);
+	objspace->rincgc.step_slots = (objspace->marked_slots * 2) / (((objspace->rincgc.pooled_slots) / HEAP_PAGE_OBJ_LIMIT) + 1 + heap_allocatable_pages);
 
 	if (0) fprintf(stderr, "objspace->marked_slots: %d, objspace->rincgc.pooled_page_num: %d, objspace->rincgc.step_slots: %d, \n",
 		       (int)objspace->marked_slots, (int)objspace->rincgc.pooled_slots, (int)objspace->rincgc.step_slots);
@@ -5696,7 +5709,7 @@ gc_marks_wb_unprotected_objects(rb_objspace_t *objspace)
     struct heap_page *page = heap_eden->pages;
 
     while (page) {
-	RVALUE *start = page->start;
+	RVALUE *start = heap_page_start(page);
 	bits_t mark_bits[HEAP_PAGE_BITMAP_LIMIT_];
 	bits_t wbun_bits[HEAP_PAGE_BITMAP_LIMIT_];
 	size_t i;
@@ -5785,15 +5798,6 @@ gc_marks_finish(rb_objspace_t *objspace)
 
 #if RGENGC_CHECK_MODE >= 2
     gc_verify_internal_consistency(Qnil);
-#endif
-
-#if USE_RGENGC
-    if (is_full_marking(objspace)) {
-	/* See the comment about RUBY_GC_HEAP_OLDOBJECT_LIMIT_FACTOR */
-	const double r = gc_params.oldobject_limit_factor;
-	objspace->rgengc.uncollectible_wb_unprotected_objects_limit = (size_t)(objspace->rgengc.uncollectible_wb_unprotected_objects * r);
-	objspace->rgengc.old_objects_limit = (size_t)(objspace->rgengc.old_objects * r);
-    }
 #endif
 
 #if RGENGC_CHECK_MODE >= 4
@@ -6107,35 +6111,30 @@ rgengc_rememberset_mark(rb_objspace_t *objspace, rb_heap_t *heap)
 
     while (page) {
 	if (page->flags.has_remembered_objects | page->flags.has_uncollectible_shady_objects) {
-	    RVALUE *start = page->start;
-	    bits_t bitset, bits[HEAP_PAGE_BITMAP_LIMIT_];
+	    const RVALUE *start = heap_page_start(page);
 	    bits_t marking_bits[HEAP_PAGE_BITMAP_LIMIT_];
 	    bits_t uncollectible_bits[HEAP_PAGE_BITMAP_LIMIT_];
 	    bits_t wb_unprotected_bits[HEAP_PAGE_BITMAP_LIMIT_];
 	    const int bitmap_index = BITMAP_INDEX(start);
 	    const int bitmap_offset = BITMAP_OFFSET(start);
 
-	    bitmap_load(marking_bits,        GET_HEAP_MARKING_BITS(start),        bitmap_index, bitmap_offset, page->total_slots, 0, start);
-	    bitmap_clear(                    GET_HEAP_MARKING_BITS(start),        bitmap_index, bitmap_offset, page->total_slots,    start);
-	    bitmap_load(uncollectible_bits,  GET_HEAP_UNCOLLECTIBLE_BITS(start),  bitmap_index, bitmap_offset, page->total_slots, 0, start);
-	    bitmap_load(wb_unprotected_bits, GET_HEAP_WB_UNPROTECTED_BITS(start), bitmap_index, bitmap_offset, page->total_slots, 0, start);
-
 #if PROFILE_REMEMBERSET_MARK
 	    if (page->flags.has_remembered_objects && page->flags.has_uncollectible_shady_objects) has_both++;
 	    else if (page->flags.has_remembered_objects) has_old++;
 	    else if (page->flags.has_uncollectible_shady_objects) has_shady++;
 #endif
+	    bitmap_load(uncollectible_bits,  GET_HEAP_UNCOLLECTIBLE_BITS(start),  bitmap_index, bitmap_offset, page->total_slots, 0, start);
+	    bitmap_load(wb_unprotected_bits, GET_HEAP_WB_UNPROTECTED_BITS(start), bitmap_index, bitmap_offset, page->total_slots, 0, start);
+	    bitmap_load(marking_bits,        GET_HEAP_MARKING_BITS(start),        bitmap_index, bitmap_offset, page->total_slots, 0, start);
 
-	    for (i=0; i<HEAP_PAGE_BITMAP_LIMIT_; i++) {
-		bits[i] = marking_bits[i] | (uncollectible_bits[i] & wb_unprotected_bits[i]);
-	    }
+	    bitmap_clear(GET_HEAP_MARKING_BITS(start), bitmap_index, bitmap_offset, page->total_slots, start);
 	    page->flags.has_remembered_objects = FALSE;
 
 	    for (i=0; i < HEAP_PAGE_BITMAP_LIMIT_; i++) {
-		bitset = bits[i];
-
+		bits_t bitset = marking_bits[i] | (uncollectible_bits[i] & wb_unprotected_bits[i]);
+		
 		if (bitset) {
-		    RVALUE *p = start  + i * BITS_BITLENGTH;
+		    const RVALUE *p = start  + i * BITS_BITLENGTH;
 
 		    do {
 			if (bitset & 1) {
@@ -6176,12 +6175,12 @@ rgengc_mark_and_rememberset_clear(rb_objspace_t *objspace, rb_heap_t *heap)
     struct heap_page *page = heap->pages;
 
     while (page) {
-	VALUE start = (VALUE)page->start;
-	const int bitmap_index = BITMAP_INDEX(start);
-	const int bitmap_offset = BITMAP_OFFSET(start);
-	bitmap_clear(GET_HEAP_MARK_BITS(start),          bitmap_index, bitmap_offset, page->total_slots, page->start);
-	bitmap_clear(GET_HEAP_MARKING_BITS(start),       bitmap_index, bitmap_offset, page->total_slots, page->start);
-	bitmap_clear(GET_HEAP_UNCOLLECTIBLE_BITS(start), bitmap_index, bitmap_offset, page->total_slots, page->start);
+	RVALUE *pstart = heap_page_start(page);
+	const int bitmap_index = BITMAP_INDEX(pstart);
+	const int bitmap_offset = BITMAP_OFFSET(pstart);
+	bitmap_clear(GET_HEAP_MARK_BITS(pstart),          bitmap_index, bitmap_offset, page->total_slots, pstart);
+	bitmap_clear(GET_HEAP_MARKING_BITS(pstart),       bitmap_index, bitmap_offset, page->total_slots, pstart);
+	bitmap_clear(GET_HEAP_UNCOLLECTIBLE_BITS(pstart), bitmap_index, bitmap_offset, page->total_slots, pstart);
 
 	page->uncollectible_slots = 0;
 	page->flags.has_uncollectible_shady_objects = FALSE;
@@ -6480,9 +6479,7 @@ rb_gc_force_recycle(VALUE obj)
 	}
     }
 
-    if (RVALUE_UNCOLLECTIBLE(obj)) {
-	RVALUE_UNCOLLECTIBLE_RESET(obj);
-    }
+    RVALUE_UNCOLLECTIBLE_RESET(obj);
     CLEAR_IN_BITMAP(GET_HEAP_WB_UNPROTECTED_BITS(obj), obj);
 
 #if GC_ENABLE_INCREMENTAL_MARK
@@ -6507,12 +6504,6 @@ rb_gc_force_recycle(VALUE obj)
     objspace->profile.total_freed_objects++;
 
     heap_page_add_freeobj(objspace, GET_HEAP_PAGE(obj), obj);
-
-    /* Disable counting swept_slots because there are no meaning.
-     * if (!MARKED_IN_BITMAP(GET_HEAP_MARK_BITS(p), p)) {
-     *   objspace->heap.swept_slots++;
-     * }
-     */
 }
 
 #ifndef MARK_OBJECT_ARY_BUCKET_SIZE
@@ -9873,4 +9864,6 @@ Init_GC(void)
 #undef OPT
 	OBJ_FREEZE(opts);
     }
+
+    fprintf(stderr, "sizeof(struct heap_page): %ld\n", sizeof(struct heap_page));
 }
