@@ -2031,10 +2031,12 @@ heap_extend_pages(rb_objspace_t *objspace, size_t free_slots, size_t total_slots
 	if (0) fprintf(stderr, "free_slots(%8ld)/total_slots(%8ld)=%1.2f, G(%1.2f), f(%1.2f), used(%8ld) => next_used(%8ld)\n",
 		       free_slots, total_slots, free_slots/(double)total_slots, goal_ratio, f, used, next_used);
     }
+
     if (gc_params.growth_max_slots > 0) {
 	size_t max_used = (size_t)(used + gc_params.growth_max_slots/HEAP_PAGE_OBJ_LIMIT);
 	if (next_used > max_used) next_used = max_used;
     }
+
     return next_used - used;
 }
 
