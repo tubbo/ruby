@@ -473,14 +473,16 @@ typedef struct rb_heap_struct {
     RVALUE *freelist;
 
     struct heap_page *free_pages;
+    struct heap_page *uncollectible_pages;
+    struct heap_page *collectible_pages;
     struct heap_page *using_page;
-    struct heap_page *pages;
     struct heap_page *sweep_pages;
 #if GC_ENABLE_INCREMENTAL_MARK
     struct heap_page *pooled_pages;
 #endif
     size_t total_pages;      /* total page count in a heap */
     size_t total_slots;      /* total slot count (about total_pages * HEAP_PAGE_OBJ_LIMIT) */
+    size_t total_uncollectible_pages;
 } rb_heap_t;
 
 enum gc_mode {
@@ -669,11 +671,12 @@ typedef unsigned short heap_page_slot_num_t;
 #endif
 
 struct heap_page {
-    RVALUE *start;
+    RVALUE *freelist;
     struct heap_page *free_next;
+
     struct heap_page *prev;
     struct heap_page *next;
-    RVALUE *freelist;
+    RVALUE *start;
 
     heap_page_slot_num_t uncollectible_slots;
     heap_page_slot_num_t total_slots;
@@ -790,6 +793,216 @@ gc_mode_verify(enum gc_mode mode)
 #endif
 #define has_sweeping_pages(heap)         ((heap)->sweep_pages != 0)
 #define is_lazy_sweeping(heap)           (GC_ENABLE_LAZY_SWEEP && has_sweeping_pages(heap))
+
+static void
+heap_verify(rb_objspace_t *objspace, rb_heap_t *heap)
+{
+#if RGENGC_CHECK_MODE > 0
+    struct heap_page *page = heap->uncollectible_pages, *prev_page = NULL;
+    size_t total_slots = 0, total_pages = 0, total_uncollectible_pages = 0;
+    int found_collectible_pages = FALSE;
+    int found_using_page = FALSE;
+    int found_sweep_pages = FALSE;
+#if GC_ENABLE_INCREMENTAL_MARK
+    int found_pooled_pages = FALSE;
+#endif
+
+    if (page == NULL) {
+	page = heap->collectible_pages;
+    }
+
+    while (page) {
+	if (page->prev != prev_page) rb_bug("heap_verify: broken linked list");
+	prev_page = page;
+
+	if (heap->collectible_pages == page) {
+	    if (found_sweep_pages) rb_bug("heap_verify: sweep_pages before collectible_pages");
+#if GC_ENABLE_INCREMENTAL_MARK
+	    if (found_pooled_pages) rb_bug("heap_verify: pooled_pages before collectible_pages");
+#endif
+	    if (found_using_page) rb_bug("heap_verify: sweep_pages before using_page");
+	    found_collectible_pages = TRUE;
+	}
+#if GC_ENABLE_INCREMENTAL_MARK
+	if (heap->pooled_pages == page) {
+	    if (!found_collectible_pages) rb_bug("heap_verify: collectible_pages is not available before finding pooled_pages");
+	    if (found_sweep_pages) rb_bug("heap_verify: pooled_pages before sweep_pages");
+	    found_pooled_pages = TRUE;
+	}
+#endif
+	if (heap->sweep_pages == page) {
+	    if (!found_collectible_pages) rb_bug("heap_verify: collectible_pages is not available before finding sweep_pages");
+	    found_sweep_pages = TRUE;
+	}
+
+	total_slots += page->total_slots;
+	total_pages++;
+	if (found_collectible_pages == FALSE) total_uncollectible_pages++;
+	page = page->next;
+    }
+
+    if (total_pages != heap->total_pages) rb_bug("heap_verify: unmatched total_pages (heap->total_pages: %d, counted: %d)\n", (int)heap->total_pages, (int)total_pages);
+    if (total_slots != heap->total_slots) rb_bug("heap_verify: unmatched total_slots (heap->total_slots: %d, counted: %d)\n", (int)heap->total_slots, (int)total_slots);
+    if (total_uncollectible_pages != heap->total_uncollectible_pages) {
+	rb_bug("heap_verify: unmatched total_uncollectible_pages (heap->total_uncollectible_pages: %d, counted: %d)\n", (int)heap->total_uncollectible_pages, (int)total_uncollectible_pages);
+    }
+
+    if (heap->uncollectible_pages == NULL && heap->collectible_pages == NULL) {
+	if (heap->sweep_pages != NULL ||
+#if GC_ENABLE_INCREMENTAL_MARK
+	    heap->pooled_pages != NULL ||
+#endif
+	    heap->using_page != NULL) {
+	    rb_bug("heap_verify: unexpected pointers");
+	}
+    }
+    else {
+      if (!found_collectible_pages) rb_bug("heap_verify: collectible_pages are not found");
+    }
+    if (heap->sweep_pages && !found_sweep_pages) rb_bug("heap_verify: sweep_pages are not found");
+#if GC_ENABLE_INCREMENTAL_MARK
+    if (heap->pooled_pages && !found_pooled_pages) rb_bug("heap_verify: sweep_pages are not found");
+#endif
+
+#if 0
+    if (heap->using_page && !found_using_page) rb_bug("heap_verify: using_page is not found");
+#endif
+
+    // fprintf(stderr, "verified\n");
+#endif
+}
+
+/*
+ * add a page to collectible pages
+ */
+static void
+heap_add_page(rb_objspace_t *objspace, rb_heap_t *heap, struct heap_page *page)
+{
+    struct heap_page *c_page = heap->collectible_pages;
+    heap_verify(objspace, heap);
+
+    if (c_page) {
+	struct heap_page *p_prev = c_page->prev;
+	if (p_prev) p_prev->next = page;
+	page->prev = p_prev;
+	c_page->prev = page;
+    }
+    else {
+	page->prev = NULL;
+    }
+
+    page->next = c_page;
+    heap->collectible_pages = page;
+
+    heap->total_pages++;
+    heap->total_slots += page->total_slots;
+
+    heap_verify(objspace, heap);
+}
+
+/*
+ * remove a page from collectible pages
+ */
+static void
+heap_unlink_page(rb_objspace_t *objspace, rb_heap_t *heap, struct heap_page *page)
+{
+    heap_verify(objspace, heap);
+
+    if (page->prev) page->prev->next = page->next;
+    if (page->next) page->next->prev = page->prev;
+    if (heap->collectible_pages == page) heap->collectible_pages = page->next;
+    if (heap->uncollectible_pages == page) heap->uncollectible_pages = page->next;
+
+    page->prev = NULL;
+    page->next = NULL;
+    heap->total_pages--;
+    heap->total_slots -= page->total_slots;
+
+    heap_verify(objspace, heap);
+}
+
+static inline struct heap_page *heap_all_pages(rb_objspace_t *objspace, rb_heap_t *heap);
+static inline unsigned long heap_obj_to_arena_page_index(VALUE obj);
+
+static inline void
+heap_show(rb_objspace_t *objspace, rb_heap_t *heap, struct heap_page *target_page)
+{
+#if 0
+    struct heap_page *page = heap->uncollectible_pages;
+    if (page == NULL) page = heap->collectible_pages;
+
+    while (page) {
+	fprintf(stderr, "[%s%s%s%s%lu]",
+		page == heap->sweep_pages ? "S" : "",
+		page == heap->uncollectible_pages ? "U" : "",
+		page == heap->collectible_pages ? "C" : "",
+		page == target_page ? "T" : "",
+		heap_obj_to_arena_page_index((VALUE)page->start));
+
+	if (page->next) fprintf(stderr, "->");
+
+	page = page->next;
+    }
+    fprintf(stderr, "\n");
+#endif
+}
+
+static void
+heap_move_to_uncollectible_page(rb_objspace_t *objspace, rb_heap_t *heap, struct heap_page *page)
+{
+    heap_show(objspace, heap, page);
+
+    if (heap->uncollectible_pages == NULL) heap->uncollectible_pages = page;
+
+    if (heap->collectible_pages == page) {
+	heap->collectible_pages = page->next;
+    }
+    else {
+	struct heap_page *p_prev = heap->collectible_pages->prev;
+
+	  /* unlink page */
+	page->prev->next = page->next;
+	if (page->next) page->next->prev = page->prev;
+
+	heap_show(objspace, heap, page);
+
+	/* chain page bofore collectible_pages */
+	if (p_prev) p_prev->next = page;
+	page->prev = p_prev;
+	page->next = heap->collectible_pages;
+	heap->collectible_pages->prev = page;
+    }
+
+    heap->total_uncollectible_pages++;
+
+    heap_verify(objspace, heap);
+}
+
+static void
+heap_clear_uncollectible_pages(rb_objspace_t *objspace, rb_heap_t *heap)
+{
+    heap_verify(objspace, heap);
+
+    if (heap->uncollectible_pages != NULL) {
+	heap->collectible_pages = heap->uncollectible_pages;
+	heap->uncollectible_pages = NULL;
+	heap->total_uncollectible_pages = 0;
+    }
+
+    heap_verify(objspace, heap);
+}
+
+static inline struct heap_page *
+heap_all_pages(rb_objspace_t *objspace, rb_heap_t *heap)
+{
+    heap_verify(objspace, heap);
+    if (heap->uncollectible_pages) {
+	return heap->uncollectible_pages;
+    }
+    else {
+	return heap->collectible_pages;
+    }
+}
 
 static void
 verify_arena(struct heap_arena *target_arena)
@@ -1506,18 +1719,6 @@ heap_add_poolpage(rb_objspace_t *objspace, rb_heap_t *heap, struct heap_page *pa
 }
 #endif
 
-static void
-heap_unlink_page(rb_objspace_t *objspace, rb_heap_t *heap, struct heap_page *page)
-{
-    if (page->prev) page->prev->next = page->next;
-    if (page->next) page->next->prev = page->prev;
-    if (heap->pages == page) heap->pages = page->next;
-    page->prev = NULL;
-    page->next = NULL;
-    heap->total_pages--;
-    heap->total_slots -= page->total_slots;
-}
-
 #ifdef HAVE_MMAP
   #include <sys/mman.h>
   #ifdef MADV_FREE
@@ -1616,7 +1817,7 @@ heap_arena_free(rb_objspace_t *objspace, struct heap_arena *arena)
 static void
 heap_pages_free_unused_pages(rb_objspace_t *objspace)
 {
-    struct heap_page *tomb_page = heap_tomb->pages;
+    struct heap_page *tomb_page = heap_all_pages(objspace, heap_tomb);
 
     while (tomb_page) {
 	if (tomb_page->free_slots == tomb_page->total_slots) {
@@ -1765,7 +1966,7 @@ heap_page_resurrect(rb_objspace_t *objspace)
 {
     struct heap_page *page;
 
-    if ((page = heap_tomb->pages) != NULL) {
+    if ((page = heap_all_pages(objspace, heap_tomb)) != NULL) {
 	heap_unlink_page(objspace, heap_tomb, page);
 	return page;
     }
@@ -1784,16 +1985,6 @@ heap_page_create(rb_objspace_t *objspace)
     if (0) fprintf(stderr, "heap_page_create: %s - %p, heap_allocated_pages: %d, tomb->total_pages: %d\n",
 		   method, page, (int)heap_allocated_pages, (int)heap_tomb->total_pages);
     return page;
-}
-
-static void
-heap_add_page(rb_objspace_t *objspace, rb_heap_t *heap, struct heap_page *page)
-{
-    page->next = heap->pages;
-    if (heap->pages) heap->pages->prev = page;
-    heap->pages = page;
-    heap->total_pages++;
-    heap->total_slots += page->total_slots;
 }
 
 static void
@@ -3123,16 +3314,17 @@ is_id_value(rb_objspace_t *objspace, VALUE ptr)
 static inline int
 heap_is_swept_object(rb_objspace_t *objspace, rb_heap_t *heap, VALUE ptr)
 {
-    struct heap_page *page = heap->pages;
-    struct heap_page *target_page = GET_HEAP_PAGE(ptr);
     struct heap_page *sweeping_page = heap->sweep_pages;
+    struct heap_page *target_page = GET_HEAP_PAGE(ptr);
 
-    while (page) {
-	if (page == sweeping_page) return FALSE;
-	if (target_page == page) return TRUE;
-	page = page->next;
+    while (sweeping_page) {
+	if (sweeping_page == target_page) {
+	    return FALSE;
+	}
+	sweeping_page = sweeping_page->next;
     }
-    return FALSE;
+
+    return TRUE;
 }
 
 static inline int
@@ -3958,7 +4150,7 @@ gc_mode_transition(rb_objspace_t *objspace, enum gc_mode mode)
 static void
 gc_sweep_start_heap(rb_objspace_t *objspace, rb_heap_t *heap)
 {
-    heap->sweep_pages = heap->pages;
+    heap->sweep_pages = heap->collectible_pages;
 
     heap->free_pages = NULL;
 #if GC_ENABLE_INCREMENTAL_MARK
@@ -4036,25 +4228,26 @@ gc_sweep_step(rb_objspace_t *objspace, rb_heap_t *heap)
 	}
 	else if (free_slots > 0) {
 #if GC_ENABLE_INCREMENTAL_MARK
-		if (need_pool) {
-		    if (heap_add_poolpage(objspace, heap, sweep_page)) {
-			need_pool = FALSE;
-		    }
+	    if (need_pool) {
+		if (heap_add_poolpage(objspace, heap, sweep_page)) {
+		    need_pool = FALSE;
 		}
-		else {
-		    heap_add_freepage(objspace, heap, sweep_page);
-		    break;
-		}
-#else
-		heap_add_freepage(objspace, heap, sweep_page);
-		break;
-#endif
 	    }
 	    else {
-		sweep_page->free_next = NULL;
+		heap_add_freepage(objspace, heap, sweep_page);
+		break;
+	    }
+#else
+	    heap_add_freepage(objspace, heap, sweep_page);
+	    break;
+#endif
+	}
+	else {
+	    sweep_page->free_next = NULL;
+	    if (sweep_page->uncollectible_slots == sweep_page->total_slots) {
+		heap_move_to_uncollectible_page(objspace, heap, sweep_page);
 	    }
 	}
-
 	sweep_page = next_sweep_page;
     }
 
@@ -5564,8 +5757,8 @@ static int
 gc_verify_heap_pages(rb_objspace_t *objspace)
 {
     int rememberd_old_objects = 0;
-    rememberd_old_objects = gc_verify_heap_pages_(objspace, heap_eden->pages);
-    rememberd_old_objects = gc_verify_heap_pages_(objspace, heap_tomb->pages);
+    rememberd_old_objects = gc_verify_heap_pages_(objspace, heap_all_pages(objspace, heap_eden));
+    rememberd_old_objects = gc_verify_heap_pages_(objspace, heap_all_pages(objspace, heap_tomb));
     return rememberd_old_objects;
 }
 
@@ -5706,7 +5899,7 @@ gc_marks_start(rb_objspace_t *objspace, int full_mark)
 static void
 gc_marks_wb_unprotected_objects(rb_objspace_t *objspace)
 {
-    struct heap_page *page = heap_eden->pages;
+    struct heap_page *page = heap_all_pages(objspace, heap_eden);
 
     while (page) {
 	RVALUE *start = heap_page_start(page);
@@ -6103,7 +6296,7 @@ static void
 rgengc_rememberset_mark(rb_objspace_t *objspace, rb_heap_t *heap)
 {
     size_t i;
-    struct heap_page *page = heap->pages;
+    struct heap_page *page = heap_all_pages(objspace, heap);
 #if PROFILE_REMEMBERSET_MARK
     int has_old = 0, has_shady = 0, has_both = 0, skip = 0;
 #endif
@@ -6172,7 +6365,11 @@ rgengc_rememberset_mark(rb_objspace_t *objspace, rb_heap_t *heap)
 static void
 rgengc_mark_and_rememberset_clear(rb_objspace_t *objspace, rb_heap_t *heap)
 {
-    struct heap_page *page = heap->pages;
+    struct heap_page *page;
+
+    heap_clear_uncollectible_pages(objspace, heap);
+
+    page = heap_all_pages(objspace, heap);
 
     while (page) {
 	RVALUE *pstart = heap_page_start(page);
@@ -7196,6 +7393,7 @@ enum gc_stat_sym {
     gc_stat_sym_count,
     gc_stat_sym_heap_allocated_pages,
     gc_stat_sym_heap_allocatable_pages,
+    gc_stat_sym_heap_uncollectible_pages,
     gc_stat_sym_heap_available_slots,
     gc_stat_sym_heap_live_slots,
     gc_stat_sym_heap_free_slots,
@@ -7271,6 +7469,7 @@ setup_gc_stat_symbols(void)
 	S(count);
 	S(heap_allocated_pages);
 	S(heap_allocatable_pages);
+	S(heap_uncollectible_pages);
 	S(heap_available_slots);
 	S(heap_live_slots);
 	S(heap_free_slots);
@@ -7441,6 +7640,7 @@ gc_stat_internal(VALUE hash_or_sym)
     /* implementation dependent counters */
     SET(heap_allocated_pages, heap_allocated_pages);
     SET(heap_allocatable_pages, heap_allocatable_pages);
+    SET(heap_uncollectible_pages, heap_eden->total_uncollectible_pages);
     SET(heap_available_slots, objspace_available_slots(objspace));
     SET(heap_live_slots, objspace_live_slots(objspace));
     SET(heap_free_slots, objspace_free_slots(objspace));
@@ -9864,6 +10064,4 @@ Init_GC(void)
 #undef OPT
 	OBJ_FREEZE(opts);
     }
-
-    fprintf(stderr, "sizeof(struct heap_page): %ld\n", sizeof(struct heap_page));
 }
