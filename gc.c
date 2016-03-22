@@ -4024,7 +4024,7 @@ gc_setup_mark_bits(rb_objspace_t *objspace, struct heap_page *page, const int in
 #endif
 }
 
-static inline void
+static inline int
 gc_page_sweep(rb_objspace_t *objspace, rb_heap_t *heap, struct heap_page *sweep_page)
 {
     int i;
@@ -4108,6 +4108,8 @@ gc_page_sweep(rb_objspace_t *objspace, rb_heap_t *heap, struct heap_page *sweep_
     }
 
     gc_report(2, objspace, "page_sweep: end.\n");
+
+    return freed_slots + empty_slots;
 }
 
 /* allocate additional minimum page to work */
@@ -4200,6 +4202,7 @@ static int
 gc_sweep_step(rb_objspace_t *objspace, rb_heap_t *heap)
 {
     struct heap_page *sweep_page = heap->sweep_pages;
+    int acquired_free_slots = 0;
     int unlink_limit = 3;
 #if GC_ENABLE_INCREMENTAL_MARK
     int need_pool = will_be_incremental_marking(objspace) ? TRUE : FALSE;
@@ -4237,7 +4240,10 @@ gc_sweep_step(rb_objspace_t *objspace, rb_heap_t *heap)
 	    }
 	    else {
 		heap_add_freepage(objspace, heap, sweep_page);
-		break;
+		acquired_free_slots += free_slots;
+		if (acquired_free_slots >= HEAP_PAGE_OBJ_LIMIT) {
+		    break;
+		}
 	    }
 #else
 	    heap_add_freepage(objspace, heap, sweep_page);
@@ -4250,6 +4256,7 @@ gc_sweep_step(rb_objspace_t *objspace, rb_heap_t *heap)
 		heap_move_to_uncollectible_page(objspace, heap, sweep_page);
 	    }
 	}
+
 	sweep_page = next_sweep_page;
     }
 
