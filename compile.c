@@ -6870,7 +6870,7 @@ rb_dvar_defined(ID id, const rb_block_t *base_block)
 {
     const rb_iseq_t *iseq;
 
-    if (base_block && (iseq = base_block->iseq)) {
+    if (base_block && (iseq = vm_block_code_iseq(base_block->code)) != NULL) {
 	while (iseq->body->type == ISEQ_TYPE_BLOCK ||
 	       iseq->body->type == ISEQ_TYPE_RESCUE ||
 	       iseq->body->type == ISEQ_TYPE_ENSURE ||
@@ -6895,9 +6895,9 @@ rb_local_defined(ID id, const rb_block_t *base_block)
 {
     const rb_iseq_t *iseq;
 
-    if (base_block && base_block->iseq) {
+    if (base_block && (iseq = vm_block_code_iseq(base_block->code)) != NULL) {
 	unsigned int i;
-	iseq = base_block->iseq->body->local_iseq;
+	iseq = iseq->body->local_iseq;
 
 	for (i=0; i<iseq->body->local_table_size; i++) {
 	    if (iseq->body->local_table[i] == id) {

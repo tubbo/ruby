@@ -611,7 +611,7 @@ rb_iseq_compile_with_option(VALUE src, VALUE file, VALUE absolute_path, VALUE li
 {
     rb_thread_t *th = GET_THREAD();
     rb_iseq_t *iseq = NULL;
-    const rb_iseq_t *const parent = base_block ? base_block->iseq : NULL;
+    const rb_iseq_t *const parent = base_block ? vm_block_code_iseq(base_block->code) : NULL;
     rb_compile_option_t option;
     const enum iseq_type type = parent ? ISEQ_TYPE_EVAL : ISEQ_TYPE_TOP;
 #if !defined(__GNUC__) || (__GNUC__ == 4 && __GNUC_MINOR__ == 8)
@@ -1646,9 +1646,7 @@ iseqw_s_of(VALUE klass, VALUE body)
     rb_secure(1);
 
     if (rb_obj_is_proc(body)) {
-	rb_proc_t *proc;
-	GetProcPtr(body, proc);
-	iseq = proc->block.iseq;
+	iseq = vm_proc_iseq(body);
 
 	if (!RUBY_VM_NORMAL_ISEQ_P(iseq)) {
 	    iseq = NULL;

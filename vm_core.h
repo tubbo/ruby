@@ -47,8 +47,10 @@
 #if VM_CHECK_MODE > 0
 #define VM_ASSERT(expr) ( \
 	RUBY_ASSERT_WHEN(VM_CHECK_MODE > 0, expr))
+#define VM_UNREACHABLE(func) rb_bug(#func ": unreachable")
 #else
 #define VM_ASSERT(expr) ((void)0)
+#define VM_UNREACHABLE(func)
 #endif
 
 #define RUBY_VM_THREAD_MODEL 2
@@ -593,6 +595,22 @@ typedef struct rb_vm_struct {
 #define VM_DEBUG_VERIFY_METHOD_CACHE (VM_DEBUG_MODE != 0)
 #endif
 
+typedef union rb_block_code_union {
+    const rb_iseq_t *iseq;
+    const struct vm_ifunc *ifunc;
+    VALUE symbol;
+    VALUE proc;
+
+    VALUE val;
+} rb_block_code;
+
+typedef enum {
+    block_code_type_iseq,
+    block_code_type_ifunc,
+    block_code_type_symbol,
+    block_code_type_proc
+} rb_block_code_type_t;
+
 typedef struct rb_control_frame_struct {
     const VALUE *pc;		/* cfp[0] */
     VALUE *sp;			/* cfp[1] */
@@ -600,19 +618,17 @@ typedef struct rb_control_frame_struct {
     VALUE flag;			/* cfp[3] */
     VALUE self;			/* cfp[4] / block[0] */
     VALUE *ep;			/* cfp[5] / block[1] */
-    const rb_iseq_t *block_iseq;/* cfp[6] / block[2] */
-    VALUE proc;			/* cfp[7] / block[3] */
+    rb_block_code block_code;   /* cfp[6] / block[2] */
 
 #if VM_DEBUG_BP_CHECK
-    VALUE *bp_check;		/* cfp[8] */
+    VALUE *bp_check;		/* cfp[7] */
 #endif
 } rb_control_frame_t;
 
 typedef struct rb_block_struct {
     VALUE self;			/* share with method frame if it's only block */
     VALUE *ep;			/* share with method frame if it's only block */
-    const rb_iseq_t *iseq;
-    VALUE proc;
+    rb_block_code code;
 } rb_block_t;
 
 extern const rb_data_type_t ruby_threadptr_data_type;
@@ -980,8 +996,75 @@ rb_block_t *rb_vm_control_frame_block_ptr(const rb_control_frame_t *cfp);
 #define RUBY_VM_CONTROL_FRAME_STACK_OVERFLOW_P(th, cfp) \
   (!RUBY_VM_VALID_CONTROL_FRAME_P((cfp), RUBY_VM_END_CONTROL_FRAME(th)))
 
-#define RUBY_VM_IFUNC_P(ptr)        (RB_TYPE_P((VALUE)(ptr), T_IMEMO) && imemo_type((VALUE)ptr) == imemo_ifunc)
 #define RUBY_VM_NORMAL_ISEQ_P(ptr)  (RB_TYPE_P((VALUE)(ptr), T_IMEMO) && imemo_type((VALUE)ptr) == imemo_iseq && rb_iseq_check((rb_iseq_t *)ptr))
+
+static inline rb_block_code_type_t
+vm_block_code_type(rb_block_code code)
+{
+    if (RB_TYPE_P(code.val, T_IMEMO)) {
+	if (imemo_type(code.val) == imemo_iseq) {
+	    return block_code_type_iseq;
+	}
+	else if (imemo_type(code.val) == imemo_ifunc) {
+	    return block_code_type_ifunc;
+	}
+	VM_UNREACHABLE(vm_block_code_type);
+    }
+    else if (SYMBOL_P(code.val)) {
+	return block_code_type_symbol;
+    }
+    else if (rb_obj_is_proc(code.val)) {
+	return block_code_type_proc;
+    }
+
+    VM_UNREACHABLE(vm_block_code_type);
+    return -1;
+}
+
+static inline const rb_block_t *
+vm_proc_block(VALUE procval)
+{
+    rb_proc_t *proc = RTYPEDDATA_DATA(procval);
+    return &proc->block;
+}
+
+static inline const rb_iseq_t *vm_block_code_iseq(rb_block_code code);
+
+static inline const rb_iseq_t *
+vm_proc_iseq(VALUE procval)
+{
+    return vm_block_code_iseq(vm_proc_block(procval)->code);
+}
+
+static inline const rb_iseq_t *
+vm_block_code_iseq(rb_block_code code)
+{
+    if (code.val == 0) return NULL; /* TODO: env->block can contain such code */
+
+    switch (vm_block_code_type(code)) {
+      case block_code_type_iseq: return code.iseq;
+      case block_code_type_proc: return vm_proc_iseq(code.proc);
+
+      case block_code_type_ifunc:
+      case block_code_type_symbol: return NULL;
+    }
+    VM_UNREACHABLE(vm_block_code_iseq);
+    return NULL;
+}
+
+static inline VALUE
+vm_block_self(const rb_block_t *block)
+{
+    switch (vm_block_code_type(block->code)) {
+      case block_code_type_proc:
+	{
+	    rb_proc_t *proc = RTYPEDDATA_DATA(block->code.proc);
+	    return vm_block_self(&proc->block);
+	}
+      default:
+	return block->self;
+    }
+}
 
 #define RUBY_VM_GET_BLOCK_PTR_IN_CFP(cfp) ((rb_block_t *)(&(cfp)->self))
 #define RUBY_VM_GET_CFP_FROM_BLOCK_PTR(b) \

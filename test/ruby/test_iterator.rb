@@ -134,7 +134,6 @@ class TestIterator < Test::Unit::TestCase
     assert_equal([1], IterTest.new(nil).method(:f).to_proc.call([1]))
     m = /\w+/.match("abc")
     assert_equal([m], IterTest.new(nil).method(:f).to_proc.call([m]))
-
     IterTest.new([0]).each0 {|x| assert_equal(0, x)}
     IterTest.new([1]).each1 {|x| assert_equal(1, x)}
     IterTest.new([2]).each2 {|x| assert_equal([2], x)}

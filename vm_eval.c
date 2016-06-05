@@ -1167,10 +1167,10 @@ rb_iterate0(VALUE (* it_proc) (VALUE), VALUE data1,
       iter_retry:
 	{
 	    rb_block_t *blockptr;
+
 	    if (ifunc) {
 		blockptr = RUBY_VM_GET_BLOCK_PTR_IN_CFP(cfp);
-		blockptr->iseq = (void *)ifunc;
-		blockptr->proc = 0;
+		blockptr->code.ifunc = ifunc;
 	    }
 	    else {
 		blockptr = VM_CF_BLOCK_PTR(cfp);
@@ -1332,7 +1332,7 @@ eval_string_with_cref(VALUE self, VALUE src, VALUE scope, rb_cref_t *const cref_
 		block = *RUBY_VM_GET_BLOCK_PTR_IN_CFP(cfp);
 		base_block = &block;
 		base_block->self = self;
-		base_block->iseq = cfp->iseq;	/* TODO */
+		base_block->code.iseq = cfp->iseq; /* TODO */
 	    }
 	    else {
 		rb_raise(rb_eRuntimeError, "Can't eval on top of Fiber or Thread");
@@ -1355,7 +1355,8 @@ eval_string_with_cref(VALUE self, VALUE src, VALUE scope, rb_cref_t *const cref_
 	    rb_exc_raise(adjust_backtrace_in_eval(th, th->errinfo));
 	}
 
-	if (!cref && base_block->iseq) {
+	/* TODO: what the code checking? */
+	if (!cref && base_block->code.val) {
 	    if (NIL_P(scope)) {
 		rb_cref_t *orig_cref = rb_vm_get_cref(base_block->ep);
 		cref = vm_cref_dup(orig_cref);
@@ -1579,10 +1580,18 @@ static VALUE
 yield_under(VALUE under, VALUE self, int argc, const VALUE *argv)
 {
     rb_thread_t *th = GET_THREAD();
-    rb_block_t block, *blockptr;
+    rb_block_t block;
+    const rb_block_t *blockptr;
     rb_cref_t *cref;
 
     if ((blockptr = VM_CF_BLOCK_PTR(th->cfp)) != 0) {
+      again:
+	if (vm_block_code_type(blockptr->code) == block_code_type_proc) {
+	    const rb_proc_t *proc;
+	    GetProcPtr(blockptr->code.proc, proc);
+	    blockptr = &proc->block;
+	    goto again;
+	}
 	block = *blockptr;
 	block.self = self;
 	VM_CF_LEP(th->cfp)[0] = VM_ENVVAL_BLOCK_PTR(&block);

@@ -1241,8 +1241,8 @@ rb_mod_refine(VALUE module, VALUE klass)
     if (!block) {
         rb_raise(rb_eArgError, "no block given");
     }
-    if (block->proc) {
-        rb_raise(rb_eArgError,
+    if (vm_block_code_type(block->code) != block_code_type_iseq) {
+	rb_raise(rb_eArgError,
 		 "can't pass a Proc as a block to Module#refine");
     }
     Check_Type(klass, T_CLASS);

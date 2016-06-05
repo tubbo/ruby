@@ -1700,7 +1700,7 @@ process_options(int argc, char **argv, struct cmdline_options *opt)
 	    path = rb_realpath_internal(Qnil, opt->script_name, 1);
 	}
 	base_block = toplevel_context(toplevel_binding);
-	iseq = rb_iseq_new_main(tree, opt->script_name, path, base_block->iseq);
+	iseq = rb_iseq_new_main(tree, opt->script_name, path, vm_block_code_iseq(base_block->code));
     }
 
     if (opt->dump & DUMP_BIT(insns)) {

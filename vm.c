@@ -360,7 +360,7 @@ static void
 vm_set_eval_stack(rb_thread_t * th, const rb_iseq_t *iseq, const rb_cref_t *cref, rb_block_t *base_block)
 {
     vm_push_frame(th, iseq, VM_FRAME_MAGIC_EVAL | VM_FRAME_FLAG_FINISH,
-		  base_block->self, VM_ENVVAL_PREV_EP_PTR(base_block->ep),
+		  vm_block_self(base_block), VM_ENVVAL_PREV_EP_PTR(base_block->ep),
 		  (VALUE)cref, /* cref or me */
 		  iseq->body->iseq_encoded,
 		  th->cfp->sp, iseq->body->local_size, iseq->body->stack_max);
@@ -512,8 +512,7 @@ env_mark(void * const ptr)
 
     RUBY_MARK_UNLESS_NULL(rb_vm_env_prev_envval(env));
     RUBY_MARK_UNLESS_NULL(env->block.self);
-    RUBY_MARK_UNLESS_NULL(env->block.proc);
-    RUBY_MARK_UNLESS_NULL((VALUE)env->block.iseq);
+    RUBY_MARK_UNLESS_NULL(env->block.code.val);
     RUBY_MARK_LEAVE("env");
 }
 
@@ -569,20 +568,26 @@ check_env_value(VALUE envval)
 
 /* return FALSE if proc was already created */
 static int
-vm_make_proc_from_block(rb_thread_t *th, rb_block_t *block, VALUE *procptr)
+vm_make_proc_from_block(rb_thread_t *th, rb_block_t *block, VALUE *procvalptr)
 {
-    if (!block->proc) {
-	*procptr = block->proc = rb_vm_make_proc(th, block, rb_cProc);
+    switch (vm_block_code_type(block->code)) {
+      case block_code_type_ifunc:
+      case block_code_type_iseq:
+	*procvalptr = block->code.proc = rb_vm_make_proc(th, block, rb_cProc);
 	return TRUE;
-    }
-    else if (SYMBOL_P(block->proc)) {
-	*procptr = rb_sym_to_proc(block->proc);
+
+      case block_code_type_symbol:
+	/* TODO: should we set code.proc with it? */
+	*procvalptr = block->code.proc = rb_sym_to_proc(block->code.symbol);
 	return TRUE;
-    }
-    else {
-	*procptr = block->proc;
+
+      case block_code_type_proc:
+	*procvalptr = block->code.proc;
 	return FALSE;
     }
+
+    VM_UNREACHABLE(vm_make_proc_from_block);
+    return FALSE;
 }
 
 static VALUE
@@ -617,9 +622,7 @@ vm_make_env_each(rb_thread_t *const th, rb_control_frame_t *const cfp)
 	rb_block_t *block = VM_EP_BLOCK_PTR(ep);
 
 	if (block && vm_make_proc_from_block(th, block, &blockprocval)) {
-	    rb_proc_t *p;
-	    GetProcPtr(blockprocval, p);
-	    *ep = VM_ENVVAL_BLOCK_PTR(&p->block);
+	    *ep = VM_ENVVAL_BLOCK_PTR(vm_proc_block(blockprocval));
 	}
     }
 
@@ -678,12 +681,11 @@ vm_make_env_each(rb_thread_t *const th, rb_control_frame_t *const cfp)
     /* as Binding */
     env->block.self = cfp->self;
     env->block.ep = cfp->ep = new_ep;
-    env->block.iseq = cfp->iseq;
-    env->block.proc = 0;
+    env->block.code.iseq = cfp->iseq;
 
     if (!RUBY_VM_NORMAL_ISEQ_P(cfp->iseq)) {
 	/* TODO */
-	env->block.iseq = 0;
+	env->block.code.iseq = 0;
     }
 
     return envval;
@@ -740,7 +742,7 @@ collect_local_variables_in_env(const rb_env_t *env, const struct local_var_list 
 {
     VALUE prev_envval;
 
-    while (collect_local_variables_in_iseq(env->block.iseq, vars), (prev_envval = rb_vm_env_prev_envval(env)) != Qfalse) {
+    while (collect_local_variables_in_iseq(vm_block_code_iseq(env->block.code), vars), (prev_envval = rb_vm_env_prev_envval(env)) != Qfalse) {
 	GetEnvPtr(prev_envval, env);
     }
 }
@@ -789,7 +791,6 @@ rb_proc_create(VALUE klass, const rb_block_t *block,
     rb_proc_t *proc = RTYPEDDATA_DATA(procval);
 
     proc->block = *block;
-    proc->block.proc = procval;
     proc->safe_level = safe_level;
     proc->is_from_method = is_from_method;
     proc->is_lambda = is_lambda;
@@ -809,7 +810,7 @@ rb_vm_make_proc_lambda(rb_thread_t *th, const rb_block_t *block, VALUE klass, in
     VALUE procval;
     rb_control_frame_t *cfp = RUBY_VM_GET_CFP_FROM_BLOCK_PTR(block);
 
-    if (block->proc) {
+    if (vm_block_code_type(block->code) == block_code_type_proc) {
 	rb_bug("rb_vm_make_proc: Proc value is already created.");
     }
 
@@ -881,7 +882,7 @@ rb_binding_add_dynavars(rb_binding_t *bind, int dyncount, const ID *dynvars)
     GetEnvPtr(envval, env);
 
     base_block = &env->block;
-    base_iseq = base_block->iseq;
+    base_iseq = vm_block_code_iseq(base_block->code);
 
     if (dyncount >= numberof(minibuf)) dyns = ALLOCV_N(ID, idtmp, dyncount + 1);
 
@@ -949,38 +950,45 @@ invoke_bmethod(rb_thread_t *th, const rb_iseq_t *iseq, VALUE self, const rb_bloc
 static inline VALUE
 invoke_block_from_c_0(rb_thread_t *th, const rb_block_t *block,
 		      VALUE self, int argc, const VALUE *argv, const rb_block_t *blockptr,
-		      const rb_cref_t *cref, const int splattable)
+		      const rb_cref_t *cref, const int splattable, int is_lambda)
 {
-    if (UNLIKELY(!RTEST(block->iseq))) {
-	return Qnil;
-    }
-    else if (LIKELY(RUBY_VM_NORMAL_ISEQ_P(block->iseq))) {
-	const rb_iseq_t *iseq = rb_iseq_check(block->iseq);
-	int i, opt_pc;
-	int type = block_proc_is_lambda(block->proc) ? VM_FRAME_MAGIC_LAMBDA : VM_FRAME_MAGIC_BLOCK;
-	VALUE *sp = th->cfp->sp;
-	const rb_callable_method_entry_t *me = th->passed_bmethod_me;
+  again:
+    switch (vm_block_code_type(block->code)) {
+      case block_code_type_iseq:
+	{
+	    const rb_iseq_t *iseq = rb_iseq_check(block->code.iseq);
+	    int i, opt_pc;
+	    int type = is_lambda ? VM_FRAME_MAGIC_LAMBDA : VM_FRAME_MAGIC_BLOCK;
+	    VALUE *sp = th->cfp->sp;
 
-	th->passed_bmethod_me = NULL;
+	    for (i=0; i<argc; i++) {
+		sp[i] = argv[i];
+	    }
 
-	for (i=0; i<argc; i++) {
-	    sp[i] = argv[i];
+	    opt_pc = vm_yield_setup_args(th, iseq, argc, sp, blockptr,
+					 (type == VM_FRAME_MAGIC_LAMBDA ? (splattable ? arg_setup_lambda : arg_setup_method) : arg_setup_block));
+
+	    if (th->passed_bmethod_me == NULL) {
+		return invoke_block(th, iseq, self, block, cref, type, opt_pc);
+	    }
+	    else {
+		return invoke_bmethod(th, iseq, self, block, type, opt_pc);
+	    }
 	}
 
-	opt_pc = vm_yield_setup_args(th, iseq, argc, sp, blockptr,
-				     (type == VM_FRAME_MAGIC_LAMBDA ? (splattable ? arg_setup_lambda : arg_setup_method) : arg_setup_block));
+      case block_code_type_proc:
+	is_lambda = block_proc_is_lambda(block->code.proc);
+	block = vm_proc_block(block->code.proc);
+	goto again;
 
-	if (me == NULL) {
-	    return invoke_block(th, iseq, self, block, cref, type, opt_pc);
-	}
-	else {
-	    return invoke_bmethod(th, iseq, self, block, me, type, opt_pc);
-	}
-
-    }
-    else {
+      case block_code_type_ifunc:
 	return vm_yield_with_cfunc(th, block, self, argc, argv, blockptr);
+
+      case block_code_type_symbol:
+	return vm_yield_with_symbol(th, block, self, argc, argv, blockptr);
     }
+    VM_UNREACHABLE(invoke_block_from_c_0);
+    return Qnil;
 }
 
 static VALUE
@@ -988,15 +996,15 @@ invoke_block_from_c_splattable(rb_thread_t *th, const rb_block_t *block,
 			       VALUE self, int argc, const VALUE *argv,
 			       const rb_block_t *blockptr, const rb_cref_t *cref)
 {
-    return invoke_block_from_c_0(th, block, self, argc, argv, blockptr, cref, TRUE);
+    return invoke_block_from_c_0(th, block, self, argc, argv, blockptr, cref, TRUE, FALSE);
 }
 
 static VALUE
 invoke_block_from_c_unsplattable(rb_thread_t *th, const rb_block_t *block,
 				 VALUE self, int argc, const VALUE *argv,
-				 const rb_block_t *blockptr, const rb_cref_t *cref)
+				 const rb_block_t *blockptr, int is_lambda)
 {
-    return invoke_block_from_c_0(th, block, self, argc, argv, blockptr, cref, FALSE);
+    return invoke_block_from_c_0(th, block, self, argc, argv, blockptr, NULL, FALSE, is_lambda);
 }
 
 
@@ -1016,21 +1024,21 @@ static VALUE
 vm_yield_with_cref(rb_thread_t *th, int argc, const VALUE *argv, const rb_cref_t *cref)
 {
     const rb_block_t *blockptr = check_block(th);
-    return invoke_block_from_c_splattable(th, blockptr, blockptr->self, argc, argv, NULL, cref);
+    return invoke_block_from_c_splattable(th, blockptr, vm_block_self(blockptr), argc, argv, NULL, cref);
 }
 
 static VALUE
 vm_yield(rb_thread_t *th, int argc, const VALUE *argv)
 {
     const rb_block_t *blockptr = check_block(th);
-    return invoke_block_from_c_splattable(th, blockptr, blockptr->self, argc, argv, NULL, NULL);
+    return invoke_block_from_c_splattable(th, blockptr, vm_block_self(blockptr), argc, argv, NULL, NULL);
 }
 
 static VALUE
 vm_yield_with_block(rb_thread_t *th, int argc, const VALUE *argv, const rb_block_t *blockargptr)
 {
     const rb_block_t *blockptr = check_block(th);
-    return invoke_block_from_c_splattable(th, blockptr, blockptr->self, argc, argv, blockargptr, NULL);
+    return invoke_block_from_c_splattable(th, blockptr, vm_block_self(blockptr), argc, argv, blockargptr, NULL);
 }
 
 static VALUE
@@ -1044,7 +1052,7 @@ vm_invoke_proc(rb_thread_t *th, rb_proc_t *proc, VALUE self,
     TH_PUSH_TAG(th);
     if ((state = EXEC_TAG()) == 0) {
 	th->safe_level = proc->safe_level;
-	val = invoke_block_from_c_unsplattable(th, &proc->block, self, argc, argv, blockptr, NULL);
+	val = invoke_block_from_c_unsplattable(th, &proc->block, self, argc, argv, blockptr, proc->is_lambda);
     }
     TH_POP_TAG();
 
@@ -1060,7 +1068,7 @@ static VALUE
 vm_invoke_bmethod(rb_thread_t *th, rb_proc_t *proc, VALUE self,
 		  int argc, const VALUE *argv, const rb_block_t *blockptr)
 {
-    return invoke_block_from_c_unsplattable(th, &proc->block, self, argc, argv, blockptr, NULL);
+    return invoke_block_from_c_unsplattable(th, &proc->block, self, argc, argv, blockptr, TRUE);
 }
 
 VALUE
@@ -2237,7 +2245,7 @@ rb_thread_mark(void *ptr)
 	rb_gc_mark_values((long)(sp - p), p);
 
 	while (cfp != limit_cfp) {
-	    rb_gc_mark(cfp->proc);
+	    rb_gc_mark(cfp->block_code.val);
 	    rb_gc_mark(cfp->self);
 	    rb_gc_mark((VALUE)cfp->iseq);
 	    cfp = RUBY_VM_PREVIOUS_CONTROL_FRAME(cfp);

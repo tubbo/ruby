@@ -38,8 +38,8 @@ control_frame_dump(rb_thread_t *th, rb_control_frame_t *cfp)
 
     const rb_callable_method_entry_t *me;
 
-    if (cfp->block_iseq != 0 && !RUBY_VM_IFUNC_P(cfp->block_iseq)) {
-	biseq_name = "";	/* RSTRING(cfp->block_iseq->body->location.label)->ptr; */
+    if (vm_block_code_iseq(cfp->block_code) != NULL) {
+	biseq_name = ""; /* RSTRING(vm_block_code_iseq(cfp)->body->location.label)->ptr; */
     }
 
     if (ep < 0 || (size_t)ep > th->stack_size) {
@@ -95,6 +95,7 @@ control_frame_dump(rb_thread_t *th, rb_control_frame_t *cfp)
     }
 
     if (cfp->iseq != 0) {
+#define RUBY_VM_IFUNC_P(ptr)        (RB_TYPE_P((VALUE)(ptr), T_IMEMO) && imemo_type((VALUE)ptr) == imemo_ifunc)
 	if (RUBY_VM_IFUNC_P(cfp->iseq)) {
 	    iseq_name = "<ifunc>";
 	}

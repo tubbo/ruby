@@ -1220,8 +1220,7 @@ fiber_init(VALUE fibval, VALUE proc)
     th->cfp->self = Qnil;
     th->cfp->flag = VM_FRAME_MAGIC_DUMMY | VM_FRAME_FLAG_FINISH;
     th->cfp->iseq = 0;
-    th->cfp->proc = 0;
-    th->cfp->block_iseq = 0;
+    th->cfp->block_code.val = 0;
     th->tag = 0;
     th->local_storage = st_init_numtable();
     th->local_storage_recursive_hash = Qnil;
