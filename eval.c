@@ -1236,7 +1236,7 @@ rb_mod_refine(VALUE module, VALUE klass)
        id_refined_class, id_defined_at;
     VALUE refinements, activated_refinements;
     rb_thread_t *th = GET_THREAD();
-    rb_block_t *block = rb_vm_control_frame_block_ptr(th->cfp);
+    const rb_block_t *block = rb_vm_control_frame_block_ptr(th->cfp);
 
     if (!block) {
         rb_raise(rb_eArgError, "no block given");

@@ -74,15 +74,15 @@ VM_CF_PREV_EP(const rb_control_frame_t * const cfp)
     return VM_EP_PREV_EP(cfp->ep);
 }
 
-PUREFUNC(static inline rb_block_t *VM_CF_BLOCK_PTR(const rb_control_frame_t * const cfp));
-static inline rb_block_t *
+PUREFUNC(static inline const rb_block_t *VM_CF_BLOCK_PTR(const rb_control_frame_t * const cfp));
+static inline const rb_block_t *
 VM_CF_BLOCK_PTR(const rb_control_frame_t * const cfp)
 {
     VALUE *ep = VM_CF_LEP(cfp);
     return VM_EP_BLOCK_PTR(ep);
 }
 
-rb_block_t *
+const rb_block_t *
 rb_vm_control_frame_block_ptr(const rb_control_frame_t *cfp)
 {
     return VM_CF_BLOCK_PTR(cfp);
@@ -357,7 +357,7 @@ vm_set_top_stack(rb_thread_t *th, const rb_iseq_t *iseq)
 }
 
 static void
-vm_set_eval_stack(rb_thread_t * th, const rb_iseq_t *iseq, const rb_cref_t *cref, rb_block_t *base_block)
+vm_set_eval_stack(rb_thread_t * th, const rb_iseq_t *iseq, const rb_cref_t *cref, const rb_block_t *base_block)
 {
     vm_push_frame(th, iseq, VM_FRAME_MAGIC_EVAL | VM_FRAME_FLAG_FINISH,
 		  vm_block_self(base_block), VM_ENVVAL_PREV_EP_PTR(base_block->ep),
@@ -870,7 +870,7 @@ rb_binding_add_dynavars(rb_binding_t *bind, int dyncount, const ID *dynvars)
 {
     VALUE envval = bind->env, path = bind->path;
     rb_env_t *env;
-    rb_block_t *base_block;
+    const rb_block_t *base_block;
     rb_thread_t *th = GET_THREAD();
     const rb_iseq_t *base_iseq, *iseq;
     NODE *node = 0;
@@ -1077,7 +1077,8 @@ VALUE
 rb_vm_invoke_proc(rb_thread_t *th, rb_proc_t *proc,
 		  int argc, const VALUE *argv, const rb_block_t *blockptr)
 {
-    VALUE self = proc->block.self;
+    VALUE self = vm_block_self(&proc->block);
+
     if (proc->is_from_method) {
 	return vm_invoke_bmethod(th, proc, self, argc, argv, blockptr);
     }

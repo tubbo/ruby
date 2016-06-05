@@ -607,7 +607,7 @@ rb_iseq_load(VALUE data, VALUE parent, VALUE opt)
 }
 
 rb_iseq_t *
-rb_iseq_compile_with_option(VALUE src, VALUE file, VALUE absolute_path, VALUE line, rb_block_t *base_block, VALUE opt)
+rb_iseq_compile_with_option(VALUE src, VALUE file, VALUE absolute_path, VALUE line, const rb_block_t *base_block, VALUE opt)
 {
     rb_thread_t *th = GET_THREAD();
     rb_iseq_t *iseq = NULL;
@@ -661,7 +661,7 @@ rb_iseq_compile(VALUE src, VALUE file, VALUE line)
 }
 
 rb_iseq_t *
-rb_iseq_compile_on_base(VALUE src, VALUE file, VALUE line, rb_block_t *base_block)
+rb_iseq_compile_on_base(VALUE src, VALUE file, VALUE line, const rb_block_t *base_block)
 {
     return rb_iseq_compile_with_option(src, file, Qnil, line, base_block, Qnil);
 }

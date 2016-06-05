@@ -20,7 +20,7 @@ static inline VALUE vm_yield_with_cref(rb_thread_t *th, int argc, const VALUE *a
 static inline VALUE vm_yield(rb_thread_t *th, int argc, const VALUE *argv);
 static inline VALUE vm_yield_with_block(rb_thread_t *th, int argc, const VALUE *argv, const rb_block_t *blockargptr);
 static VALUE vm_exec(rb_thread_t *th);
-static void vm_set_eval_stack(rb_thread_t * th, const rb_iseq_t *iseq, const rb_cref_t *cref, rb_block_t *base_block);
+static void vm_set_eval_stack(rb_thread_t * th, const rb_iseq_t *iseq, const rb_cref_t *cref, const rb_block_t *base_block);
 static int vm_collect_local_variables_in_heap(rb_thread_t *th, const VALUE *dfp, const struct local_var_list *vars);
 
 static VALUE rb_eUncaughtThrow;
@@ -114,7 +114,7 @@ vm_call0_cfunc_with_frame(rb_thread_t* th, struct rb_calling_info *calling, cons
     VALUE recv = calling->recv;
     int argc = calling->argc;
     ID mid = ci->mid;
-    rb_block_t *blockptr = calling->blockptr;
+    const rb_block_t *blockptr = calling->blockptr;
 
     RUBY_DTRACE_CMETHOD_ENTRY_HOOK(th, me->owner, mid);
     EXEC_EVENT_HOOK(th, RUBY_EVENT_C_CALL, recv, mid, me->owner, Qnil);
@@ -156,11 +156,11 @@ vm_call0_body(rb_thread_t* th, struct rb_calling_info *calling, const struct rb_
     VALUE ret;
 
     if (th->passed_block) {
-	calling->blockptr = (rb_block_t *)th->passed_block;
-	th->passed_block = 0;
+	calling->blockptr = th->passed_block;
+	th->passed_block = NULL;
     }
     else {
-	calling->blockptr = 0;
+	calling->blockptr = NULL;
     }
 
   again:
@@ -880,17 +880,13 @@ rb_funcall_passing_block(VALUE recv, ID mid, int argc, const VALUE *argv)
 }
 
 VALUE
-rb_funcall_with_block(VALUE recv, ID mid, int argc, const VALUE *argv, VALUE pass_procval)
+rb_funcall_with_block(VALUE recv, ID mid, int argc, const VALUE *argv, VALUE passed_procval)
 {
-    if (!NIL_P(pass_procval)) {
+    if (!NIL_P(passed_procval)) {
 	rb_thread_t *th = GET_THREAD();
-	rb_block_t *block = 0;
-
-	rb_proc_t *pass_proc;
-	GetProcPtr(pass_procval, pass_proc);
-	block = &pass_proc->block;
-
-	th->passed_block = block;
+	rb_proc_t *passed_proc;
+	GetProcPtr(passed_procval, passed_proc);
+	th->passed_block = &passed_proc->block;
     }
 
     return rb_call(recv, mid, argc, argv, CALL_PUBLIC);
@@ -1166,11 +1162,12 @@ rb_iterate0(VALUE (* it_proc) (VALUE), VALUE data1,
     if (state == 0) {
       iter_retry:
 	{
-	    rb_block_t *blockptr;
+	    const rb_block_t *blockptr;
 
 	    if (ifunc) {
-		blockptr = RUBY_VM_GET_BLOCK_PTR_IN_CFP(cfp);
-		blockptr->code.ifunc = ifunc;
+		rb_block_t *block = RUBY_VM_GET_BLOCK_PTR_IN_CFP(cfp);
+		block->code.ifunc = ifunc;
+		blockptr = block;
 	    }
 	    else {
 		blockptr = VM_CF_BLOCK_PTR(cfp);
@@ -1297,9 +1294,13 @@ eval_string_with_cref(VALUE self, VALUE src, VALUE scope, rb_cref_t *const cref_
     VALUE envval;
     rb_thread_t *th = GET_THREAD();
     rb_env_t *env = NULL;
-    rb_block_t block, *base_block;
-    VALUE file = filename ? filename : rb_source_location(&lineno);
-    int line = lineno;
+    rb_block_t block;
+    const rb_block_t *base_block;
+    volatile VALUE file;
+    volatile int line;
+
+    file = filename ? filename : rb_source_location(&lineno);
+    line = lineno;
 
     {
 	rb_cref_t *cref = cref_arg;
@@ -1330,9 +1331,9 @@ eval_string_with_cref(VALUE self, VALUE src, VALUE scope, rb_cref_t *const cref_
 
 	    if (cfp != 0) {
 		block = *RUBY_VM_GET_BLOCK_PTR_IN_CFP(cfp);
+		block.self = self;
+		block.code.iseq = cfp->iseq; /* TODO */
 		base_block = &block;
-		base_block->self = self;
-		base_block->code.iseq = cfp->iseq; /* TODO */
 	    }
 	    else {
 		rb_raise(rb_eRuntimeError, "Can't eval on top of Fiber or Thread");
@@ -1605,7 +1606,8 @@ VALUE
 rb_yield_refine_block(VALUE refinement, VALUE refinements)
 {
     rb_thread_t *th = GET_THREAD();
-    rb_block_t block, *blockptr;
+    rb_block_t block;
+    const rb_block_t *blockptr;
     rb_cref_t *cref;
 
     if ((blockptr = VM_CF_BLOCK_PTR(th->cfp)) != 0) {

@@ -639,7 +639,7 @@ require_libraries(VALUE *req_list)
     *req_list = 0;
 }
 
-static rb_block_t*
+static const rb_block_t*
 toplevel_context(rb_binding_t *bind)
 {
     rb_env_t *env;
@@ -1447,7 +1447,7 @@ process_options(int argc, char **argv, struct cmdline_options *opt)
     char fbuf[MAXPATHLEN];
     int i = (int)proc_options(argc, argv, opt, 0);
     rb_binding_t *toplevel_binding;
-    rb_block_t *base_block;
+    const rb_block_t *base_block;
 
     argc -= i;
     argv += i;

@@ -227,7 +227,7 @@ struct rb_call_info_with_kwarg {
 };
 
 struct rb_calling_info {
-    struct rb_block_struct *blockptr;
+    const struct rb_block_struct *blockptr;
     VALUE recv;
     int argc;
 };
@@ -838,8 +838,8 @@ rb_iseq_t *rb_iseq_new_with_opt(NODE*, VALUE, VALUE, VALUE, VALUE, const rb_iseq
 
 /* src -> iseq */
 rb_iseq_t *rb_iseq_compile(VALUE src, VALUE file, VALUE line);
-rb_iseq_t *rb_iseq_compile_on_base(VALUE src, VALUE file, VALUE line, rb_block_t *base_block);
-rb_iseq_t *rb_iseq_compile_with_option(VALUE src, VALUE file, VALUE absolute_path, VALUE line, rb_block_t *base_block, VALUE opt);
+rb_iseq_t *rb_iseq_compile_on_base(VALUE src, VALUE file, VALUE line, const rb_block_t *base_block);
+rb_iseq_t *rb_iseq_compile_with_option(VALUE src, VALUE file, VALUE absolute_path, VALUE line, const rb_block_t *base_block, VALUE opt);
 
 VALUE rb_iseq_disasm(const rb_iseq_t *iseq);
 int rb_iseq_disasm_insn(VALUE str, const VALUE *iseqval, size_t pos, const rb_iseq_t *iseq, VALUE child);
@@ -985,7 +985,7 @@ typedef rb_control_frame_t *
 #define VM_EP_LEP_P(ep)     VM_ENVVAL_BLOCK_PTR_P((ep)[0])
 
 VALUE *rb_vm_ep_local_ep(VALUE *ep);
-rb_block_t *rb_vm_control_frame_block_ptr(const rb_control_frame_t *cfp);
+const rb_block_t *rb_vm_control_frame_block_ptr(const rb_control_frame_t *cfp);
 
 #define RUBY_VM_PREVIOUS_CONTROL_FRAME(cfp) ((cfp)+1)
 #define RUBY_VM_NEXT_CONTROL_FRAME(cfp) ((cfp)-1)
@@ -1018,7 +1018,7 @@ vm_block_code_type(rb_block_code code)
     }
 
     VM_UNREACHABLE(vm_block_code_type);
-    return -1;
+    return block_code_type_iseq;
 }
 
 static inline const rb_block_t *

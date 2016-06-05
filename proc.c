@@ -621,7 +621,7 @@ proc_new(VALUE klass, int8_t is_lambda)
     VALUE procval;
     rb_thread_t *th = GET_THREAD();
     rb_control_frame_t *cfp = th->cfp;
-    rb_block_t *block;
+    const rb_block_t *block;
 
     if (!(block = rb_vm_control_frame_block_ptr(cfp))) {
 #if !PROC_NEW_REQUIRES_BLOCK
@@ -813,7 +813,7 @@ check_argc(long argc)
 #define check_argc(argc) (argc)
 #endif
 
-static rb_block_t *
+static const rb_block_t *
 passed_block(VALUE pass_procval)
 {
     if (!NIL_P(pass_procval)) {
@@ -844,7 +844,7 @@ rb_proc_call_with_block(VALUE self, int argc, const VALUE *argv, VALUE pass_proc
 {
     VALUE vret;
     rb_proc_t *proc;
-    rb_block_t *block = 0;
+    const rb_block_t *block = 0;
     GetProcPtr(self, proc);
 
     block = passed_block(pass_procval);
@@ -948,7 +948,7 @@ static int
 rb_proc_min_max_arity(VALUE self, int *max)
 {
     rb_proc_t *proc;
-    rb_block_t *block;
+    const rb_block_t *block;
     GetProcPtr(self, proc);
     block = &proc->block;
     return rb_block_min_max_arity(block, max);
@@ -969,7 +969,7 @@ rb_block_arity(void)
     int min, max;
     rb_thread_t *th = GET_THREAD();
     rb_control_frame_t *cfp = th->cfp;
-    rb_block_t *block = rb_vm_control_frame_block_ptr(cfp);
+    const rb_block_t *block = rb_vm_control_frame_block_ptr(cfp);
 
     if (!block) rb_raise(rb_eArgError, "no block given");
     min = rb_block_min_max_arity(block, &max);
@@ -1814,7 +1814,7 @@ rb_mod_define_method(int argc, VALUE *argv, VALUE mod)
 	body = rb_block_lambda();
 #else
 	rb_thread_t *th = GET_THREAD();
-	rb_block_t *block = rb_vm_control_frame_block_ptr(th->cfp);
+	const rb_block_t *block = rb_vm_control_frame_block_ptr(th->cfp);
 	if (!block) rb_raise(rb_eArgError, proc_without_block);
 
 	switch (vm_block_code_type(block->code)) {

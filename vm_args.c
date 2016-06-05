@@ -800,7 +800,8 @@ vm_caller_setup_arg_block(const rb_thread_t *th, rb_control_frame_t *reg_cfp,
 	    calling->blockptr = NULL;
 	}
 	else {
-	    rb_block_t *blockptr = calling->blockptr = RUBY_VM_GET_BLOCK_PTR_IN_CFP(reg_cfp);
+	    rb_block_t *blockptr = RUBY_VM_GET_BLOCK_PTR_IN_CFP(reg_cfp);
+	    calling->blockptr = blockptr;
 
 	    if (SYMBOL_P(proc) && rb_method_basic_definition_p(rb_cSymbol, idTo_proc)) {
 		blockptr->code.symbol = proc;
@@ -811,7 +812,8 @@ vm_caller_setup_arg_block(const rb_thread_t *th, rb_control_frame_t *reg_cfp,
 	}
     }
     else if (blockiseq != 0) { /* likely */
-	rb_block_t *blockptr = calling->blockptr = RUBY_VM_GET_BLOCK_PTR_IN_CFP(reg_cfp);
+	rb_block_t *blockptr = RUBY_VM_GET_BLOCK_PTR_IN_CFP(reg_cfp);
+	calling->blockptr = blockptr;
 	blockptr->code.iseq = blockiseq;
     }
     else {

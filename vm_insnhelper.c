@@ -1636,7 +1636,7 @@ vm_call_cfunc_with_frame(rb_thread_t *th, rb_control_frame_t *reg_cfp, struct rb
     int len = cfunc->argc;
 
     VALUE recv = calling->recv;
-    rb_block_t *blockptr = calling->blockptr;
+    const rb_block_t *blockptr = calling->blockptr;
     int argc = calling->argc;
 
     RUBY_DTRACE_CMETHOD_ENTRY_HOOK(th, me->owner, me->called_id);
@@ -2444,7 +2444,7 @@ vm_yield_setup_args(rb_thread_t *th, const rb_iseq_t *iseq, const int argc, VALU
 
     calling = &calling_entry;
     calling->argc = argc;
-    calling->blockptr  = (rb_block_t *)blockptr;
+    calling->blockptr  = blockptr;
 
     ci_entry.flag = 0;
     ci = &ci_entry;
