@@ -82,7 +82,7 @@ static const rb_data_type_t proc_data_type = {
 	RUBY_TYPED_DEFAULT_FREE,
 	proc_memsize,
     },
-    0, 0, RUBY_TYPED_FREE_IMMEDIATELY
+    0, 0, RUBY_TYPED_FREE_IMMEDIATELY | RUBY_TYPED_WB_PROTECTED
 };
 
 VALUE
@@ -103,20 +103,20 @@ rb_obj_is_proc(VALUE proc)
     }
 }
 
+VALUE rb_proc_create(VALUE klass, const rb_block_t *block,
+		     int8_t safe_level, int8_t is_from_method, int8_t is_lambda);
+
 /* :nodoc: */
 static VALUE
 proc_dup(VALUE self)
 {
     VALUE procval;
     rb_proc_t *src;
-    rb_proc_t *dst;
 
     GetProcPtr(self, src);
-    procval = rb_proc_alloc(rb_cProc);
-    GetProcPtr(procval, dst);
-    *dst = *src;
+    procval = rb_proc_create(rb_cProc, &src->block,
+			     src->safe_level, src->is_from_method, src->is_lambda);
     RB_GC_GUARD(self); /* for: body = proc_dup(body) */
-
     return procval;
 }
 
@@ -589,8 +589,9 @@ cfunc_proc_new(VALUE klass, VALUE ifunc, int8_t is_lambda)
     VALUE procval = TypedData_Make_Struct(klass, cfunc_proc_t, &proc_data_type, sproc);
     sproc->env[1] = VM_ENVVAL_BLOCK_PTR(0);
     proc = &sproc->basic;
-    proc->block.ep = sproc->env+1;
-    proc->block.code.ifunc = (struct vm_ifunc *)ifunc;
+    *(VALUE **)&proc->block.ep = sproc->env+1;
+    /* self? */
+    RB_OBJ_WRITE(procval, &proc->block.code.ifunc, ifunc);
     proc->is_lambda = is_lambda;
     return procval;
 }

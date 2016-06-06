@@ -783,14 +783,19 @@ rb_iseq_local_variables(const rb_iseq_t *iseq)
 
 /* Proc */
 
-static inline VALUE
+VALUE
 rb_proc_create(VALUE klass, const rb_block_t *block,
 	       int8_t safe_level, int8_t is_from_method, int8_t is_lambda)
 {
     VALUE procval = rb_proc_alloc(klass);
     rb_proc_t *proc = RTYPEDDATA_DATA(procval);
 
-    proc->block = *block;
+    /* copy block */
+    RB_OBJ_WRITE(procval, &proc->block.self, block->self);
+    RB_OBJ_WRITE(procval, &proc->block.code.val, block->code.val);
+    *((VALUE **)&proc->block.ep) = block->ep;
+    RB_OBJ_WRITTEN(procval, Qundef, VM_ENV_EP_ENVVAL(block->ep));
+
     proc->safe_level = safe_level;
     proc->is_from_method = is_from_method;
     proc->is_lambda = is_lambda;
@@ -815,7 +820,7 @@ rb_vm_make_proc_lambda(rb_thread_t *th, const rb_block_t *block, VALUE klass, in
     }
 
     vm_make_env_object(th, cfp);
-    procval = rb_proc_create(klass, block, (int8_t)th->safe_level, 0, is_lambda);
+    procval = rb_proc_create(klass, block, (int8_t)th->safe_level, FALSE, is_lambda);
 
     if (VMDEBUG) {
 	if (th->stack < block->ep && block->ep < th->stack + th->stack_size) {

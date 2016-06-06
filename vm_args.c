@@ -474,10 +474,9 @@ args_setup_block_parameter(rb_thread_t *th, struct rb_calling_info *calling, VAL
 	  case block_code_type_iseq:
 	  case block_code_type_ifunc:
 	    {
-		rb_proc_t *proc;
+		rb_block_t *src_block = (rb_block_t *)calling->blockptr;
 		blockval = rb_vm_make_proc(th, blockptr, rb_cProc);
-		GetProcPtr(blockval, proc);
-		calling->blockptr = &proc->block;
+		src_block->code.proc = blockval;
 	    }
 	    break;
 	  case block_code_type_symbol:

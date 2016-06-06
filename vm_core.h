@@ -857,7 +857,7 @@ RUBY_SYMBOL_EXPORT_END
   GetCoreDataFromValue((obj), rb_proc_t, (ptr))
 
 typedef struct {
-    rb_block_t block;
+    const rb_block_t block;
     int8_t safe_level;		/* 0..1 */
     int8_t is_from_method;	/* bool */
     int8_t is_lambda;		/* bool */
