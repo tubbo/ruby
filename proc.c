@@ -56,7 +56,7 @@ proc_mark(void *ptr)
     RUBY_MARK_UNLESS_NULL(proc->block.self);
     RUBY_MARK_UNLESS_NULL(proc->block.code.val);
     if (proc->block.ep) {
-	RUBY_MARK_UNLESS_NULL(rb_vm_proc_envval(proc));
+	RUBY_MARK_UNLESS_NULL(VM_EP_ENVVAL_IN_ENV(proc->block.ep));
     }
     RUBY_MARK_LEAVE("proc");
 }
@@ -260,7 +260,11 @@ binding_mark(void *ptr)
 
     RUBY_MARK_ENTER("binding");
 
-    RUBY_MARK_UNLESS_NULL(bind->env);
+    RUBY_MARK_UNLESS_NULL(bind->block.self);
+    RUBY_MARK_UNLESS_NULL(bind->block.code.val);
+    if (bind->block.ep) {
+	RUBY_MARK_UNLESS_NULL(VM_EP_ENVVAL_IN_ENV(bind->block.ep));
+    }
     RUBY_MARK_UNLESS_NULL(bind->path);
 
     RUBY_MARK_LEAVE("binding");
@@ -299,7 +303,7 @@ binding_dup(VALUE self)
     rb_binding_t *src, *dst;
     GetBindingPtr(self, src);
     GetBindingPtr(bindval, dst);
-    dst->env = src->env;
+    dst->block = src->block;
     dst->path = src->path;
     dst->first_lineno = src->first_lineno;
     return bindval;
@@ -379,9 +383,9 @@ get_local_variable_ptr(VALUE envval, ID lid)
 	unsigned int i;
 
 	GetEnvPtr(envval, env);
-	iseq = vm_block_code_iseq(env->block.code);
+	iseq = env->iseq;
 
-	if (RUBY_VM_NORMAL_ISEQ_P(iseq)) {
+	if (iseq && RUBY_VM_NORMAL_ISEQ_P(iseq)) {
 	    for (i=0; i<iseq->body->local_table_size; i++) {
 		if (iseq->body->local_table[i] == lid) {
 		    return &env->env[i];
@@ -448,7 +452,7 @@ bind_local_variables(VALUE bindval)
     const rb_env_t *env;
 
     GetBindingPtr(bindval, bind);
-    GetEnvPtr(bind->env, env);
+    GetEnvPtr(VM_EP_ENVVAL_IN_ENV(bind->block.ep), env);
 
     return rb_vm_env_local_variables(env);
 }
@@ -481,7 +485,7 @@ bind_local_variable_get(VALUE bindval, VALUE sym)
 
     GetBindingPtr(bindval, bind);
 
-    if ((ptr = get_local_variable_ptr(bind->env, lid)) == NULL) {
+    if ((ptr = get_local_variable_ptr(VM_EP_ENVVAL_IN_ENV(bind->block.ep), lid)) == NULL) {
 	sym = ID2SYM(lid);
       undefined:
 	rb_name_err_raise("local variable `%1$s' not defined for %2$s",
@@ -525,7 +529,7 @@ bind_local_variable_set(VALUE bindval, VALUE sym, VALUE val)
     if (!lid) lid = rb_intern_str(sym);
 
     GetBindingPtr(bindval, bind);
-    if ((ptr = get_local_variable_ptr(bind->env, lid)) == NULL) {
+    if ((ptr = get_local_variable_ptr(VM_EP_ENVVAL_IN_ENV(bind->block.ep), lid)) == NULL) {
 	/* not found. create new env */
 	ptr = rb_binding_add_dynavars(bind, 1, &lid);
     }
@@ -561,7 +565,7 @@ bind_local_variable_defined_p(VALUE bindval, VALUE sym)
     if (!lid) return Qfalse;
 
     GetBindingPtr(bindval, bind);
-    return get_local_variable_ptr(bind->env, lid) ? Qtrue : Qfalse;
+    return get_local_variable_ptr(VM_EP_ENVVAL_IN_ENV(bind->block.ep), lid) ? Qtrue : Qfalse;
 }
 
 /*
@@ -574,11 +578,8 @@ static VALUE
 bind_receiver(VALUE bindval)
 {
     const rb_binding_t *bind;
-    const rb_env_t *env;
-
     GetBindingPtr(bindval, bind);
-    GetEnvPtr(bind->env, env);
-    return env->block.self;
+    return bind->block.self;
 }
 
 static VALUE
@@ -628,7 +629,14 @@ proc_new(VALUE klass, int8_t is_lambda)
 #if !PROC_NEW_REQUIRES_BLOCK
 	cfp = RUBY_VM_PREVIOUS_CONTROL_FRAME(cfp);
 
-	if ((block = rb_vm_control_frame_block_ptr(cfp)) != 0) {
+	if ((block = rb_vm_control_frame_block_ptr(cfp)) != NULL) {
+	    const VALUE *lep = rb_vm_ep_local_ep(cfp->ep);
+
+	    if (VM_EP_IN_HEAP_P(th, lep)) {
+		procval = VM_EP_PROCVAL_IN_ENV(lep);
+		goto return_existing_proc;
+	    }
+
 	    if (is_lambda) {
 		rb_warn(proc_without_block);
 	    }
@@ -641,10 +649,13 @@ proc_new(VALUE klass, int8_t is_lambda)
 	}
     }
 
+    /* block is in cf */
+
     switch (vm_block_code_type(block->code)) {
       case block_code_type_proc:
 	procval = block->code.proc;
 
+      return_existing_proc:
 	if (RBASIC_CLASS(procval) == klass) {
 	    return procval;
 	}
@@ -984,9 +995,7 @@ rb_block_arity(void)
 	    VALUE procval = block->code.proc;
 	    rb_proc_t *proc;
 	    GetProcPtr(procval, proc);
-	    if (proc) {
-		return (proc->is_lambda ? min == max : max != UNLIMITED_ARGUMENTS) ? min : -min-1;
-	    }
+	    return (proc->is_lambda ? min == max : max != UNLIMITED_ARGUMENTS) ? min : -min-1;
 	    /* fall through */
 	}
 
@@ -2654,7 +2663,7 @@ localjump_reason(VALUE exc)
 rb_cref_t *rb_vm_cref_new_toplevel(void); /* vm.c */
 
 static VALUE
-env_clone(VALUE envval, VALUE receiver, const rb_cref_t *cref)
+env_clone(VALUE envval, const rb_cref_t *cref)
 {
     VALUE newenvval = TypedData_Wrap_Struct(RBASIC_CLASS(envval), RTYPEDDATA_TYPE(envval), 0);
     rb_env_t *env, *newenv;
@@ -2669,8 +2678,7 @@ env_clone(VALUE envval, VALUE receiver, const rb_cref_t *cref)
     newenv = xmalloc(envsize);
     memcpy(newenv, env, envsize);
     RTYPEDDATA_DATA(newenvval) = newenv;
-    newenv->block.self = receiver;
-    newenv->block.ep[-1] = (VALUE)cref;
+    newenv->ep[-1] = (VALUE)cref;
     return newenvval;
 }
 
@@ -2692,15 +2700,17 @@ env_clone(VALUE envval, VALUE receiver, const rb_cref_t *cref)
 static VALUE
 proc_binding(VALUE self)
 {
-    VALUE bindval, envval;
-    const rb_proc_t *proc;
+    VALUE bindval, envval, binding_self;
     rb_binding_t *bind;
+    const rb_proc_t *proc;
     const rb_iseq_t *iseq;
     const rb_block_t *block;
+    const rb_env_t *env;
 
     GetProcPtr(self, proc);
-    envval = rb_vm_proc_envval(proc);
+    envval = VM_EP_ENVVAL_IN_ENV(proc->block.ep);
     block = &proc->block;
+    binding_self = block->self;
 
   again:
     switch (vm_block_code_type(block->code)) {
@@ -2718,8 +2728,16 @@ proc_binding(VALUE self)
 	    const struct vm_ifunc *ifunc = block->code.ifunc;
 	    if (IS_METHOD_PROC_IFUNC(ifunc)) {
 		VALUE method = (VALUE)ifunc->data;
-		envval = env_clone(envval, method_receiver(method), method_cref(method));
+		rb_env_t *newenv;
+
+		binding_self = method_receiver(method);
 		iseq = rb_method_iseq(method);
+
+		envval = env_clone(envval, method_cref(method));
+
+		GetEnvPtr(envval, newenv);
+		/* set empty iseq */
+		newenv->iseq = rb_iseq_new(NULL, rb_str_new2("<empty iseq>"), rb_str_new2("<empty_iseq>"), Qnil, 0, ISEQ_TYPE_TOP);
 		break;
 	    }
 	    else {
@@ -2731,7 +2749,11 @@ proc_binding(VALUE self)
 
     bindval = rb_binding_alloc(rb_cBinding);
     GetBindingPtr(bindval, bind);
-    bind->env = envval;
+    GetEnvPtr(envval, env);
+
+    bind->block.self = binding_self;
+    bind->block.code.iseq = env->iseq;
+    bind->block.ep = env->ep;
 
     if (iseq) {
 	rb_iseq_check(iseq);

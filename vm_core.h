@@ -47,10 +47,12 @@
 #if VM_CHECK_MODE > 0
 #define VM_ASSERT(expr) ( \
 	RUBY_ASSERT_WHEN(VM_CHECK_MODE > 0, expr))
+
 #define VM_UNREACHABLE(func) rb_bug(#func ": unreachable")
+
 #else
 #define VM_ASSERT(expr) ((void)0)
-#define VM_UNREACHABLE(func)
+#define VM_UNREACHABLE(func) ((void)0)
 #endif
 
 #define RUBY_VM_THREAD_MODEL 2
@@ -868,7 +870,8 @@ typedef struct {
 
 typedef struct {
     int env_size;
-    rb_block_t block;
+    VALUE *ep;
+    const rb_iseq_t *iseq;
     VALUE env[1];               /* flexible array */
 } rb_env_t;
 
@@ -878,7 +881,7 @@ extern const rb_data_type_t ruby_binding_data_type;
   GetCoreDataFromValue((obj), rb_binding_t, (ptr))
 
 typedef struct {
-    VALUE env;
+    rb_block_t block;
     VALUE path;
     unsigned short first_lineno;
 } rb_binding_t;
@@ -984,6 +987,27 @@ typedef rb_control_frame_t *
 #define VM_EP_BLOCK_PTR(ep) ((rb_block_t *)GC_GUARDED_PTR_REF((ep)[0]))
 #define VM_EP_LEP_P(ep)     VM_ENVVAL_BLOCK_PTR_P((ep)[0])
 
+#define VM_EP_IN_HEAP_P(th, ep)   (!((th)->stack <= (ep) && (ep) < ((th)->stack + (th)->stack_size)))
+
+int rb_vm_ep_in_heap_p(const VALUE *ep);
+
+static inline VALUE
+VM_EP_ENVVAL_IN_ENV(const VALUE *ep)
+{
+    VM_ASSERT(rb_vm_ep_in_heap_p(ep));
+    return ep[1];
+}
+
+static inline VALUE
+VM_EP_PROCVAL_IN_ENV(const VALUE *ep)
+{
+    VM_ASSERT(rb_vm_ep_in_heap_p(ep));
+    VM_ASSERT(VM_EP_LEP_P(ep));
+    VM_ASSERT(VM_EP_BLOCK_PTR(ep) != NULL);
+
+    return ep[2];
+}
+
 VALUE *rb_vm_ep_local_ep(VALUE *ep);
 const rb_block_t *rb_vm_control_frame_block_ptr(const rb_control_frame_t *cfp);
 
@@ -1016,7 +1040,6 @@ vm_block_code_type(rb_block_code code)
     else if (rb_obj_is_proc(code.val)) {
 	return block_code_type_proc;
     }
-
     VM_UNREACHABLE(vm_block_code_type);
     return block_code_type_iseq;
 }
@@ -1100,7 +1123,6 @@ VALUE rb_vm_make_proc(rb_thread_t *th, const rb_block_t *block, VALUE klass);
 VALUE rb_vm_make_binding(rb_thread_t *th, const rb_control_frame_t *src_cfp);
 VALUE rb_vm_env_local_variables(const rb_env_t *env);
 VALUE rb_vm_env_prev_envval(const rb_env_t *env);
-VALUE rb_vm_proc_envval(const rb_proc_t *proc);
 VALUE *rb_binding_add_dynavars(rb_binding_t *bind, int dyncount, const ID *dynvars);
 void rb_vm_inc_const_missing_count(void);
 void rb_vm_gvl_destroy(rb_vm_t *vm);

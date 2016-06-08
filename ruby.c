@@ -642,10 +642,7 @@ require_libraries(VALUE *req_list)
 static const rb_block_t*
 toplevel_context(rb_binding_t *bind)
 {
-    rb_env_t *env;
-
-    GetEnvPtr(bind->env, env);
-    return &env->block;
+    return &bind->block;
 }
 
 static void

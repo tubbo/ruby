@@ -8,10 +8,6 @@
 
 **********************************************************************/
 
-#ifndef VM_CHECK_MODE
-#define VM_CHECK_MODE 0
-#endif
-
 #include "internal.h"
 #include "ruby/vm.h"
 #include "ruby/st.h"
@@ -179,6 +175,21 @@ vm_cref_dump(const char *mesg, const rb_cref_t *cref)
 	fprintf(stderr, "= cref| klass: %s\n", RSTRING_PTR(rb_class_path(CREF_CLASS(cref))));
 	cref = CREF_NEXT(cref);
     }
+}
+
+static void
+vm_bind_update_env(rb_binding_t *bind, VALUE envval)
+{
+    rb_env_t *env;
+    GetEnvPtr(envval, env);
+    bind->block.code.iseq = env->iseq;
+    bind->block.ep = env->ep;
+}
+
+int
+rb_vm_ep_in_heap_p(const VALUE *ep)
+{
+    return VM_EP_IN_HEAP_P(GET_THREAD(), ep);
 }
 
 #if VM_COLLECT_USAGE_DETAILS
@@ -371,16 +382,14 @@ vm_set_main_stack(rb_thread_t *th, const rb_iseq_t *iseq)
 {
     VALUE toplevel_binding = rb_const_get(rb_cObject, rb_intern("TOPLEVEL_BINDING"));
     rb_binding_t *bind;
-    rb_env_t *env;
 
     GetBindingPtr(toplevel_binding, bind);
-    GetEnvPtr(bind->env, env);
 
-    vm_set_eval_stack(th, iseq, 0, &env->block);
+    vm_set_eval_stack(th, iseq, 0, &bind->block);
 
     /* save binding */
-    if (iseq->body->local_size > 0) {
-	bind->env = vm_make_env_object(th, th->cfp);
+    if (bind && iseq->body->local_size > 0) {
+	vm_bind_update_env(bind, vm_make_env_object(th, th->cfp));
     }
 }
 
@@ -511,8 +520,7 @@ env_mark(void * const ptr)
     rb_gc_mark_values((long)env->env_size, env->env);
 
     RUBY_MARK_UNLESS_NULL(rb_vm_env_prev_envval(env));
-    RUBY_MARK_UNLESS_NULL(env->block.self);
-    RUBY_MARK_UNLESS_NULL(env->block.code.val);
+    RUBY_MARK_UNLESS_NULL((VALUE)env->iseq);
     RUBY_MARK_LEAVE("env");
 }
 
@@ -532,19 +540,16 @@ static const rb_data_type_t env_data_type = {
     0, 0, RUBY_TYPED_FREE_IMMEDIATELY
 };
 
-#define VM_EP_IN_HEAP_P(th, ep)   (!((th)->stack <= (ep) && (ep) < ((th)->stack + (th)->stack_size)))
-#define VM_ENV_EP_ENVVAL(ep)      ((ep)[1])
-
 static VALUE check_env_value(VALUE envval);
 
 static int
 check_env(rb_env_t * const env)
 {
     fprintf(stderr, "---\n");
-    fprintf(stderr, "envptr: %p\n", (void *)&env->block.ep[0]);
-    fprintf(stderr, "envval: %10p ", (void *)env->block.ep[1]);
-    dp(env->block.ep[1]);
-    fprintf(stderr, "ep:    %10p\n", (void *)env->block.ep);
+    fprintf(stderr, "envptr: %p\n", (void *)&env->ep[0]);
+    fprintf(stderr, "envval: %10p ", (void *)env->ep[1]);
+    dp(env->ep[1]);
+    fprintf(stderr, "ep:    %10p\n", (void *)env->ep);
     if (rb_vm_env_prev_envval(env)) {
 	fprintf(stderr, ">>\n");
 	check_env_value(rb_vm_env_prev_envval(env));
@@ -566,7 +571,6 @@ check_env_value(VALUE envval)
     return Qnil;		/* unreachable */
 }
 
-/* return FALSE if proc was already created */
 static int
 vm_make_proc_from_block(rb_thread_t *th, rb_block_t *block, VALUE *procvalptr)
 {
@@ -577,13 +581,12 @@ vm_make_proc_from_block(rb_thread_t *th, rb_block_t *block, VALUE *procvalptr)
 	return TRUE;
 
       case block_code_type_symbol:
-	/* TODO: should we set code.proc with it? */
 	*procvalptr = block->code.proc = rb_sym_to_proc(block->code.symbol);
 	return TRUE;
 
       case block_code_type_proc:
 	*procvalptr = block->code.proc;
-	return FALSE;
+	return TRUE;
     }
 
     VM_UNREACHABLE(vm_make_proc_from_block);
@@ -593,14 +596,14 @@ vm_make_proc_from_block(rb_thread_t *th, rb_block_t *block, VALUE *procvalptr)
 static VALUE
 vm_make_env_each(rb_thread_t *const th, rb_control_frame_t *const cfp)
 {
-    VALUE envval, blockprocval = 0;
+    VALUE envval, blockprocval = Qfalse;
     VALUE * const ep = cfp->ep;
     rb_env_t *env;
     VALUE *new_ep;
     int local_size, env_size;
 
     if (VM_EP_IN_HEAP_P(th, ep)) {
-	return VM_ENV_EP_ENVVAL(ep);
+	return VM_EP_ENVVAL_IN_ENV(ep);
     }
 
     if (!VM_EP_LEP_P(ep)) {
@@ -678,14 +681,12 @@ vm_make_env_each(rb_thread_t *const th, rb_control_frame_t *const cfp)
     new_ep[1] = envval;
     if (blockprocval) new_ep[2] = blockprocval;
 
-    /* as Binding */
-    env->block.self = cfp->self;
-    env->block.ep = cfp->ep = new_ep;
-    env->block.code.iseq = cfp->iseq;
+    /* setup env object */
+    env->ep = cfp->ep = new_ep;
+    env->iseq = cfp->iseq;
 
     if (!RUBY_VM_NORMAL_ISEQ_P(cfp->iseq)) {
-	/* TODO */
-	env->block.code.iseq = 0;
+	env->iseq = NULL;
     }
 
     return envval;
@@ -716,13 +717,13 @@ rb_vm_stack_to_heap(rb_thread_t *th)
 VALUE
 rb_vm_env_prev_envval(const rb_env_t *env)
 {
-    const VALUE *ep = env->block.ep;
+    const VALUE *ep = env->ep;
 
     if (VM_EP_LEP_P(ep)) {
 	return Qfalse;
     }
     else {
-	return VM_ENV_EP_ENVVAL(VM_EP_PREV_EP(ep));
+	return VM_EP_ENVVAL_IN_ENV(VM_EP_PREV_EP(ep));
     }
 }
 
@@ -742,7 +743,7 @@ collect_local_variables_in_env(const rb_env_t *env, const struct local_var_list 
 {
     VALUE prev_envval;
 
-    while (collect_local_variables_in_iseq(vm_block_code_iseq(env->block.code), vars), (prev_envval = rb_vm_env_prev_envval(env)) != Qfalse) {
+    while (collect_local_variables_in_iseq(env->iseq, vars), (prev_envval = rb_vm_env_prev_envval(env)) != Qfalse) {
 	GetEnvPtr(prev_envval, env);
     }
 }
@@ -752,7 +753,7 @@ vm_collect_local_variables_in_heap(rb_thread_t *th, const VALUE *ep, const struc
 {
     if (VM_EP_IN_HEAP_P(th, ep)) {
 	rb_env_t *env;
-	GetEnvPtr(VM_ENV_EP_ENVVAL(ep), env);
+	GetEnvPtr(VM_EP_ENVVAL_IN_ENV(ep), env);
 	collect_local_variables_in_env(env, vars);
 	return 1;
     }
@@ -794,7 +795,7 @@ rb_proc_create(VALUE klass, const rb_block_t *block,
     RB_OBJ_WRITE(procval, &proc->block.self, block->self);
     RB_OBJ_WRITE(procval, &proc->block.code.val, block->code.val);
     *((VALUE **)&proc->block.ep) = block->ep;
-    RB_OBJ_WRITTEN(procval, Qundef, VM_ENV_EP_ENVVAL(block->ep));
+    RB_OBJ_WRITTEN(procval, Qundef, VM_EP_ENVVAL_IN_ENV(block->ep));
 
     proc->safe_level = safe_level;
     proc->is_from_method = is_from_method;
@@ -831,14 +832,6 @@ rb_vm_make_proc_lambda(rb_thread_t *th, const rb_block_t *block, VALUE klass, in
     return procval;
 }
 
-VALUE
-rb_vm_proc_envval(const rb_proc_t *proc)
-{
-    VALUE envval = VM_ENV_EP_ENVVAL(proc->block.ep);
-    return envval;
-}
-
-
 /* Binding */
 
 VALUE
@@ -863,7 +856,9 @@ rb_vm_make_binding(rb_thread_t *th, const rb_control_frame_t *src_cfp)
 
     bindval = rb_binding_alloc(rb_cBinding);
     GetBindingPtr(bindval, bind);
-    bind->env = envval;
+    vm_bind_update_env(bind, envval);
+    bind->block.self = cfp->self;
+    bind->block.code.iseq = cfp->iseq;
     bind->path = ruby_level_cfp->iseq->body->location.path;
     bind->first_lineno = rb_vm_get_sourceline(ruby_level_cfp);
 
@@ -873,9 +868,10 @@ rb_vm_make_binding(rb_thread_t *th, const rb_control_frame_t *src_cfp)
 VALUE *
 rb_binding_add_dynavars(rb_binding_t *bind, int dyncount, const ID *dynvars)
 {
-    VALUE envval = bind->env, path = bind->path;
-    rb_env_t *env;
+    VALUE envval;
+    VALUE path = bind->path;
     const rb_block_t *base_block;
+    rb_env_t *env;
     rb_thread_t *th = GET_THREAD();
     const rb_iseq_t *base_iseq, *iseq;
     NODE *node = 0;
@@ -884,9 +880,7 @@ rb_binding_add_dynavars(rb_binding_t *bind, int dyncount, const ID *dynvars)
 
     if (dyncount < 0) return 0;
 
-    GetEnvPtr(envval, env);
-
-    base_block = &env->block;
+    base_block = &bind->block;
     base_iseq = vm_block_code_iseq(base_block->code);
 
     if (dyncount >= numberof(minibuf)) dyns = ALLOCV_N(ID, idtmp, dyncount + 1);
@@ -906,10 +900,10 @@ rb_binding_add_dynavars(rb_binding_t *bind, int dyncount, const ID *dynvars)
     ALLOCV_END(idtmp);
 
     vm_set_eval_stack(th, iseq, 0, base_block);
-    bind->env = vm_make_env_object(th, th->cfp);
+    vm_bind_update_env(bind, envval = vm_make_env_object(th, th->cfp));
     rb_vm_pop_frame(th);
-    GetEnvPtr(bind->env, env);
 
+    GetEnvPtr(envval, env);
     return env->env;
 }
 

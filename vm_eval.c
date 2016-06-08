@@ -1291,9 +1291,7 @@ eval_string_with_cref(VALUE self, VALUE src, VALUE scope, rb_cref_t *const cref_
 {
     int state;
     VALUE result = Qundef;
-    VALUE envval;
     rb_thread_t *th = GET_THREAD();
-    rb_env_t *env = NULL;
     rb_block_t block;
     const rb_block_t *base_block;
     volatile VALUE file;
@@ -1315,16 +1313,13 @@ eval_string_with_cref(VALUE self, VALUE src, VALUE scope, rb_cref_t *const cref_
 
 	if (!NIL_P(scope)) {
 	    bind = Check_TypedStruct(scope, &ruby_binding_data_type);
-	    {
-		envval = bind->env;
-		if (NIL_P(absolute_path) && !NIL_P(bind->path)) {
-		    file = bind->path;
-		    line = bind->first_lineno;
-		    absolute_path = rb_current_realfilepath();
-		}
+
+	    if (NIL_P(absolute_path) && !NIL_P(bind->path)) {
+		file = bind->path;
+		line = bind->first_lineno;
+		absolute_path = rb_current_realfilepath();
 	    }
-	    GetEnvPtr(envval, env);
-	    base_block = &env->block;
+	    base_block = &bind->block;
 	}
 	else {
 	    rb_control_frame_t *cfp = rb_vm_get_ruby_level_next_cfp(th, th->cfp);
@@ -1375,7 +1370,7 @@ eval_string_with_cref(VALUE self, VALUE src, VALUE scope, rb_cref_t *const cref_
 
 	/* save new env */
 	if (bind && iseq->body->local_table_size > 0) {
-	    bind->env = vm_make_env_object(th, th->cfp);
+	    vm_bind_update_env(bind, vm_make_env_object(th, th->cfp));
 	}
     }
 
