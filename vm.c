@@ -960,6 +960,8 @@ invoke_block_from_c_0(rb_thread_t *th, const rb_block_t *block,
 	    int i, opt_pc;
 	    int type = is_lambda ? VM_FRAME_MAGIC_LAMBDA : VM_FRAME_MAGIC_BLOCK;
 	    VALUE *sp = th->cfp->sp;
+	    const rb_callable_method_entry_t *me = th->passed_bmethod_me;
+	    th->passed_bmethod_me = NULL;
 
 	    for (i=0; i<argc; i++) {
 		sp[i] = argv[i];
@@ -968,11 +970,11 @@ invoke_block_from_c_0(rb_thread_t *th, const rb_block_t *block,
 	    opt_pc = vm_yield_setup_args(th, iseq, argc, sp, blockptr,
 					 (type == VM_FRAME_MAGIC_LAMBDA ? (splattable ? arg_setup_lambda : arg_setup_method) : arg_setup_block));
 
-	    if (th->passed_bmethod_me == NULL) {
+	    if (me == NULL) {
 		return invoke_block(th, iseq, self, block, cref, type, opt_pc);
 	    }
 	    else {
-		return invoke_bmethod(th, iseq, self, block, type, opt_pc);
+		return invoke_bmethod(th, iseq, self, block, me, type, opt_pc);
 	    }
 	}
 
