@@ -189,7 +189,7 @@ static VALUE make_no_method_exception(VALUE exc, VALUE format, VALUE obj,
 				      int argc, const VALUE *argv, int priv);
 
 static inline struct vm_throw_data *
-THROW_DATA_NEW(VALUE val, rb_control_frame_t *cf, VALUE st)
+THROW_DATA_NEW(VALUE val, const rb_control_frame_t *cf, VALUE st)
 {
     return (struct vm_throw_data *)rb_imemo_new(imemo_throw_data, val, (VALUE)cf, st, 0);
 }

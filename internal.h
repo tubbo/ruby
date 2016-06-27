@@ -739,7 +739,7 @@ struct vm_throw_data {
 struct vm_ifunc {
     VALUE flags;
     VALUE reserved;
-    VALUE (*func)(ANYARGS);
+    rb_block_call_func *func;
     const void *data;
     ID id;
 };

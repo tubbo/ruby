@@ -21,9 +21,9 @@
 
 VALUE rb_str_concat_literals(size_t, const VALUE*);
 
-PUREFUNC(static inline VALUE *VM_EP_LEP(VALUE *));
-static inline VALUE *
-VM_EP_LEP(VALUE *ep)
+PUREFUNC(static inline const VALUE *VM_EP_LEP(const VALUE *));
+static inline const VALUE *
+VM_EP_LEP(const VALUE *ep)
 {
     while (!VM_EP_LEP_P(ep)) {
 	ep = VM_EP_PREV_EP(ep);
@@ -31,8 +31,8 @@ VM_EP_LEP(VALUE *ep)
     return ep;
 }
 
-static inline rb_control_frame_t *
-rb_vm_search_cf_from_ep(const rb_thread_t * const th, rb_control_frame_t *cfp, const VALUE * const ep)
+static inline const rb_control_frame_t *
+rb_vm_search_cf_from_ep(const rb_thread_t * const th, const rb_control_frame_t *cfp, const VALUE * const ep)
 {
     if (!ep) {
 	return NULL;
@@ -51,20 +51,20 @@ rb_vm_search_cf_from_ep(const rb_thread_t * const th, rb_control_frame_t *cfp, c
     }
 }
 
-VALUE *
-rb_vm_ep_local_ep(VALUE *ep)
+const VALUE *
+rb_vm_ep_local_ep(const VALUE *ep)
 {
     return VM_EP_LEP(ep);
 }
 
-PUREFUNC(static inline VALUE *VM_CF_LEP(const rb_control_frame_t * const cfp));
-static inline VALUE *
+PUREFUNC(static inline const VALUE *VM_CF_LEP(const rb_control_frame_t * const cfp));
+static inline const VALUE *
 VM_CF_LEP(const rb_control_frame_t * const cfp)
 {
     return VM_EP_LEP(cfp->ep);
 }
 
-static inline VALUE *
+static inline const VALUE *
 VM_CF_PREV_EP(const rb_control_frame_t * const cfp)
 {
     return VM_EP_PREV_EP(cfp->ep);
@@ -74,7 +74,7 @@ PUREFUNC(static inline const rb_block_t *VM_CF_BLOCK_PTR(const rb_control_frame_
 static inline const rb_block_t *
 VM_CF_BLOCK_PTR(const rb_control_frame_t * const cfp)
 {
-    VALUE *ep = VM_CF_LEP(cfp);
+    const VALUE *ep = VM_CF_LEP(cfp);
     return VM_EP_BLOCK_PTR(ep);
 }
 
@@ -186,10 +186,26 @@ vm_bind_update_env(rb_binding_t *bind, VALUE envval)
     bind->block.ep = env->ep;
 }
 
+static int envval_p(VALUE envval);
+
 int
 rb_vm_ep_in_heap_p(const VALUE *ep)
 {
-    return VM_EP_IN_HEAP_P(GET_THREAD(), ep);
+    if (VM_EP_IN_HEAP_P(GET_THREAD(), ep)) {
+	VALUE envval = ep[1]; /* VM_EP_ENVVAL_IN_ENV(ep); */
+	rb_env_t *env;
+
+	if (envval != Qundef) {
+	    VM_ASSERT(envval_p(envval));
+	    GetEnvPtr(envval, env);
+	    VM_ASSERT(env->ep == ep);
+	}
+
+	return TRUE;
+    }
+    else {
+	return FALSE;
+    }
 }
 
 #if VM_COLLECT_USAGE_DETAILS
@@ -537,8 +553,20 @@ env_memsize(const void *ptr)
 static const rb_data_type_t env_data_type = {
     "VM/env",
     {env_mark, RUBY_TYPED_DEFAULT_FREE, env_memsize,},
-    0, 0, RUBY_TYPED_FREE_IMMEDIATELY
+    0, 0, RUBY_TYPED_FREE_IMMEDIATELY | RUBY_TYPED_WB_PROTECTED
 };
+
+static int
+envval_p(VALUE envval)
+{
+    if (rb_typeddata_is_kind_of(envval, &env_data_type)) {
+	return TRUE;
+    }
+    else {
+	rb_obj_info_dump(envval);
+	return FALSE;
+    }
+}
 
 static VALUE check_env_value(VALUE envval);
 
@@ -597,7 +625,7 @@ static VALUE
 vm_make_env_each(rb_thread_t *const th, rb_control_frame_t *const cfp)
 {
     VALUE envval, blockprocval = Qfalse;
-    VALUE * const ep = cfp->ep;
+    const VALUE * const ep = cfp->ep;
     rb_env_t *env;
     VALUE *new_ep;
     int local_size, env_size;
@@ -618,14 +646,14 @@ vm_make_env_each(rb_thread_t *const th, rb_control_frame_t *const cfp)
 	    }
 
 	    vm_make_env_each(th, prev_cfp);
-	    *ep = VM_ENVVAL_PREV_EP_PTR(prev_cfp->ep);
+	    VM_FORCE_WRITE_SPECIAL_CONST(ep, VM_ENVVAL_PREV_EP_PTR(prev_cfp->ep));
 	}
     }
     else {
 	rb_block_t *block = VM_EP_BLOCK_PTR(ep);
 
 	if (block && vm_make_proc_from_block(th, block, &blockprocval)) {
-	    *ep = VM_ENVVAL_BLOCK_PTR(vm_proc_block(blockprocval));
+	    VM_FORCE_WRITE_SPECIAL_CONST(ep, VM_ENVVAL_BLOCK_PTR(vm_proc_block(blockprocval)));
 	}
     }
 
@@ -675,7 +703,7 @@ vm_make_env_each(rb_thread_t *const th, rb_control_frame_t *const cfp)
     * must happen after TypedData_Wrap_Struct to ensure penvval is markable
     * in case object allocation triggers GC and clobbers penvval.
     */
-    *ep = envval;		/* GC mark */
+    VM_STACK_ENV_WRITE(ep, 0, envval);		/* GC mark */
 
     new_ep = &env->env[local_size];
     new_ep[1] = envval;
@@ -794,7 +822,7 @@ rb_proc_create(VALUE klass, const rb_block_t *block,
     /* copy block */
     RB_OBJ_WRITE(procval, &proc->block.self, block->self);
     RB_OBJ_WRITE(procval, &proc->block.code.val, block->code.val);
-    *((VALUE **)&proc->block.ep) = block->ep;
+    *((const VALUE **)&proc->block.ep) = block->ep;
     RB_OBJ_WRITTEN(procval, Qundef, VM_EP_ENVVAL_IN_ENV(block->ep));
 
     proc->safe_level = safe_level;
@@ -1366,8 +1394,8 @@ static void
 vm_iter_break(rb_thread_t *th, VALUE val)
 {
     rb_control_frame_t *cfp = th->cfp;
-    VALUE *ep = VM_CF_PREV_EP(cfp);
-    rb_control_frame_t *target_cfp = rb_vm_search_cf_from_ep(th, cfp, ep);
+    const VALUE *ep = VM_CF_PREV_EP(cfp);
+    const rb_control_frame_t *target_cfp = rb_vm_search_cf_from_ep(th, cfp, ep);
 
 #if 0				/* raise LocalJumpError */
     if (!target_cfp) {
@@ -2952,7 +2980,7 @@ Init_VM(void)
 	th->cfp->pc = iseq->body->iseq_encoded;
 	th->cfp->self = th->top_self;
 
-	th->cfp->ep[-1] = (VALUE)vm_cref_new(rb_cObject, METHOD_VISI_PRIVATE, FALSE, NULL, FALSE);
+	VM_STACK_ENV_WRITE(th->cfp->ep, -1, (VALUE)vm_cref_new(rb_cObject, METHOD_VISI_PRIVATE, FALSE, NULL, FALSE));
 
 	/*
 	 * The Binding of the top level scope

@@ -48,6 +48,8 @@ static int method_min_max_arity(VALUE, int *max);
 
 #define IS_METHOD_PROC_IFUNC(ifunc) ((ifunc)->func == bmcall)
 
+static VALUE proc_to_s_(VALUE self, const rb_proc_t *proc);
+
 static void
 proc_mark(void *ptr)
 {
@@ -55,7 +57,7 @@ proc_mark(void *ptr)
 
     RUBY_MARK_UNLESS_NULL(proc->block.self);
     RUBY_MARK_UNLESS_NULL(proc->block.code.val);
-    if (proc->block.ep) {
+    if (proc->block.ep && proc->block.ep[1] != Qundef /* cfunc_proc_t */) {
 	RUBY_MARK_UNLESS_NULL(VM_EP_ENVVAL_IN_ENV(proc->block.ep));
     }
     RUBY_MARK_LEAVE("proc");
@@ -589,6 +591,7 @@ cfunc_proc_new(VALUE klass, VALUE ifunc, int8_t is_lambda)
     cfunc_proc_t *sproc;
     VALUE procval = TypedData_Make_Struct(klass, cfunc_proc_t, &proc_data_type, sproc);
     sproc->env[1] = VM_ENVVAL_BLOCK_PTR(0);
+    sproc->env[2] = Qundef;
     proc = &sproc->basic;
     *(VALUE **)&proc->block.ep = sproc->env+1;
     /* self? */
@@ -1178,15 +1181,13 @@ proc_hash(VALUE self)
  */
 
 static VALUE
-proc_to_s(VALUE self)
+proc_to_s_(VALUE self, const rb_proc_t *proc)
 {
     VALUE str = 0;
-    const rb_proc_t *proc;
     const char *cname = rb_obj_classname(self);
     const rb_block_t *block;
     const char *is_lambda;
 
-    GetProcPtr(self, proc);
     block = &proc->block;
     is_lambda = proc->is_lambda ? " (lambda)" : "";
 
@@ -1211,7 +1212,7 @@ proc_to_s(VALUE self)
 			 block->code.symbol, is_lambda);
 	break;
       case block_code_type_ifunc:
-	str = rb_sprintf("#<%s:%p%s>", cname, (void *)proc->block.code.val,
+	str = rb_sprintf("#<%s:%p%s> ifunc", cname, (void *)proc->block.code.val,
 			 is_lambda);
 	break;
     }
@@ -1220,6 +1221,14 @@ proc_to_s(VALUE self)
 	OBJ_TAINT(str);
     }
     return str;
+}
+
+static VALUE
+proc_to_s(VALUE self)
+{
+    const rb_proc_t *proc;
+    GetProcPtr(self, proc);
+    return proc_to_s_(self, proc);
 }
 
 /*
@@ -2677,8 +2686,11 @@ env_clone(VALUE envval, const rb_cref_t *cref)
     envsize = sizeof(rb_env_t) + (env->env_size - 1) * sizeof(VALUE);
     newenv = xmalloc(envsize);
     memcpy(newenv, env, envsize);
+    VM_ASSERT(env->ep > env->env);
+    newenv->ep = &newenv->env[env->ep - env->env];
+    VM_FORCE_WRITE(&newenv->ep[1], newenvval);
     RTYPEDDATA_DATA(newenvval) = newenv;
-    newenv->ep[-1] = (VALUE)cref;
+    VM_ENV_WRITE(newenvval, newenv->ep, -1, (VALUE)cref);
     return newenvval;
 }
 

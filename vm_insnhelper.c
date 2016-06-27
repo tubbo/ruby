@@ -251,49 +251,73 @@ rb_error_arity(int argc, int min, int max)
     rb_exc_raise(rb_arity_error_new(argc, min, max));
 }
 
-/* svar */
-
-static inline struct vm_svar **
-lep_svar_place(rb_thread_t *th, const VALUE *lep)
+/* lvar */
+static inline void
+vm_env_write_check(const rb_thread_t *th, const VALUE *ep, int index, VALUE v)
 {
-    const VALUE *svar_place;
-
-    if (lep && (th == NULL || th->root_lep != lep)) {
-	svar_place = &lep[-1];
+    if (VM_EP_IN_HEAP_P(th, ep)) {
+	VM_ENV_WRITE(VM_EP_ENVVAL_IN_ENV(ep), ep, index, v);
     }
     else {
-	svar_place = &th->root_svar;
+	VM_STACK_ENV_WRITE(ep, index, v);
     }
+}
+
+/* svar */
 
 #if VM_CHECK_MODE > 0
-    {
-	VALUE svar = *svar_place;
-
-	if (svar != Qfalse) {
-	    if (RB_TYPE_P((VALUE)svar, T_IMEMO)) {
-		switch (imemo_type(svar)) {
-		  case imemo_svar:
-		  case imemo_cref:
-		  case imemo_ment:
-		    goto okay;
-		  default:
-		    break; /* fall through */
-		}
-	    }
-	    rb_bug("lep_svar_place: unknown type: %s", rb_obj_info(svar));
+static int
+vm_svar_valid_p(VALUE svar)
+{
+    if (RB_TYPE_P((VALUE)svar, T_IMEMO)) {
+	switch (imemo_type(svar)) {
+	  case imemo_svar:
+	  case imemo_cref:
+	  case imemo_ment:
+	    return TRUE;
+	  default:
+	    break;
 	}
-      okay:;
     }
+    rb_bug("vm_svar_valid_p: unknown type: %s", rb_obj_info(svar));
+    return FALSE;
+}
 #endif
 
-    return (struct vm_svar **)svar_place;
+static inline struct vm_svar *
+lep_svar(rb_thread_t *th, const VALUE *lep)
+{
+    VALUE svar;
+
+    if (lep && (th == NULL || th->root_lep != lep)) {
+	svar = lep[-1];
+    }
+    else {
+	svar = th->root_svar;
+    }
+
+    VM_ASSERT(svar == Qfalse || vm_svar_valid_p(svar));
+
+    return (struct vm_svar *)svar;
+}
+
+static inline void
+lep_svar_write(rb_thread_t *th, const VALUE *lep, const struct vm_svar *svar)
+{
+    VM_ASSERT(vm_svar_valid_p((VALUE)svar));
+
+    if (lep && (th == NULL || th->root_lep != lep)) {
+	vm_env_write_check(th, lep, -1, (VALUE)svar);
+    }
+    else {
+	RB_OBJ_WRITE(th->self, &th->root_svar, svar);
+    }
 }
 
 static VALUE
 lep_svar_get(rb_thread_t *th, const VALUE *lep, rb_num_t key)
 {
-    struct vm_svar ** const svar_place = lep_svar_place(th, lep);
-    const struct vm_svar *const svar = *svar_place;
+    const struct vm_svar *svar = lep_svar(th, lep);
 
     if ((VALUE)svar == Qfalse || imemo_type((VALUE)svar) != imemo_svar) return Qnil;
 
@@ -322,13 +346,12 @@ svar_new(VALUE obj)
 }
 
 static void
-lep_svar_set(rb_thread_t *th, VALUE *lep, rb_num_t key, VALUE val)
+lep_svar_set(rb_thread_t *th, const VALUE *lep, rb_num_t key, VALUE val)
 {
-    struct vm_svar **svar_place = lep_svar_place(th, lep);
-    struct vm_svar *svar = *svar_place;
+    struct vm_svar *svar = lep_svar(th, lep);
 
     if ((VALUE)svar == Qfalse || imemo_type((VALUE)svar) != imemo_svar) {
-	svar = *svar_place = svar_new((VALUE)svar);
+	lep_svar_write(th, lep, svar = svar_new((VALUE)svar));
     }
 
     switch (key) {
@@ -350,7 +373,7 @@ lep_svar_set(rb_thread_t *th, VALUE *lep, rb_num_t key, VALUE val)
 }
 
 static inline VALUE
-vm_getspecial(rb_thread_t *th, VALUE *lep, rb_num_t key, rb_num_t type)
+vm_getspecial(rb_thread_t *th, const VALUE *lep, rb_num_t key, rb_num_t type)
 {
     VALUE val;
 
@@ -415,7 +438,7 @@ check_method_entry(VALUE obj, int can_be_svar)
 const rb_callable_method_entry_t *
 rb_vm_frame_method_entry(const rb_control_frame_t *cfp)
 {
-    VALUE *ep = cfp->ep;
+    const VALUE *ep = cfp->ep;
     rb_callable_method_entry_t *me;
 
     while (!VM_EP_LEP_P(ep)) {
@@ -506,7 +529,7 @@ vm_env_cref_by_cref(const VALUE *ep)
 }
 
 static rb_cref_t *
-cref_replace_with_duplicated_cref_each_frame(VALUE *vptr, int can_be_svar, VALUE parent)
+cref_replace_with_duplicated_cref_each_frame(const VALUE *vptr, int can_be_svar, VALUE parent)
 {
     const VALUE v = *vptr;
     rb_cref_t *cref, *new_cref;
@@ -517,16 +540,15 @@ cref_replace_with_duplicated_cref_each_frame(VALUE *vptr, int can_be_svar, VALUE
 	    cref = (rb_cref_t *)v;
 	    new_cref = vm_cref_dup(cref);
 	    if (parent) {
-		/* this pointer is in svar */
 		RB_OBJ_WRITE(parent, vptr, new_cref);
 	    }
 	    else {
-		*vptr = (VALUE)new_cref;
+		VM_FORCE_WRITE(vptr, (VALUE)new_cref);
 	    }
 	    return (rb_cref_t *)new_cref;
 	  case imemo_svar:
 	    if (can_be_svar) {
-		return cref_replace_with_duplicated_cref_each_frame((VALUE *)&((struct vm_svar *)v)->cref_or_me, FALSE, v);
+		return cref_replace_with_duplicated_cref_each_frame((const VALUE *)&((struct vm_svar *)v)->cref_or_me, FALSE, v);
 	    }
 	  case imemo_ment:
 	    rb_bug("cref_replace_with_duplicated_cref_each_frame: unreachable");
@@ -542,14 +564,18 @@ vm_cref_replace_with_duplicated_cref(const VALUE *ep)
 {
     if (vm_env_cref_by_cref(ep)) {
 	rb_cref_t *cref;
+	rb_thread_t *th = GET_THREAD();
+	VALUE envval;
 
 	while (!VM_EP_LEP_P(ep)) {
-	    if ((cref = cref_replace_with_duplicated_cref_each_frame((VALUE *)&ep[-1], FALSE, Qfalse)) != NULL) {
+	    envval = VM_EP_IN_HEAP_P(th, ep) ? VM_EP_ENVVAL_IN_ENV(ep) : Qfalse;
+	    if ((cref = cref_replace_with_duplicated_cref_each_frame(&ep[-1], FALSE, envval)) != NULL) {
 		return cref;
 	    }
 	    ep = VM_EP_PREV_EP(ep);
 	}
-	return cref_replace_with_duplicated_cref_each_frame((VALUE *)&ep[-1], TRUE, Qfalse);
+	envval = VM_EP_IN_HEAP_P(th, ep) ? VM_EP_ENVVAL_IN_ENV(ep) : Qfalse;
+	return cref_replace_with_duplicated_cref_each_frame(&ep[-1], TRUE, envval);
     }
     else {
 	rb_bug("vm_cref_dup: unreachable");
@@ -920,7 +946,7 @@ static VALUE
 vm_throw_start(rb_thread_t *const th, rb_control_frame_t *const reg_cfp, enum ruby_tag_type state,
 	       const int flag, const rb_num_t level, const VALUE throwobj)
 {
-    rb_control_frame_t *escape_cfp = NULL;
+    const rb_control_frame_t *escape_cfp = NULL;
     const rb_control_frame_t * const eocfp = RUBY_VM_END_CONTROL_FRAME(th); /* end of control frame pointer */
 
     if (flag != 0) {
@@ -928,7 +954,7 @@ vm_throw_start(rb_thread_t *const th, rb_control_frame_t *const reg_cfp, enum ru
     }
     else if (state == TAG_BREAK) {
 	int is_orphan = 1;
-	VALUE *ep = GET_EP();
+	const VALUE *ep = GET_EP();
 	const rb_iseq_t *base_iseq = GET_ISEQ();
 	escape_cfp = reg_cfp;
 
@@ -994,13 +1020,13 @@ vm_throw_start(rb_thread_t *const th, rb_control_frame_t *const reg_cfp, enum ru
 	escape_cfp = rb_vm_search_cf_from_ep(th, reg_cfp, ep);
     }
     else if (state == TAG_RETURN) {
-	VALUE *current_ep = GET_EP();
-	VALUE *target_lep = VM_EP_LEP(current_ep);
+	const VALUE *current_ep = GET_EP();
+	const VALUE *target_lep = VM_EP_LEP(current_ep);
 	int in_class_frame = 0;
 	escape_cfp = reg_cfp;
 
 	while (escape_cfp < eocfp) {
-	    VALUE *lep = VM_CF_LEP(escape_cfp);
+	    const VALUE *lep = VM_CF_LEP(escape_cfp);
 
 	    if (!target_lep) {
 		target_lep = lep;
@@ -1020,7 +1046,7 @@ vm_throw_start(rb_thread_t *const th, rb_control_frame_t *const reg_cfp, enum ru
 			goto valid_return;
 		    }
 		    else {
-			VALUE *tep = current_ep;
+			const VALUE *tep = current_ep;
 
 			while (target_lep != tep) {
 			    if (escape_cfp->ep == tep) {

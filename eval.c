@@ -1448,7 +1448,7 @@ top_using(VALUE self, VALUE module)
     return self;
 }
 
-static VALUE *
+static const VALUE *
 errinfo_place(rb_thread_t *th)
 {
     rb_control_frame_t *cfp = th->cfp;
@@ -1473,7 +1473,7 @@ errinfo_place(rb_thread_t *th)
 static VALUE
 get_thread_errinfo(rb_thread_t *th)
 {
-    VALUE *ptr = errinfo_place(th);
+    const VALUE *ptr = errinfo_place(th);
     if (ptr) {
 	return *ptr;
     }
@@ -1502,7 +1502,7 @@ errinfo_setter(VALUE val, ID id, VALUE *var)
 	rb_raise(rb_eTypeError, "assigning non-exception to $!");
     }
     else {
-	VALUE *ptr = errinfo_place(GET_THREAD());
+	const VALUE *ptr = errinfo_place(GET_THREAD());
 	if (ptr) {
 	    *ptr = val;
 	}

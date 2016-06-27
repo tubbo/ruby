@@ -1215,8 +1215,8 @@ fiber_init(VALUE fibval, VALUE proc)
     th->cfp->bp_check = 0;
 #endif
     th->cfp->ep = th->stack + 1;
-    th->cfp->ep[ 0] = VM_ENVVAL_BLOCK_PTR(0);
-    th->cfp->ep[-1] = 0;
+    VM_FORCE_WRITE_SPECIAL_CONST(&th->cfp->ep[ 0], VM_ENVVAL_BLOCK_PTR(0));
+    VM_FORCE_WRITE_SPECIAL_CONST(&th->cfp->ep[-1], 0);
     th->cfp->self = Qnil;
     th->cfp->flag = VM_FRAME_MAGIC_DUMMY | VM_FRAME_FLAG_FINISH;
     th->cfp->iseq = 0;

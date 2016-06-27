@@ -1590,7 +1590,8 @@ yield_under(VALUE under, VALUE self, int argc, const VALUE *argv)
 	}
 	block = *blockptr;
 	block.self = self;
-	VM_CF_LEP(th->cfp)[0] = VM_ENVVAL_BLOCK_PTR(&block);
+
+	VM_FORCE_WRITE_SPECIAL_CONST(&VM_CF_LEP(th->cfp)[0], VM_ENVVAL_BLOCK_PTR(&block));
     }
     cref = vm_cref_push(th, under, blockptr, TRUE);
 
@@ -1608,7 +1609,8 @@ rb_yield_refine_block(VALUE refinement, VALUE refinements)
     if ((blockptr = VM_CF_BLOCK_PTR(th->cfp)) != 0) {
 	block = *blockptr;
 	block.self = refinement;
-	VM_CF_LEP(th->cfp)[0] = VM_ENVVAL_BLOCK_PTR(&block);
+
+	VM_FORCE_WRITE_SPECIAL_CONST(&VM_CF_LEP(th->cfp)[0], VM_ENVVAL_BLOCK_PTR(&block));
     }
     cref = vm_cref_push(th, refinement, blockptr, TRUE);
     CREF_REFINEMENTS_SET(cref, refinements);
@@ -2101,7 +2103,7 @@ rb_f_local_variables(void)
 	}
 	if (!VM_EP_LEP_P(cfp->ep)) {
 	    /* block */
-	    VALUE *ep = VM_CF_PREV_EP(cfp);
+	    const VALUE *ep = VM_CF_PREV_EP(cfp);
 
 	    if (vm_collect_local_variables_in_heap(th, ep, &vars)) {
 		break;

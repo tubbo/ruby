@@ -186,7 +186,7 @@ rb_vmdebug_stack_dump_raw_current(void)
 }
 
 void
-rb_vmdebug_env_dump_raw(rb_env_t *env, VALUE *ep)
+rb_vmdebug_env_dump_raw(rb_env_t *env, const VALUE *ep)
 {
     int i;
     fprintf(stderr, "-- env --------------------\n");

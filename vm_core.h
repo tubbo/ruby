@@ -17,7 +17,7 @@
  *   1: enable local assertions.
  */
 #ifndef VM_CHECK_MODE
-#define VM_CHECK_MODE 0
+#define VM_CHECK_MODE 1
 #endif
 
 /**
@@ -619,7 +619,7 @@ typedef struct rb_control_frame_struct {
     const rb_iseq_t *iseq;	/* cfp[2] */
     VALUE flag;			/* cfp[3] */
     VALUE self;			/* cfp[4] / block[0] */
-    VALUE *ep;			/* cfp[5] / block[1] */
+    const VALUE *ep;		/* cfp[5] / block[1] */
     rb_block_code block_code;   /* cfp[6] / block[2] */
 
 #if VM_DEBUG_BP_CHECK
@@ -629,7 +629,7 @@ typedef struct rb_control_frame_struct {
 
 typedef struct rb_block_struct {
     VALUE self;			/* share with method frame if it's only block */
-    VALUE *ep;			/* share with method frame if it's only block */
+    const VALUE *ep;		/* share with method frame if it's only block */
     rb_block_code code;
 } rb_block_t;
 
@@ -721,7 +721,7 @@ typedef struct rb_thread_struct {
     VALUE top_wrapper;
 
     /* eval env */
-    VALUE *root_lep;
+    const VALUE *root_lep;
     VALUE root_svar;
 
     /* thread control */
@@ -870,7 +870,7 @@ typedef struct {
 
 typedef struct {
     int env_size;
-    VALUE *ep;
+    const VALUE *ep;
     const rb_iseq_t *iseq;
     VALUE env[1];               /* flexible array */
 } rb_env_t;
@@ -1008,7 +1008,47 @@ VM_EP_PROCVAL_IN_ENV(const VALUE *ep)
     return ep[2];
 }
 
-VALUE *rb_vm_ep_local_ep(VALUE *ep);
+static inline void
+VM_FORCE_WRITE(const VALUE *ptr, VALUE v)
+{
+    *((VALUE *)ptr) = v;
+}
+
+static inline void
+VM_FORCE_WRITE_SPECIAL_CONST(const VALUE *ptr, VALUE special_const_value)
+{
+    VM_ASSERT(RB_SPECIAL_CONST_P(special_const_value));
+    VM_FORCE_WRITE(ptr, special_const_value);
+}
+
+static inline void
+VM_STACK_ENV_WRITE(const VALUE *ep, int index, VALUE v)
+{
+    VM_ASSERT(!rb_vm_ep_in_heap_p(ep));
+    VM_FORCE_WRITE(&ep[index], v);
+}
+
+#if VM_CHECK_MODE > 0
+static inline const VALUE *
+vm_env_ep(VALUE envval)
+{
+    rb_env_t *env;
+    GetEnvPtr(envval, env);
+    return env->ep;
+}
+#endif
+
+static inline void
+VM_ENV_WRITE(VALUE env, const VALUE *ep, int index, VALUE v)
+{
+    VM_ASSERT(rb_vm_ep_in_heap_p(ep));
+    VM_ASSERT(env == VM_EP_ENVVAL_IN_ENV(ep));
+    VM_ASSERT(vm_env_ep(env) == ep);
+
+    RB_OBJ_WRITE(env, &ep[index], v);
+}
+
+const VALUE *rb_vm_ep_local_ep(const VALUE *ep);
 const rb_block_t *rb_vm_control_frame_block_ptr(const rb_control_frame_t *cfp);
 
 #define RUBY_VM_PREVIOUS_CONTROL_FRAME(cfp) ((cfp)+1)
