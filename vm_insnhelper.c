@@ -255,12 +255,19 @@ rb_error_arity(int argc, int min, int max)
 static inline void
 vm_env_write_check(const rb_thread_t *th, const VALUE *ep, int index, VALUE v)
 {
+#if 1
     if (VM_EP_IN_HEAP_P(th, ep)) {
 	VM_ENV_WRITE(VM_EP_ENVVAL_IN_ENV(ep), ep, index, v);
     }
     else {
 	VM_STACK_ENV_WRITE(ep, index, v);
     }
+#else
+    VM_FORCE_WRITE(&ep[index], v);
+    if (VM_EP_IN_HEAP_P(th, ep)) {
+	RB_OBJ_WRITTEN(VM_EP_ENVVAL_IN_ENV(ep), Qundef, v);
+    }
+#endif
 }
 
 /* svar */

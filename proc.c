@@ -375,7 +375,7 @@ bind_eval(int argc, VALUE *argv, VALUE bindval)
     return rb_f_eval(argc+1, args, Qnil /* self will be searched in eval */);
 }
 
-static VALUE *
+static const VALUE *
 get_local_variable_ptr(VALUE envval, ID lid)
 {
     rb_env_t *env;
@@ -526,17 +526,20 @@ bind_local_variable_set(VALUE bindval, VALUE sym, VALUE val)
 {
     ID lid = check_local_id(bindval, &sym);
     rb_binding_t *bind;
-    VALUE *ptr;
+    const VALUE *ptr;
+    VALUE envval;
 
     if (!lid) lid = rb_intern_str(sym);
 
     GetBindingPtr(bindval, bind);
-    if ((ptr = get_local_variable_ptr(VM_EP_ENVVAL_IN_ENV(bind->block.ep), lid)) == NULL) {
+    envval = VM_EP_ENVVAL_IN_ENV(bind->block.ep);
+    if ((ptr = get_local_variable_ptr(envval, lid)) == NULL) {
 	/* not found. create new env */
 	ptr = rb_binding_add_dynavars(bind, 1, &lid);
+	envval = VM_EP_ENVVAL_IN_ENV(bind->block.ep);
     }
 
-    *ptr = val;
+    RB_OBJ_WRITE(envval, ptr, val);
 
     return val;
 }

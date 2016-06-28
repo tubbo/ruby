@@ -186,27 +186,28 @@ vm_bind_update_env(rb_binding_t *bind, VALUE envval)
     bind->block.ep = env->ep;
 }
 
-static int envval_p(VALUE envval);
-
+#if VM_CHECK_MODE > 0
 int
 rb_vm_ep_in_heap_p(const VALUE *ep)
 {
     if (VM_EP_IN_HEAP_P(GET_THREAD(), ep)) {
+	static int envval_p(VALUE envval);
 	VALUE envval = ep[1]; /* VM_EP_ENVVAL_IN_ENV(ep); */
-	rb_env_t *env;
 
 	if (envval != Qundef) {
+	    rb_env_t *env;
+
 	    VM_ASSERT(envval_p(envval));
 	    GetEnvPtr(envval, env);
 	    VM_ASSERT(env->ep == ep);
 	}
-
 	return TRUE;
     }
     else {
 	return FALSE;
     }
 }
+#endif
 
 #if VM_COLLECT_USAGE_DETAILS
 static void vm_collect_usage_operand(int insn, int n, VALUE op);
@@ -556,6 +557,7 @@ static const rb_data_type_t env_data_type = {
     0, 0, RUBY_TYPED_FREE_IMMEDIATELY | RUBY_TYPED_WB_PROTECTED
 };
 
+#if VM_CHECK_MODE > 0
 static int
 envval_p(VALUE envval)
 {
@@ -567,6 +569,7 @@ envval_p(VALUE envval)
 	return FALSE;
     }
 }
+#endif
 
 static VALUE check_env_value(VALUE envval);
 
@@ -627,7 +630,7 @@ vm_make_env_each(rb_thread_t *const th, rb_control_frame_t *const cfp)
     VALUE envval, blockprocval = Qfalse;
     const VALUE * const ep = cfp->ep;
     rb_env_t *env;
-    VALUE *new_ep;
+    const VALUE *new_ep;
     int local_size, env_size;
 
     if (VM_EP_IN_HEAP_P(th, ep)) {
@@ -642,7 +645,7 @@ vm_make_env_each(rb_thread_t *const th, rb_control_frame_t *const cfp)
 
 	    while (prev_cfp->ep != prev_ep) {
 		prev_cfp = RUBY_VM_PREVIOUS_CONTROL_FRAME(prev_cfp);
-		if (VM_CHECK_MODE > 0 && prev_cfp->ep == 0) rb_bug("invalid ep");
+		VM_ASSERT(prev_cfp->ep != NULL);
 	    }
 
 	    vm_make_env_each(th, prev_cfp);
@@ -685,7 +688,8 @@ vm_make_env_each(rb_thread_t *const th, rb_control_frame_t *const cfp)
     env = xmalloc(sizeof(rb_env_t) + (env_size - 1 /* rb_env_t::env[1] */) * sizeof(VALUE));
     env->env_size = env_size;
 
-    MEMCPY(env->env, ep - local_size, VALUE, local_size + 1 /* specval */);
+    /* setup env */
+    MEMCPY((VALUE *)env->env, ep - local_size, VALUE, local_size + 1 /* specval */);
 
 #if 0
     for (i = 0; i < local_size; i++) {
@@ -699,15 +703,15 @@ vm_make_env_each(rb_thread_t *const th, rb_control_frame_t *const cfp)
     /* be careful not to trigger GC after this */
     RTYPEDDATA_DATA(envval) = env;
 
-   /*
+    new_ep = &env->env[local_size];
+    RB_OBJ_WRITE(envval, &new_ep[1], envval);
+    if (blockprocval) RB_OBJ_WRITE(envval, &new_ep[2], blockprocval);
+
+    /*
     * must happen after TypedData_Wrap_Struct to ensure penvval is markable
     * in case object allocation triggers GC and clobbers penvval.
     */
     VM_STACK_ENV_WRITE(ep, 0, envval);		/* GC mark */
-
-    new_ep = &env->env[local_size];
-    new_ep[1] = envval;
-    if (blockprocval) new_ep[2] = blockprocval;
 
     /* setup env object */
     env->ep = cfp->ep = new_ep;
@@ -893,7 +897,7 @@ rb_vm_make_binding(rb_thread_t *th, const rb_control_frame_t *src_cfp)
     return bindval;
 }
 
-VALUE *
+const VALUE *
 rb_binding_add_dynavars(rb_binding_t *bind, int dyncount, const ID *dynvars)
 {
     VALUE envval;

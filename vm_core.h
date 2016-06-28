@@ -17,7 +17,7 @@
  *   1: enable local assertions.
  */
 #ifndef VM_CHECK_MODE
-#define VM_CHECK_MODE 1
+#define VM_CHECK_MODE 0
 #endif
 
 /**
@@ -872,7 +872,7 @@ typedef struct {
     int env_size;
     const VALUE *ep;
     const rb_iseq_t *iseq;
-    VALUE env[1];               /* flexible array */
+    const VALUE env[1];               /* flexible array */
 } rb_env_t;
 
 extern const rb_data_type_t ruby_binding_data_type;
@@ -987,9 +987,36 @@ typedef rb_control_frame_t *
 #define VM_EP_BLOCK_PTR(ep) ((rb_block_t *)GC_GUARDED_PTR_REF((ep)[0]))
 #define VM_EP_LEP_P(ep)     VM_ENVVAL_BLOCK_PTR_P((ep)[0])
 
-#define VM_EP_IN_HEAP_P(th, ep)   (!((th)->stack <= (ep) && (ep) < ((th)->stack + (th)->stack_size)))
 
+static inline int
+VM_EP_IN_HEAP_P(const rb_thread_t *th, const VALUE *ep)
+{
+#if 0
+    const VALUE *start = th->stack;
+    const VALUE *end = start + th->stack_size;
+
+    if (start <= ep && ep < end) {
+	return 0;
+    }
+    else {
+	return 1;
+    }
+#else
+    const VALUE * const start = th->stack;
+    const int offset = th->stack_size;
+
+    if ((uintptr_t)(ep - start) < (uintptr_t)offset) {
+	return 0;
+    }
+    else {
+	return 1;
+    }
+#endif
+}
+
+#if VM_CHECK_MODE > 0
 int rb_vm_ep_in_heap_p(const VALUE *ep);
+#endif
 
 static inline VALUE
 VM_EP_ENVVAL_IN_ENV(const VALUE *ep)
@@ -1163,7 +1190,7 @@ VALUE rb_vm_make_proc(rb_thread_t *th, const rb_block_t *block, VALUE klass);
 VALUE rb_vm_make_binding(rb_thread_t *th, const rb_control_frame_t *src_cfp);
 VALUE rb_vm_env_local_variables(const rb_env_t *env);
 VALUE rb_vm_env_prev_envval(const rb_env_t *env);
-VALUE *rb_binding_add_dynavars(rb_binding_t *bind, int dyncount, const ID *dynvars);
+const VALUE *rb_binding_add_dynavars(rb_binding_t *bind, int dyncount, const ID *dynvars);
 void rb_vm_inc_const_missing_count(void);
 void rb_vm_gvl_destroy(rb_vm_t *vm);
 VALUE rb_vm_call(rb_thread_t *th, VALUE recv, VALUE id, int argc,

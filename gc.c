@@ -232,7 +232,7 @@ static ruby_gc_params_t gc_params = {
  * 5: show all references
  */
 #ifndef RGENGC_CHECK_MODE
-#define RGENGC_CHECK_MODE  2
+#define RGENGC_CHECK_MODE  0
 #endif
 
 /* RGENGC_OLD_NEWOBJ_CHECK
