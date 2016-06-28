@@ -187,11 +187,12 @@ vm_bind_update_env(rb_binding_t *bind, VALUE envval)
 }
 
 #if VM_CHECK_MODE > 0
+static int envval_p(VALUE envval);
+
 int
 rb_vm_ep_in_heap_p(const VALUE *ep)
 {
     if (VM_EP_IN_HEAP_P(GET_THREAD(), ep)) {
-	static int envval_p(VALUE envval);
 	VALUE envval = ep[1]; /* VM_EP_ENVVAL_IN_ENV(ep); */
 
 	if (envval != Qundef) {
@@ -381,7 +382,7 @@ vm_set_top_stack(rb_thread_t *th, const rb_iseq_t *iseq)
     vm_push_frame(th, iseq, VM_FRAME_MAGIC_TOP | VM_FRAME_FLAG_FINISH, th->top_self,
 		  VM_ENVVAL_BLOCK_PTR(0),
 		  (VALUE)vm_cref_new_toplevel(th), /* cref or me */
-		  iseq->body->iseq_encoded, th->cfp->sp, iseq->body->local_size, iseq->body->stack_max);
+		  iseq->body->iseq_encoded, th->cfp->sp, iseq->body->local_table_size, iseq->body->stack_max);
 }
 
 static void
@@ -391,7 +392,7 @@ vm_set_eval_stack(rb_thread_t * th, const rb_iseq_t *iseq, const rb_cref_t *cref
 		  vm_block_self(base_block), VM_ENVVAL_PREV_EP_PTR(base_block->ep),
 		  (VALUE)cref, /* cref or me */
 		  iseq->body->iseq_encoded,
-		  th->cfp->sp, iseq->body->local_size, iseq->body->stack_max);
+		  th->cfp->sp, iseq->body->local_table_size, iseq->body->stack_max);
 }
 
 static void
@@ -405,7 +406,7 @@ vm_set_main_stack(rb_thread_t *th, const rb_iseq_t *iseq)
     vm_set_eval_stack(th, iseq, 0, &bind->block);
 
     /* save binding */
-    if (bind && iseq->body->local_size > 0) {
+    if (bind && iseq->body->local_table_size > 0) {
 	vm_bind_update_env(bind, vm_make_env_object(th, th->cfp));
     }
 }
@@ -448,7 +449,7 @@ vm_get_ruby_level_caller_cfp(const rb_thread_t *th, const rb_control_frame_t *cf
 	    return (rb_control_frame_t *)cfp;
 	}
 
-	if ((cfp->flag & VM_FRAME_FLAG_PASSED) == 0) {
+	if (VM_ENV_FLAGS(cfp->ep, VM_FRAME_FLAG_PASSED) == FALSE) {
 	    break;
 	}
 	cfp = RUBY_VM_PREVIOUS_CONTROL_FRAME(cfp);
@@ -661,10 +662,10 @@ vm_make_env_each(rb_thread_t *const th, rb_control_frame_t *const cfp)
     }
 
     if (!RUBY_VM_NORMAL_ISEQ_P(cfp->iseq)) {
-	local_size = 1 /* cref/me */;
+	local_size = VM_ENV_MANAGE_DATA_SIZE;
     }
     else {
-	local_size = cfp->iseq->body->local_size;
+	local_size = cfp->iseq->body->local_table_size + VM_ENV_MANAGE_DATA_SIZE;
     }
 
     /*
@@ -680,7 +681,6 @@ vm_make_env_each(rb_thread_t *const th, rb_control_frame_t *const cfp)
      */
 
     env_size = local_size +
-               1 /* specval */ +
 	       1 /* envval */ +
 	       (blockprocval ? 1 : 0) /* blockprocval */;
 
@@ -689,7 +689,7 @@ vm_make_env_each(rb_thread_t *const th, rb_control_frame_t *const cfp)
     env->env_size = env_size;
 
     /* setup env */
-    MEMCPY((VALUE *)env->env, ep - local_size, VALUE, local_size + 1 /* specval */);
+    MEMCPY((VALUE *)env->env, ep - (local_size - 1 /* specval */), VALUE, local_size);
 
 #if 0
     for (i = 0; i < local_size; i++) {
@@ -703,7 +703,7 @@ vm_make_env_each(rb_thread_t *const th, rb_control_frame_t *const cfp)
     /* be careful not to trigger GC after this */
     RTYPEDDATA_DATA(envval) = env;
 
-    new_ep = &env->env[local_size];
+    new_ep = &env->env[local_size - 1 /* specval */];
     RB_OBJ_WRITE(envval, &new_ep[1], envval);
     if (blockprocval) RB_OBJ_WRITE(envval, &new_ep[2], blockprocval);
 
@@ -950,9 +950,8 @@ invoke_block(rb_thread_t *th, const rb_iseq_t *iseq, VALUE self, const rb_block_
 		  VM_ENVVAL_PREV_EP_PTR(block->ep),
 		  (VALUE)cref, /* cref or method */
 		  iseq->body->iseq_encoded + opt_pc,
-		  th->cfp->sp + arg_size, iseq->body->local_size - arg_size,
+		  th->cfp->sp + arg_size, iseq->body->local_table_size - arg_size,
 		  iseq->body->stack_max);
-
     return vm_exec(th);
 }
 
@@ -967,7 +966,7 @@ invoke_bmethod(rb_thread_t *th, const rb_iseq_t *iseq, VALUE self, const rb_bloc
 		  VM_ENVVAL_PREV_EP_PTR(block->ep),
 		  (VALUE)me, /* cref or method (TODO: can we ignore cref?) */
 		  iseq->body->iseq_encoded + opt_pc,
-		  th->cfp->sp + arg_size, iseq->body->local_size - arg_size,
+		  th->cfp->sp + arg_size, iseq->body->local_table_size - arg_size,
 		  iseq->body->stack_max);
 
     RUBY_DTRACE_METHOD_ENTRY_HOOK(th, me->owner, me->called_id);
@@ -1876,6 +1875,8 @@ vm_exec(rb_thread_t *th)
 
 	if (catch_iseq != NULL) { /* found catch table */
 	    /* enter catch scope */
+	    const int arg_size = 1;
+
 	    rb_iseq_check(catch_iseq);
 	    cfp->sp = vm_base_ptr(cfp) + cont_sp;
 	    cfp->pc = cfp->iseq->body->iseq_encoded + cont_pc;
@@ -1887,8 +1888,8 @@ vm_exec(rb_thread_t *th)
 			  VM_ENVVAL_PREV_EP_PTR(cfp->ep),
 			  0, /* cref or me */
 			  catch_iseq->body->iseq_encoded,
-			  cfp->sp + 1 /* push value */,
-			  catch_iseq->body->local_size - 1,
+			  cfp->sp + arg_size /* push value */,
+			  catch_iseq->body->local_table_size - arg_size,
 			  catch_iseq->body->stack_max);
 
 	    state = 0;
@@ -2003,7 +2004,7 @@ rb_vm_call_cfunc(VALUE recv, VALUE (*func)(VALUE), VALUE arg,
     vm_push_frame(th, iseq, VM_FRAME_MAGIC_TOP | VM_FRAME_FLAG_FINISH,
 		  recv, VM_ENVVAL_BLOCK_PTR(blockptr),
 		  (VALUE)vm_cref_new_toplevel(th), /* cref or me */
-		  0, reg_cfp->sp, 1, 0);
+		  0, reg_cfp->sp, 0, 0);
 
     val = (*func)(arg);
 
@@ -2432,7 +2433,7 @@ th_init(rb_thread_t *th, VALUE self)
     vm_push_frame(th, 0 /* dummy iseq */, VM_FRAME_MAGIC_DUMMY | VM_FRAME_FLAG_FINISH /* dummy frame */,
 		  Qnil /* dummy self */, VM_ENVVAL_BLOCK_PTR(0) /* dummy block ptr */,
 		  0 /* dummy cref/me */,
-		  0 /* dummy pc */, th->stack, 1, 0);
+		  0 /* dummy pc */, th->stack, 0, 0);
 
     th->status = THREAD_RUNNABLE;
     th->errinfo = Qnil;

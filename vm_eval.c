@@ -123,7 +123,7 @@ vm_call0_cfunc_with_frame(rb_thread_t* th, struct rb_calling_info *calling, cons
 
 	vm_push_frame(th, 0, VM_FRAME_MAGIC_CFUNC, recv,
 		      VM_ENVVAL_BLOCK_PTR(blockptr), (VALUE)me,
-		      0, reg_cfp->sp, 1, 0);
+		      0, reg_cfp->sp, 0, 0);
 
 	if (len >= 0) rb_check_arity(argc, len, len);
 
@@ -178,7 +178,7 @@ vm_call0_body(rb_thread_t* th, struct rb_calling_info *calling, const struct rb_
 	    }
 
 	    vm_call_iseq_setup(th, reg_cfp, calling, ci, cc);
-	    th->cfp->flag |= VM_FRAME_FLAG_FINISH;
+	    VM_ENV_FLAGS_SET(th->cfp->ep, VM_FRAME_FLAG_FINISH);
 	    return vm_exec(th); /* CHECK_INTS in this function */
 	}
       case VM_METHOD_TYPE_NOTIMPLEMENTED:

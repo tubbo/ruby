@@ -125,6 +125,7 @@ vm_check_frame(VALUE type,
 	       VALUE cref_or_me)
 {
     int magic = (int)(type & VM_FRAME_MAGIC_MASK);
+    VM_ASSERT(FIXNUM_P(type));
 
 #define CHECK(magic, req_block, req_me, req_cref) case magic: vm_check_frame_detail(type, req_block, req_me, req_cref, specval, cref_or_me); break;
     switch (magic) {
@@ -165,7 +166,7 @@ vm_push_frame(rb_thread_t *th,
     int i;
 
     vm_check_frame(type, specval, cref_or_me);
-    VM_ASSERT(local_size >= 1);
+    VM_ASSERT(local_size >= 0);
 
     /* check stack overflow */
     CHECK_VM_STACK_OVERFLOW0(cfp, sp, local_size + stack_max);
@@ -175,25 +176,25 @@ vm_push_frame(rb_thread_t *th,
     /* setup new frame */
     cfp->pc = (VALUE *)pc;
     cfp->iseq = (rb_iseq_t *)iseq;
-    cfp->flag = type;
     cfp->self = self;
     cfp->block_code.val = 0;
 
     /* setup vm value stack */
 
     /* initialize local variables */
-    for (i=0; i < local_size - 1; i++) {
+    for (i=0; i < local_size; i++) {
 	*sp++ = Qnil;
     }
 
-    /* set special val */
-    *sp++ = cref_or_me; /* Qnil or T_IMEMO(cref) or T_IMEMO(ment) */
-    *sp = specval;
+    /* setup ep with managing data */
+    *sp++ = type;       /* ep[-2] / ENV_FLAGS */
+    *sp++ = cref_or_me; /* ep[-1] / Qnil or T_IMEMO(cref) or T_IMEMO(ment) */
+    *sp   = specval     /* ep[ 0] / blockptr or prev env ptr */;
+    cfp->ep = sp;
 
     /* setup vm control frame stack */
 
-    cfp->ep = sp;
-    cfp->sp = sp + 1;
+    cfp->sp = sp+1;
 
 #if VM_DEBUG_BP_CHECK
     cfp->bp_check = sp + 1;
@@ -297,7 +298,7 @@ lep_svar(rb_thread_t *th, const VALUE *lep)
     VALUE svar;
 
     if (lep && (th == NULL || th->root_lep != lep)) {
-	svar = lep[-1];
+	svar = lep[VM_ENV_MANAGE_DATA_INDEX_ME_CREF];
     }
     else {
 	svar = th->root_svar;
@@ -449,11 +450,11 @@ rb_vm_frame_method_entry(const rb_control_frame_t *cfp)
     rb_callable_method_entry_t *me;
 
     while (!VM_EP_LEP_P(ep)) {
-	if ((me = check_method_entry(ep[-1], FALSE)) != NULL) return me;
+	if ((me = check_method_entry(ep[VM_ENV_MANAGE_DATA_INDEX_ME_CREF], FALSE)) != NULL) return me;
 	ep = VM_EP_PREV_EP(ep);
     }
 
-    return check_method_entry(ep[-1], TRUE);
+    return check_method_entry(ep[VM_ENV_MANAGE_DATA_INDEX_ME_CREF], TRUE);
 }
 
 static rb_cref_t *
@@ -502,11 +503,11 @@ vm_env_cref(const VALUE *ep)
     rb_cref_t *cref;
 
     while (!VM_EP_LEP_P(ep)) {
-	if ((cref = check_cref(ep[-1], FALSE)) != NULL) return cref;
+	if ((cref = check_cref(ep[VM_ENV_MANAGE_DATA_INDEX_ME_CREF], FALSE)) != NULL) return cref;
 	ep = VM_EP_PREV_EP(ep);
     }
 
-    return check_cref(ep[-1], TRUE);
+    return check_cref(ep[VM_ENV_MANAGE_DATA_INDEX_ME_CREF], TRUE);
 }
 
 static int
@@ -529,10 +530,10 @@ static int
 vm_env_cref_by_cref(const VALUE *ep)
 {
     while (!VM_EP_LEP_P(ep)) {
-	if (is_cref(ep[-1], FALSE)) return TRUE;
+	if (is_cref(ep[VM_ENV_MANAGE_DATA_INDEX_ME_CREF], FALSE)) return TRUE;
 	ep = VM_EP_PREV_EP(ep);
     }
-    return is_cref(ep[-1], TRUE);
+    return is_cref(ep[VM_ENV_MANAGE_DATA_INDEX_ME_CREF], TRUE);
 }
 
 static rb_cref_t *
@@ -576,13 +577,13 @@ vm_cref_replace_with_duplicated_cref(const VALUE *ep)
 
 	while (!VM_EP_LEP_P(ep)) {
 	    envval = VM_EP_IN_HEAP_P(th, ep) ? VM_EP_ENVVAL_IN_ENV(ep) : Qfalse;
-	    if ((cref = cref_replace_with_duplicated_cref_each_frame(&ep[-1], FALSE, envval)) != NULL) {
+	    if ((cref = cref_replace_with_duplicated_cref_each_frame(&ep[VM_ENV_MANAGE_DATA_INDEX_ME_CREF], FALSE, envval)) != NULL) {
 		return cref;
 	    }
 	    ep = VM_EP_PREV_EP(ep);
 	}
 	envval = VM_EP_IN_HEAP_P(th, ep) ? VM_EP_ENVVAL_IN_ENV(ep) : Qfalse;
-	return cref_replace_with_duplicated_cref_each_frame(&ep[-1], TRUE, envval);
+	return cref_replace_with_duplicated_cref_each_frame(&ep[VM_ENV_MANAGE_DATA_INDEX_ME_CREF], TRUE, envval);
     }
     else {
 	rb_bug("vm_cref_dup: unreachable");
@@ -1172,6 +1173,7 @@ vm_search_method(const struct rb_call_info *ci, struct rb_call_cache *cc, VALUE 
 #if OPT_INLINE_METHOD_CACHE
     if (LIKELY(GET_GLOBAL_METHOD_STATE() == cc->method_state && RCLASS_SERIAL(klass) == cc->class_serial)) {
 	/* cache hit! */
+	VM_ASSERT(cc->call != NULL);
 	return;
     }
 #endif
@@ -1322,7 +1324,7 @@ static VALUE *
 vm_base_ptr(rb_control_frame_t *cfp)
 {
     rb_control_frame_t *prev_cfp = RUBY_VM_PREVIOUS_CONTROL_FRAME(cfp);
-    VALUE *bp = prev_cfp->sp + cfp->iseq->body->local_size + 1;
+    VALUE *bp = prev_cfp->sp + cfp->iseq->body->local_table_size + VM_ENV_MANAGE_DATA_SIZE;
 
     if (cfp->iseq->body->type == ISEQ_TYPE_METHOD) {
 	/* adjust `self' */
@@ -1379,7 +1381,7 @@ vm_call_iseq_setup_normal_0start(rb_thread_t *th, rb_control_frame_t *cfp, struc
 {
     const rb_iseq_t *iseq = def_iseq_ptr(cc->me->def);
     int param = iseq->body->param.size;
-    int local = iseq->body->local_size;
+    int local = iseq->body->local_table_size;
     return vm_call_iseq_setup_normal(th, cfp, calling, ci, cc, 0, param, local);
 }
 
@@ -1422,7 +1424,7 @@ vm_call_iseq_setup(rb_thread_t *th, rb_control_frame_t *cfp, struct rb_calling_i
 {
     const rb_iseq_t *iseq = def_iseq_ptr(cc->me->def);
     const int param_size = iseq->body->param.size;
-    const int local_size = iseq->body->local_size;
+    const int local_size = iseq->body->local_table_size;
     const int opt_pc = vm_callee_setup_arg(th, calling, ci, cc, def_iseq_ptr(cc->me->def), cfp->sp - calling->argc, param_size, local_size);
     return vm_call_iseq_setup_2(th, cfp, calling, ci, cc, opt_pc, param_size, local_size);
 }
@@ -1488,7 +1490,7 @@ vm_call_iseq_setup_tailcall(rb_thread_t *th, rb_control_frame_t *cfp, struct rb_
     vm_push_frame(th, iseq, VM_FRAME_MAGIC_METHOD | finish_flag,
 		  calling->recv, VM_ENVVAL_BLOCK_PTR(calling->blockptr), (VALUE)me,
 		  iseq->body->iseq_encoded + opt_pc, sp,
-		  iseq->body->local_size - iseq->body->param.size,
+		  iseq->body->local_table_size - iseq->body->param.size,
 		  iseq->body->stack_max);
 
     cfp->sp = sp_orig;
@@ -1677,7 +1679,7 @@ vm_call_cfunc_with_frame(rb_thread_t *th, rb_control_frame_t *reg_cfp, struct rb
 
     vm_push_frame(th, NULL, VM_FRAME_MAGIC_CFUNC, recv,
 		  VM_ENVVAL_BLOCK_PTR(blockptr), (VALUE)me,
-		  0, th->cfp->sp, 1, 0);
+		  0, th->cfp->sp, 0, 0);
 
     if (len >= 0) rb_check_arity(argc, len, len);
 
@@ -1767,7 +1769,7 @@ rb_vm_call_cfunc_push_frame(rb_thread_t *th)
 
     vm_push_frame(th, 0, VM_FRAME_MAGIC_CFUNC,
 		  calling->recv, VM_ENVVAL_BLOCK_PTR(calling->blockptr), (VALUE)me /* cref */,
-		  0, th->cfp->sp + cc->aux.inc_sp, 1, 0);
+		  0, th->cfp->sp + cc->aux.inc_sp, 0, 0);
 
     if (calling->call != vm_call_general) {
 	calling->call = vm_call_cfunc_with_frame;
@@ -2372,7 +2374,7 @@ vm_yield_with_cfunc0(rb_thread_t *th, const rb_block_t *block, VALUE self,
 
     vm_push_frame(th, (rb_iseq_t *)block->code.val, VM_FRAME_MAGIC_IFUNC,
 		  self, VM_ENVVAL_PREV_EP_PTR(block->ep), (VALUE)me,
-		  0, th->cfp->sp, 1, 0);
+		  0, th->cfp->sp, 0, 0);
 
     val = (*func)(arg, data, argc, argv, blockarg);
     rb_vm_pop_frame(th);
@@ -2515,7 +2517,7 @@ vm_invoke_block(rb_thread_t *th, rb_control_frame_t *reg_cfp, struct rb_calling_
 			  VM_ENVVAL_PREV_EP_PTR(block->ep), 0,
 			  iseq->body->iseq_encoded + opt_pc,
 			  rsp + arg_size,
-			  iseq->body->local_size - arg_size, iseq->body->stack_max);
+			  iseq->body->local_table_size - arg_size, iseq->body->stack_max);
 
 	    return Qundef;
 	}

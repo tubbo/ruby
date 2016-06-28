@@ -1267,7 +1267,7 @@ rb_insn_operand_intern(const rb_iseq_t *iseq,
 		for (i = 0; i < level; i++) {
 		    diseq = diseq->body->parent_iseq;
 		}
-		ret = id_to_name(diseq->body->local_table[diseq->body->local_size - op], INT2FIX('*'));
+		ret = id_to_name(diseq->body->local_table[diseq->body->local_table_size - op], INT2FIX('*'));
 	    }
 	    else {
 		ret = rb_sprintf("%"PRIuVALUE, op);
@@ -1520,7 +1520,7 @@ rb_iseq_disasm(const rb_iseq_t *iseq)
 	rb_str_catf(str,
 		    "local table (size: %d, argc: %d "
 		    "[opts: %d, rest: %d, post: %d, block: %d, kw: %d@%d, kwrest: %d])\n",
-		    iseq->body->local_size,
+		    iseq->body->local_table_size,
 		    iseq->body->param.lead_num,
 		    iseq->body->param.opt_num,
 		    iseq->body->param.flags.has_rest ? iseq->body->param.rest_start : -1,
@@ -1553,7 +1553,7 @@ rb_iseq_disasm(const rb_iseq_t *iseq)
 		     (iseq->body->param.flags.has_post && iseq->body->param.post_start <= li && li < iseq->body->param.post_start + iseq->body->param.post_num) ? "Post" : "",
 		     (iseq->body->param.flags.has_block && iseq->body->param.block_start == li) ? "Block" : "");
 
-	    rb_str_catf(str, "[%2d] ", iseq->body->local_size - i);
+	    rb_str_catf(str, "[%2d] ", iseq->body->local_table_size - i);
 	    width = RSTRING_LEN(str) + 11;
 	    if (name)
 		rb_str_append(str, name);
@@ -2050,7 +2050,7 @@ iseq_data_to_ary(const rb_iseq_t *iseq)
     st_free_table(labels_table);
 
     rb_hash_aset(misc, ID2SYM(rb_intern("arg_size")), INT2FIX(iseq->body->param.size));
-    rb_hash_aset(misc, ID2SYM(rb_intern("local_size")), INT2FIX(iseq->body->local_size));
+    rb_hash_aset(misc, ID2SYM(rb_intern("local_size")), INT2FIX(iseq->body->local_table_size));
     rb_hash_aset(misc, ID2SYM(rb_intern("stack_max")), INT2FIX(iseq->body->stack_max));
 
     /* TODO: compatibility issue */

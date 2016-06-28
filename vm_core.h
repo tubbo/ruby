@@ -17,7 +17,7 @@
  *   1: enable local assertions.
  */
 #ifndef VM_CHECK_MODE
-#define VM_CHECK_MODE 0
+#define VM_CHECK_MODE 1
 #endif
 
 /**
@@ -282,10 +282,6 @@ struct rb_iseq_constant_body {
 	ISEQ_TYPE_DEFINED_GUARD
     } type;              /* instruction sequence type */
 
-    unsigned int stack_max; /* for stack overflow check */
-    /* sizeof(vars) + 1 */
-    unsigned int local_size;
-
     unsigned int iseq_size;
     const VALUE *iseq_encoded; /* encoded iseq (insn addr and operands) */
 
@@ -388,6 +384,7 @@ struct rb_iseq_constant_body {
     unsigned int ci_size;
     unsigned int ci_kw_size;
     unsigned int line_info_size;
+    unsigned int stack_max; /* for stack overflow check */
 };
 
 /* T_IMEMO/iseq */
@@ -617,13 +614,12 @@ typedef struct rb_control_frame_struct {
     const VALUE *pc;		/* cfp[0] */
     VALUE *sp;			/* cfp[1] */
     const rb_iseq_t *iseq;	/* cfp[2] */
-    VALUE flag;			/* cfp[3] */
-    VALUE self;			/* cfp[4] / block[0] */
-    const VALUE *ep;		/* cfp[5] / block[1] */
-    rb_block_code block_code;   /* cfp[6] / block[2] */
+    VALUE self;			/* cfp[3] / block[0] */
+    const VALUE *ep;		/* cfp[4] / block[1] */
+    rb_block_code block_code;   /* cfp[5] / block[2] */
 
 #if VM_DEBUG_BP_CHECK
-    VALUE *bp_check;		/* cfp[7] */
+    VALUE *bp_check;		/* cfp[6] */
 #endif
 } rb_control_frame_t;
 
@@ -936,14 +932,47 @@ enum vm_svar_index {
 #define VM_FRAME_MAGIC_MASK_BITS 8
 #define VM_FRAME_MAGIC_MASK   (~(~(VALUE)0<<VM_FRAME_MAGIC_MASK_BITS))
 
-#define VM_FRAME_TYPE(cfp) ((cfp)->flag & VM_FRAME_MAGIC_MASK)
+static inline void VM_FORCE_WRITE_SPECIAL_CONST(const VALUE *ptr, VALUE special_const_value);
 
-/* other frame flag */
+#define VM_ENV_MANAGE_DATA_SIZE             ( 3)
+#define VM_ENV_MANAGE_DATA_INDEX_FLAGS      (-2)
+#define VM_ENV_MANAGE_DATA_INDEX_ME_CREF    (-1)
+#define VM_ENV_MANAGE_DATA_INDEX_SPECVAL    ( 0)
+
+#define VM_ENV_INDEX_LAST_LVAR              (-VM_ENV_MANAGE_DATA_SIZE)
+
+static inline void
+VM_ENV_FLAGS_SET(const VALUE *ep, VALUE flag)
+{
+    VALUE flags = ep[VM_ENV_MANAGE_DATA_INDEX_FLAGS];
+    VM_ASSERT(FIXNUM_P(flags));
+    VM_FORCE_WRITE_SPECIAL_CONST(&ep[VM_ENV_MANAGE_DATA_INDEX_FLAGS], flags | flag);
+}
+
+static inline long
+VM_ENV_FLAGS(const VALUE *ep, long flag)
+{
+    VALUE flags = ep[VM_ENV_MANAGE_DATA_INDEX_FLAGS];
+    VM_ASSERT(FIXNUM_P(flags));
+    return flags & flag;
+}
+
+static inline long
+VM_FRAME_TYPE(const rb_control_frame_t *cfp)
+{
+    return VM_ENV_FLAGS(cfp->ep, VM_FRAME_MAGIC_MASK);
+}
+
+/* other frame/env flag */
 #define VM_FRAME_FLAG_PASSED  0x0100
 #define VM_FRAME_FLAG_FINISH  0x0200
 #define VM_FRAME_FLAG_BMETHOD 0x0400
-#define VM_FRAME_TYPE_FINISH_P(cfp)  (((cfp)->flag & VM_FRAME_FLAG_FINISH) != 0)
-#define VM_FRAME_TYPE_BMETHOD_P(cfp) (((cfp)->flag & VM_FRAME_FLAG_BMETHOD) != 0)
+
+#define VM_ENV_FLAG_ESCAPED   0x0800
+#define VM_ENV_FLAG_WROTE     0x1000
+
+#define VM_FRAME_TYPE_FINISH_P(cfp)  (VM_ENV_FLAGS(cfp->ep, VM_FRAME_FLAG_FINISH ) != 0)
+#define VM_FRAME_TYPE_BMETHOD_P(cfp) (VM_ENV_FLAGS(cfp->ep, VM_FRAME_FLAG_BMETHOD) != 0)
 
 #define RUBYVM_CFUNC_FRAME_P(cfp) \
   (VM_FRAME_TYPE(cfp) == VM_FRAME_MAGIC_CFUNC)
@@ -972,9 +1001,12 @@ typedef rb_control_frame_t *
  * block frame:
  *  ep[ 0]: prev frame
  *  ep[-1]: CREF (for *_eval)
+ *  ep[-2]: type
  *
  * method frame:
  *  ep[ 0]: block pointer (ptr | VM_ENVVAL_BLOCK_PTR_FLAG)
+ *  ep[-1]: me/svar
+ *  ep[-2]: type
  */
 
 #define VM_ENVVAL_BLOCK_PTR_FLAG 0x02
@@ -1158,8 +1190,8 @@ vm_block_self(const rb_block_t *block)
 
 #define RUBY_VM_GET_BLOCK_PTR_IN_CFP(cfp) ((rb_block_t *)(&(cfp)->self))
 #define RUBY_VM_GET_CFP_FROM_BLOCK_PTR(b) \
-  ((rb_control_frame_t *)((VALUE *)(b) - 4))
-/* magic number `4' is depend on rb_control_frame_t layout. */
+  ((rb_control_frame_t *)((VALUE *)(b) - 3))
+/* magic number `3' is depend on rb_control_frame_t layout. */
 
 /* VM related object allocate functions */
 VALUE rb_thread_alloc(VALUE klass);

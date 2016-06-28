@@ -8,7 +8,7 @@ static inline void
 pass_passed_block(rb_thread_t *th)
 {
     th->passed_block = rb_vm_control_frame_block_ptr(th->cfp);
-    th->cfp->flag |= VM_FRAME_FLAG_PASSED;
+    VM_ENV_FLAGS_SET(th->cfp->ep, VM_FRAME_FLAG_PASSED);
 }
 #define PASS_PASSED_BLOCK_TH(th) pass_passed_block(th)
 #define PASS_PASSED_BLOCK() pass_passed_block(GET_THREAD())

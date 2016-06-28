@@ -1210,15 +1210,15 @@ fiber_init(VALUE fibval, VALUE proc)
     th->cfp = (void *)(th->stack + th->stack_size);
     th->cfp--;
     th->cfp->pc = 0;
-    th->cfp->sp = th->stack + 2;
+    th->cfp->sp = th->stack + VM_ENV_MANAGE_DATA_SIZE;
 #if VM_DEBUG_BP_CHECK
     th->cfp->bp_check = 0;
 #endif
-    th->cfp->ep = th->stack + 1;
-    VM_FORCE_WRITE_SPECIAL_CONST(&th->cfp->ep[ 0], VM_ENVVAL_BLOCK_PTR(0));
-    VM_FORCE_WRITE_SPECIAL_CONST(&th->cfp->ep[-1], 0);
+    th->cfp->ep = th->cfp->sp - 1;
+    VM_FORCE_WRITE_SPECIAL_CONST(&th->cfp->ep[VM_ENV_MANAGE_DATA_INDEX_SPECVAL], VM_ENVVAL_BLOCK_PTR(0));
+    VM_FORCE_WRITE_SPECIAL_CONST(&th->cfp->ep[VM_ENV_MANAGE_DATA_INDEX_ME_CREF], 0);
+    VM_FORCE_WRITE_SPECIAL_CONST(&th->cfp->ep[VM_ENV_MANAGE_DATA_INDEX_FLAGS], VM_FRAME_MAGIC_DUMMY | VM_FRAME_FLAG_FINISH);
     th->cfp->self = Qnil;
-    th->cfp->flag = VM_FRAME_MAGIC_DUMMY | VM_FRAME_FLAG_FINISH;
     th->cfp->iseq = 0;
     th->cfp->block_code.val = 0;
     th->tag = 0;
