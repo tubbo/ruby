@@ -94,7 +94,8 @@ if File.file?(libruby_so)
 end
 
 ENV.update env
-
+#precommand = %w(gdb -x run.gdb --args)
+#precommand = %w(valgrind)
 cmd = [ruby]
 cmd.concat(ARGV)
 cmd.unshift(*precommand) unless precommand.empty?

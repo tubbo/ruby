@@ -87,7 +87,7 @@ setlocal
     for (i = 0; i < lev; i++) {
 	ep = GET_PREV_EP(ep);
     }
-    vm_env_write_check(th, ep, -idx, val);
+    vm_env_write_check(ep, -idx, val);
 }
 
 /**
@@ -1118,6 +1118,9 @@ leave
 (VALUE val)
 (VALUE val)
 {
+    VALUE flags;
+    const VALUE *ep;
+
     if (OPT_CHECKED_RUN) {
 	const VALUE *const bp = vm_base_ptr(reg_cfp);
 	if (reg_cfp->sp != bp) {
@@ -1128,7 +1131,19 @@ leave
 
     RUBY_VM_CHECK_INTS(th);
 
-    if (vm_pop_frame(th, GET_CFP(), GET_EP())) {
+    ep = GET_EP();
+    flags = ep[VM_ENV_MANAGE_DATA_INDEX_FLAGS];
+
+    if (flags & VM_ENV_FLAG_ESCAPED) {
+	VM_ENV_FLAGS_SET(ep, VM_ENV_FLAG_LEFT);
+	if (flags & VM_ENV_FLAG_MODIFIED) {
+	    rb_gc_writebarrier_remember(VM_EP_ENVVAL_IN_ENV(ep));
+	}
+    }
+
+    if (UNLIKELY(flags & VM_FRAME_FLAG_FINISH)) {
+	vm_pop_frame(th);
+
 #if OPT_CALL_THREADED_CODE
 	th->retval = val;
 	return 0;

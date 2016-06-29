@@ -189,15 +189,29 @@ vm_bind_update_env(rb_binding_t *bind, VALUE envval)
 #if VM_CHECK_MODE > 0
 static int envval_p(VALUE envval);
 
-int
-rb_vm_ep_in_heap_p(const VALUE *ep)
+static inline int
+VM_EP_IN_HEAP_P(const rb_thread_t *th, const VALUE *ep)
 {
-    if (VM_EP_IN_HEAP_P(GET_THREAD(), ep)) {
+    const VALUE *start = th->stack;
+    const VALUE *end = (VALUE *)th->cfp;
+    if (start <= ep && ep < end) {
+	return FALSE;
+    }
+    else {
+	return TRUE;
+    }
+}
+
+int
+vm_ep_in_heap_p_(const rb_thread_t *th, const VALUE *ep)
+{
+    if (VM_EP_IN_HEAP_P(th, ep)) {
 	VALUE envval = ep[1]; /* VM_EP_ENVVAL_IN_ENV(ep); */
 
 	if (envval != Qundef) {
 	    rb_env_t *env;
 
+	    VM_ASSERT(VM_ENV_FLAGS(ep, VM_ENV_FLAG_ESCAPED));
 	    VM_ASSERT(envval_p(envval));
 	    GetEnvPtr(envval, env);
 	    VM_ASSERT(env->ep == ep);
@@ -207,6 +221,12 @@ rb_vm_ep_in_heap_p(const VALUE *ep)
     else {
 	return FALSE;
     }
+}
+
+int
+rb_vm_ep_in_heap_p(const VALUE *ep)
+{
+    return vm_ep_in_heap_p_(GET_THREAD(), ep);
 }
 #endif
 
@@ -535,7 +555,12 @@ env_mark(void * const ptr)
 
     /* TODO: should mark more restricted range */
     RUBY_GC_INFO("env->env\n");
-    rb_gc_mark_values((long)env->env_size, env->env);
+
+    VM_ASSERT(VM_ENV_FLAGS(env->ep, VM_ENV_FLAG_ESCAPED));
+
+    if (VM_ENV_FLAGS(env->ep, VM_ENV_FLAG_LEFT)) {
+	rb_gc_mark_values((long)env->env_size, env->env);
+    }
 
     RUBY_MARK_UNLESS_NULL(rb_vm_env_prev_envval(env));
     RUBY_MARK_UNLESS_NULL((VALUE)env->iseq);
@@ -634,14 +659,14 @@ vm_make_env_each(rb_thread_t *const th, rb_control_frame_t *const cfp)
     const VALUE *new_ep;
     int local_size, env_size;
 
-    if (VM_EP_IN_HEAP_P(th, ep)) {
+    if (VM_EP_ESCAPED_P(ep)) {
 	return VM_EP_ENVVAL_IN_ENV(ep);
     }
 
     if (!VM_EP_LEP_P(ep)) {
 	VALUE *prev_ep = VM_EP_PREV_EP(ep);
 
-	if (!VM_EP_IN_HEAP_P(th, prev_ep)) {
+	if (!VM_EP_ESCAPED_P(prev_ep)) {
 	    rb_control_frame_t *prev_cfp = RUBY_VM_PREVIOUS_CONTROL_FRAME(cfp);
 
 	    while (prev_cfp->ep != prev_ep) {
@@ -706,6 +731,7 @@ vm_make_env_each(rb_thread_t *const th, rb_control_frame_t *const cfp)
     new_ep = &env->env[local_size - 1 /* specval */];
     RB_OBJ_WRITE(envval, &new_ep[1], envval);
     if (blockprocval) RB_OBJ_WRITE(envval, &new_ep[2], blockprocval);
+    VM_ENV_FLAGS_SET(new_ep, VM_ENV_FLAG_ESCAPED);
 
     /*
     * must happen after TypedData_Wrap_Struct to ensure penvval is markable
@@ -783,7 +809,7 @@ collect_local_variables_in_env(const rb_env_t *env, const struct local_var_list 
 static int
 vm_collect_local_variables_in_heap(rb_thread_t *th, const VALUE *ep, const struct local_var_list *vars)
 {
-    if (VM_EP_IN_HEAP_P(th, ep)) {
+    if (VM_EP_ESCAPED_P(ep)) {
 	rb_env_t *env;
 	GetEnvPtr(VM_EP_ENVVAL_IN_ENV(ep), env);
 	collect_local_variables_in_env(env, vars);
@@ -2280,6 +2306,15 @@ rb_thread_mark(void *ptr)
 	rb_gc_mark_values((long)(sp - p), p);
 
 	while (cfp != limit_cfp) {
+	    const VALUE *ep = cfp->ep;
+	    if (VM_ENV_FLAGS(ep, VM_ENV_FLAG_ESCAPED)) {
+		const rb_env_t *env;
+		GetEnvPtr(VM_EP_ENVVAL_IN_ENV(ep), env);
+		rb_gc_mark_values((long)env->env_size, env->env);
+	    }
+
+	    VM_ASSERT(!!VM_ENV_FLAGS(ep, VM_ENV_FLAG_ESCAPED) == vm_ep_in_heap_p_(th, ep));
+
 	    rb_gc_mark(cfp->block_code.val);
 	    rb_gc_mark(cfp->self);
 	    rb_gc_mark((VALUE)cfp->iseq);

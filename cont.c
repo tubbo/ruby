@@ -174,6 +174,7 @@ cont_mark(void *ptr)
     if (ptr) {
 	rb_context_t *cont = ptr;
 	rb_gc_mark(cont->value);
+
 	rb_thread_mark(&cont->saved_thread);
 	rb_gc_mark(cont->saved_thread.self);
 
@@ -490,7 +491,7 @@ cont_capture(volatile int *stat)
     cont->vm_stack = ALLOC_N(VALUE, th->stack_size);
     MEMCPY(cont->vm_stack, th->stack, VALUE, th->stack_size);
 #endif
-    cont->saved_thread.stack = 0;
+    cont->saved_thread.stack = NULL;
 
     cont_save_machine_stack(th, cont);
 
@@ -539,7 +540,7 @@ cont_restore_thread(rb_context_t *cont)
 	th->fiber = sth->fiber;
 	fib = th->fiber ? th->fiber : th->root_fiber;
 
-	if (fib) {
+	if (fib && fib->cont.saved_thread.stack) {
 	    th->stack_size = fib->cont.saved_thread.stack_size;
 	    th->stack = fib->cont.saved_thread.stack;
 	}
@@ -554,6 +555,7 @@ cont_restore_thread(rb_context_t *cont)
     else {
 	/* fiber */
 	th->stack = sth->stack;
+	sth->stack = NULL;
 	th->stack_size = sth->stack_size;
 	th->local_storage = sth->local_storage;
 	th->local_storage_recursive_hash = sth->local_storage_recursive_hash;
@@ -727,7 +729,6 @@ fiber_setcontext(rb_fiber_t *newfib, rb_fiber_t *oldfib)
 	rb_bug("non_root_fiber->context.uc_stac.ss_sp should not be NULL");
     }
 #endif
-
     /* swap machine context */
 #ifdef _WIN32
     SwitchToFiber(newfib->fib_handle);
@@ -1201,7 +1202,7 @@ fiber_init(VALUE fibval, VALUE proc)
     /* initialize cont */
     cont->vm_stack = 0;
 
-    th->stack = 0;
+    th->stack = NULL;
     th->stack_size = 0;
 
     th->stack_size = cth->vm->default_params.fiber_vm_stack_size / sizeof(VALUE);

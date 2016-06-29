@@ -65,7 +65,7 @@ proc_mark(void *ptr)
 
 typedef struct {
     rb_proc_t basic;
-    VALUE env[3]; /* me, specval, envval */
+    VALUE env[VM_ENV_MANAGE_DATA_SIZE + 1]; /* ..., envval */
 } cfunc_proc_t;
 
 static size_t
@@ -593,10 +593,16 @@ cfunc_proc_new(VALUE klass, VALUE ifunc, int8_t is_lambda)
     rb_proc_t *proc;
     cfunc_proc_t *sproc;
     VALUE procval = TypedData_Make_Struct(klass, cfunc_proc_t, &proc_data_type, sproc);
-    sproc->env[1] = VM_ENVVAL_BLOCK_PTR(0);
-    sproc->env[2] = Qundef;
+    VALUE *ep;
+
     proc = &sproc->basic;
-    *(VALUE **)&proc->block.ep = sproc->env+1;
+
+    *(VALUE **)&proc->block.ep = ep = sproc->env + VM_ENV_MANAGE_DATA_SIZE-1;
+    ep[VM_ENV_MANAGE_DATA_INDEX_FLAGS]   = VM_FRAME_MAGIC_IFUNC | VM_ENV_FLAG_ESCAPED;
+    ep[VM_ENV_MANAGE_DATA_INDEX_ME_CREF] = Qnil;
+    ep[VM_ENV_MANAGE_DATA_INDEX_SPECVAL] = VM_ENVVAL_BLOCK_PTR(0);
+    ep[1] = Qundef; /* envval */
+
     /* self? */
     RB_OBJ_WRITE(procval, &proc->block.code.ifunc, ifunc);
     proc->is_lambda = is_lambda;
@@ -638,7 +644,7 @@ proc_new(VALUE klass, int8_t is_lambda)
 	if ((block = rb_vm_control_frame_block_ptr(cfp)) != NULL) {
 	    const VALUE *lep = rb_vm_ep_local_ep(cfp->ep);
 
-	    if (VM_EP_IN_HEAP_P(th, lep)) {
+	    if (VM_EP_ESCAPED_P(lep)) {
 		procval = VM_EP_PROCVAL_IN_ENV(lep);
 		goto return_existing_proc;
 	    }
@@ -1215,7 +1221,7 @@ proc_to_s_(VALUE self, const rb_proc_t *proc)
 			 block->code.symbol, is_lambda);
 	break;
       case block_code_type_ifunc:
-	str = rb_sprintf("#<%s:%p%s> ifunc", cname, (void *)proc->block.code.val,
+	str = rb_sprintf("#<%s:%p%s>", cname, (void *)proc->block.code.val,
 			 is_lambda);
 	break;
     }

@@ -969,10 +969,11 @@ VM_FRAME_TYPE(const rb_control_frame_t *cfp)
 #define VM_FRAME_FLAG_BMETHOD 0x0400
 
 #define VM_ENV_FLAG_ESCAPED   0x0800
-#define VM_ENV_FLAG_WROTE     0x1000
+#define VM_ENV_FLAG_MODIFIED  0x1000
+#define VM_ENV_FLAG_LEFT      0x2000
 
-#define VM_FRAME_TYPE_FINISH_P(cfp)  (VM_ENV_FLAGS(cfp->ep, VM_FRAME_FLAG_FINISH ) != 0)
-#define VM_FRAME_TYPE_BMETHOD_P(cfp) (VM_ENV_FLAGS(cfp->ep, VM_FRAME_FLAG_BMETHOD) != 0)
+#define VM_FRAME_TYPE_FINISH_P(cfp)  (VM_ENV_FLAGS((cfp)->ep, VM_FRAME_FLAG_FINISH ) != 0)
+#define VM_FRAME_TYPE_BMETHOD_P(cfp) (VM_ENV_FLAGS((cfp)->ep, VM_FRAME_FLAG_BMETHOD) != 0)
 
 #define RUBYVM_CFUNC_FRAME_P(cfp) \
   (VM_FRAME_TYPE(cfp) == VM_FRAME_MAGIC_CFUNC)
@@ -1019,36 +1020,16 @@ typedef rb_control_frame_t *
 #define VM_EP_BLOCK_PTR(ep) ((rb_block_t *)GC_GUARDED_PTR_REF((ep)[0]))
 #define VM_EP_LEP_P(ep)     VM_ENVVAL_BLOCK_PTR_P((ep)[0])
 
-
-static inline int
-VM_EP_IN_HEAP_P(const rb_thread_t *th, const VALUE *ep)
-{
-#if 0
-    const VALUE *start = th->stack;
-    const VALUE *end = start + th->stack_size;
-
-    if (start <= ep && ep < end) {
-	return 0;
-    }
-    else {
-	return 1;
-    }
-#else
-    const VALUE * const start = th->stack;
-    const int offset = th->stack_size;
-
-    if ((uintptr_t)(ep - start) < (uintptr_t)offset) {
-	return 0;
-    }
-    else {
-	return 1;
-    }
-#endif
-}
-
 #if VM_CHECK_MODE > 0
 int rb_vm_ep_in_heap_p(const VALUE *ep);
 #endif
+
+static inline int
+VM_EP_ESCAPED_P(const VALUE *ep)
+{
+    VM_ASSERT(rb_vm_ep_in_heap_p(ep) == !!VM_ENV_FLAGS(ep, VM_ENV_FLAG_ESCAPED));
+    return VM_ENV_FLAGS(ep, VM_ENV_FLAG_ESCAPED) ? 1 : 0;
+}
 
 static inline VALUE
 VM_EP_ENVVAL_IN_ENV(const VALUE *ep)
@@ -1083,7 +1064,7 @@ VM_FORCE_WRITE_SPECIAL_CONST(const VALUE *ptr, VALUE special_const_value)
 static inline void
 VM_STACK_ENV_WRITE(const VALUE *ep, int index, VALUE v)
 {
-    VM_ASSERT(!rb_vm_ep_in_heap_p(ep));
+    VM_ASSERT(!VM_ENV_FLAGS(ep, VM_ENV_FLAG_LEFT));
     VM_FORCE_WRITE(&ep[index], v);
 }
 
