@@ -1263,11 +1263,14 @@ rb_insn_operand_intern(const rb_iseq_t *iseq,
 	    if (pnop) {
 		const rb_iseq_t *diseq = iseq;
 		VALUE level = *pnop, i;
+		ID lid;
 
 		for (i = 0; i < level; i++) {
 		    diseq = diseq->body->parent_iseq;
 		}
-		ret = id_to_name(diseq->body->local_table[diseq->body->local_table_size - op], INT2FIX('*'));
+		lid = diseq->body->local_table[diseq->body->local_table_size +
+					       VM_ENV_MANAGE_DATA_SIZE - 1 - op];
+		ret = id_to_name(lid, INT2FIX('*'));
 	    }
 	    else {
 		ret = rb_sprintf("%"PRIuVALUE, op);
