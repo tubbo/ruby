@@ -5,11 +5,18 @@
 #include "vm_core.h"
 
 static inline void
+vm_passed_block_set(rb_thread_t *th, const rb_block_t *block)
+{
+    th->passed_block = block;
+}
+
+static inline void
 pass_passed_block(rb_thread_t *th)
 {
-    th->passed_block = rb_vm_control_frame_block_ptr(th->cfp);
+    vm_passed_block_set(th, rb_vm_control_frame_block_ptr(th->cfp));
     VM_ENV_FLAGS_SET(th->cfp->ep, VM_FRAME_FLAG_PASSED);
 }
+
 #define PASS_PASSED_BLOCK_TH(th) pass_passed_block(th)
 #define PASS_PASSED_BLOCK() pass_passed_block(GET_THREAD())
 

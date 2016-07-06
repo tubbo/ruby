@@ -38,9 +38,11 @@ control_frame_dump(rb_thread_t *th, rb_control_frame_t *cfp)
 
     const rb_callable_method_entry_t *me;
 
+#if 0
     if (vm_block_code_iseq(cfp->block_code) != NULL) {
 	biseq_name = ""; /* RSTRING(vm_block_code_iseq(cfp)->body->location.label)->ptr; */
     }
+#endif
 
     if (ep < 0 || (size_t)ep > th->stack_size) {
 	ep = (ptrdiff_t)cfp->ep;

@@ -207,26 +207,28 @@ vm_push_frame(rb_thread_t *th,
     return cfp;
 }
 
+/* return TRUE if the frame is finished */
 static inline int
-vm_pop_frame(rb_thread_t *th, rb_control_frame_t *cfp, const VALUE *ep /* we'll use ep soon */)
+vm_pop_frame(rb_thread_t *th)
 {
-    if (VM_CHECK_MODE >= 4) rb_gc_verify_internal_consistency();
-    if (VMDEBUG == 2)       SDR();
+    const rb_control_frame_t *cfp = th->cfp;
+    const VALUE *ep = cfp->ep;
+    VALUE flags = ep[VM_ENV_MANAGE_DATA_INDEX_FLAGS];
 
-    th->cfp = RUBY_VM_PREVIOUS_CONTROL_FRAME(cfp);
+    if (flags & VM_ENV_FLAG_ESCAPED) {
+	VM_ASSERT(rb_vm_ep_in_heap_p(ep));
+	VM_ASSERT((flags & (VM_ENV_FLAG_LEFT)) == 0);
 
-    if (UNLIKELY(VM_FRAME_TYPE_FINISH_P(cfp))) {
-	return TRUE;
+	VM_ENV_FLAGS_SET(ep, VM_ENV_FLAG_LEFT);
+	rb_gc_writebarrier_remember(VM_EP_ENVVAL_IN_ENV(ep));
     }
     else {
-	return FALSE;
+	VM_ASSERT((flags & VM_ENV_FLAG_LEFT) == 0);
     }
-}
 
-void
-rb_vm_pop_frame(rb_thread_t *th)
-{
-    vm_pop_frame(th, th->cfp, th->cfp->ep);
+    th->cfp = RUBY_VM_PREVIOUS_CONTROL_FRAME(th->cfp);
+
+    return flags & VM_FRAME_FLAG_FINISH;
 }
 
 /* method dispatch */
@@ -1313,29 +1315,6 @@ double_cmp_ge(double a, double b)
     return a >= b ? Qtrue : Qfalse;
 }
 
-static VALUE *
-vm_base_ptr(rb_control_frame_t *cfp)
-{
-    rb_control_frame_t *prev_cfp = RUBY_VM_PREVIOUS_CONTROL_FRAME(cfp);
-    VALUE *bp = prev_cfp->sp + cfp->iseq->body->local_table_size + VM_ENV_MANAGE_DATA_SIZE;
-
-    if (cfp->iseq->body->type == ISEQ_TYPE_METHOD) {
-	/* adjust `self' */
-	bp += 1;
-    }
-
-#if VM_DEBUG_BP_CHECK
-    if (bp != cfp->bp_check) {
-	fprintf(stderr, "bp_check: %ld, bp: %ld\n",
-		(long)(cfp->bp_check - GET_THREAD()->stack),
-		(long)(bp - GET_THREAD()->stack));
-	rb_bug("vm_base_ptr: unreachable");
-    }
-#endif
-
-    return bp;
-}
-
 /* method call processes with call_info */
 
 #include "vm_args.c"
@@ -1464,7 +1443,8 @@ vm_call_iseq_setup_tailcall(rb_thread_t *th, rb_control_frame_t *cfp, struct rb_
     VALUE *sp_orig, *sp;
     VALUE finish_flag = VM_FRAME_TYPE_FINISH_P(cfp) ? VM_FRAME_FLAG_FINISH : 0;
 
-    vm_pop_frame(th, cfp, cfp->ep);
+    vm_pop_frame(th);
+
     cfp = th->cfp;
 
     RUBY_VM_CHECK_INTS(th);
@@ -2558,7 +2538,7 @@ vm_make_proc_with_iseq(const rb_iseq_t *blockiseq)
 	rb_bug("vm_make_proc_with_iseq: unreachable");
     }
 
-    blockptr = RUBY_VM_GET_BLOCK_PTR_IN_CFP(cfp);
+    blockptr = VM_CFP_TO_BLOCK_PTR(cfp);
     blockptr->code.iseq = blockiseq;
 
     return rb_vm_make_proc(th, blockptr, rb_cProc);

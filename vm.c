@@ -84,6 +84,145 @@ rb_vm_control_frame_block_ptr(const rb_control_frame_t *cfp)
     return VM_CF_BLOCK_PTR(cfp);
 }
 
+#if VM_CHECK_MODE > 0
+static int
+VM_CFP_IN_HEAP_P(const rb_thread_t *th, const rb_control_frame_t *cfp)
+{
+    const VALUE *start = th->stack;
+    const VALUE *end = (VALUE *)th->stack + th->stack_size;
+    if (start <= (VALUE *)cfp && (VALUE *)cfp < end) {
+	return FALSE;
+    }
+    else {
+	return TRUE;
+    }
+}
+
+static int envval_p(VALUE envval);
+
+static int
+VM_EP_IN_HEAP_P(const rb_thread_t *th, const VALUE *ep)
+{
+    const VALUE *start = th->stack;
+    const VALUE *end = (VALUE *)th->cfp;
+    if (start <= ep && ep < end) {
+	return FALSE;
+    }
+    else {
+	return TRUE;
+    }
+}
+
+int
+vm_ep_in_heap_p_(const rb_thread_t *th, const VALUE *ep)
+{
+    if (VM_EP_IN_HEAP_P(th, ep)) {
+	VALUE envval = ep[1]; /* VM_EP_ENVVAL_IN_ENV(ep); */
+
+	if (envval != Qundef) {
+	    rb_env_t *env;
+
+	    VM_ASSERT(VM_ENV_FLAGS(ep, VM_ENV_FLAG_ESCAPED));
+	    VM_ASSERT(envval_p(envval));
+	    GetEnvPtr(envval, env);
+	    VM_ASSERT(env->ep == ep);
+	}
+	return TRUE;
+    }
+    else {
+	return FALSE;
+    }
+}
+
+int
+rb_vm_ep_in_heap_p(const VALUE *ep)
+{
+    return vm_ep_in_heap_p_(GET_THREAD(), ep);
+}
+#endif
+
+static rb_block_t *
+VM_CFP_TO_BLOCK_PTR(const rb_control_frame_t *cfp)
+{
+    VM_ASSERT(!VM_CFP_IN_HEAP_P(GET_THREAD(), cfp));
+    return ((rb_block_t *)(&(cfp)->self));
+}
+
+rb_block_t *
+rb_vm_cfp_to_block_ptr(const rb_control_frame_t *cfp)
+{
+    return VM_CFP_TO_BLOCK_PTR(cfp);
+}
+
+static rb_control_frame_t *
+VM_BLOCK_PTR_TO_CFP(const rb_block_t *block)
+{
+    rb_control_frame_t *cfp = ((rb_control_frame_t *)((VALUE *)(block) - 3));
+
+    VM_ASSERT(!VM_CFP_IN_HEAP_P(GET_THREAD(), cfp));
+    VM_ASSERT(sizeof(rb_control_frame_t)/sizeof(VALUE) == 6 + VM_DEBUG_BP_CHECK ? 1 : 0);
+    return cfp;
+}
+
+static const rb_block_t *
+vm_passed_block(rb_thread_t *th)
+{
+    if (th->passed_block) {
+	const rb_block_t *block = th->passed_block;
+	th->passed_block = NULL;
+	return block;
+    }
+    else {
+	return NULL;
+    }
+}
+
+void
+rb_vm_unreachable_frames(const rb_thread_t *th)
+{
+    const rb_control_frame_t *cfp = th->cfp;
+    const rb_control_frame_t *limit_cfp = (void *)(th->stack + th->stack_size);
+
+    while(cfp != limit_cfp) {
+	const VALUE *ep = cfp->ep;
+	if (VM_ENV_FLAGS(ep, VM_ENV_FLAG_ESCAPED)) {
+	    VM_ASSERT(rb_vm_ep_in_heap_p(ep));
+	    VM_ENV_FLAGS_SET(ep, VM_ENV_FLAG_LEFT | VM_ENV_FLAG_FORCE_LEFT);
+
+	    if (VM_ENV_FLAGS(ep, VM_ENV_FLAG_MODIFIED)) {
+		rb_gc_writebarrier_remember(VM_EP_ENVVAL_IN_ENV(ep));
+	    }
+	}
+	cfp = RUBY_VM_PREVIOUS_CONTROL_FRAME(cfp);
+    }
+}
+
+#if VM_CHECK_MODE > 0
+void
+rb_vm_unreachable_frames_maybe(const rb_thread_t *th)
+{
+    const rb_control_frame_t *cfp = th->cfp;
+    const rb_control_frame_t *limit_cfp = (void *)(th->stack + th->stack_size);
+
+    while(cfp != limit_cfp) {
+	VM_ENV_FLAGS_SET(cfp->ep, VM_ENV_FLAG_FORCE_LEFT);
+	cfp = RUBY_VM_PREVIOUS_CONTROL_FRAME(cfp);
+    }
+}
+
+void
+rb_vm_reachable_frames(const rb_thread_t *th)
+{
+    const rb_control_frame_t *cfp = th->cfp;
+    const rb_control_frame_t *limit_cfp = (void *)(th->stack + th->stack_size);
+
+    while(cfp != limit_cfp) {
+	VM_ENV_FLAGS_UNSET(cfp->ep, VM_ENV_FLAG_LEFT);
+	cfp = RUBY_VM_PREVIOUS_CONTROL_FRAME(cfp);
+    }
+}
+#endif
+
 static rb_cref_t *
 vm_cref_new0(VALUE klass, rb_method_visibility_t visi, int module_func, rb_cref_t *prev_cref, int pushed_by_eval, int use_prev_prev)
 {
@@ -186,50 +325,6 @@ vm_bind_update_env(rb_binding_t *bind, VALUE envval)
     bind->block.ep = env->ep;
 }
 
-#if VM_CHECK_MODE > 0
-static int envval_p(VALUE envval);
-
-static inline int
-VM_EP_IN_HEAP_P(const rb_thread_t *th, const VALUE *ep)
-{
-    const VALUE *start = th->stack;
-    const VALUE *end = (VALUE *)th->cfp;
-    if (start <= ep && ep < end) {
-	return FALSE;
-    }
-    else {
-	return TRUE;
-    }
-}
-
-int
-vm_ep_in_heap_p_(const rb_thread_t *th, const VALUE *ep)
-{
-    if (VM_EP_IN_HEAP_P(th, ep)) {
-	VALUE envval = ep[1]; /* VM_EP_ENVVAL_IN_ENV(ep); */
-
-	if (envval != Qundef) {
-	    rb_env_t *env;
-
-	    VM_ASSERT(VM_ENV_FLAGS(ep, VM_ENV_FLAG_ESCAPED));
-	    VM_ASSERT(envval_p(envval));
-	    GetEnvPtr(envval, env);
-	    VM_ASSERT(env->ep == ep);
-	}
-	return TRUE;
-    }
-    else {
-	return FALSE;
-    }
-}
-
-int
-rb_vm_ep_in_heap_p(const VALUE *ep)
-{
-    return vm_ep_in_heap_p_(GET_THREAD(), ep);
-}
-#endif
-
 #if VM_COLLECT_USAGE_DETAILS
 static void vm_collect_usage_operand(int insn, int n, VALUE op);
 static void vm_collect_usage_insn(int insn);
@@ -250,8 +345,8 @@ static rb_serial_t ruby_vm_global_constant_state = 1;
 static rb_serial_t ruby_vm_class_serial = 1;
 
 #include "vm_insnhelper.h"
-#include "vm_insnhelper.c"
 #include "vm_exec.h"
+#include "vm_insnhelper.c"
 #include "vm_exec.c"
 
 #include "vm_method.c"
@@ -555,7 +650,6 @@ env_mark(void * const ptr)
 
     /* TODO: should mark more restricted range */
     RUBY_GC_INFO("env->env\n");
-
     VM_ASSERT(VM_ENV_FLAGS(env->ep, VM_ENV_FLAG_ESCAPED));
 
     if (VM_ENV_FLAGS(env->ep, VM_ENV_FLAG_LEFT)) {
@@ -577,9 +671,28 @@ env_memsize(const void *ptr)
     return size;
 }
 
+#if VM_CHECK_MODE > 0
+int objspace_call_finalizer_running = 0;
+
+static void
+env_free(void *ptr)
+{
+    if (ptr) {
+	rb_env_t * const env = ptr;
+	VM_ASSERT(VM_ENV_FLAGS(env->ep, VM_ENV_FLAG_ESCAPED));
+	if (objspace_call_finalizer_running == 0) {
+	    VM_ASSERT(VM_ENV_FLAGS(env->ep, VM_ENV_FLAG_LEFT | VM_ENV_FLAG_FORCE_LEFT) != 0);
+	}
+	free(env);
+    }
+}
+#else
+#define env_free RUBY_TYPED_DEFAULT_FREE
+#endif
+
 static const rb_data_type_t env_data_type = {
     "VM/env",
-    {env_mark, RUBY_TYPED_DEFAULT_FREE, env_memsize,},
+    {env_mark, env_free, env_memsize,},
     0, 0, RUBY_TYPED_FREE_IMMEDIATELY | RUBY_TYPED_WB_PROTECTED
 };
 
@@ -708,7 +821,6 @@ vm_make_env_each(rb_thread_t *const th, rb_control_frame_t *const cfp)
     env_size = local_size +
 	       1 /* envval */ +
 	       (blockprocval ? 1 : 0) /* blockprocval */;
-
     envval = TypedData_Wrap_Struct(rb_cEnv, &env_data_type, 0);
     env = xmalloc(sizeof(rb_env_t) + (env_size - 1 /* rb_env_t::env[1] */) * sizeof(VALUE));
     env->env_size = env_size;
@@ -849,12 +961,13 @@ rb_proc_create(VALUE klass, const rb_block_t *block,
     VALUE procval = rb_proc_alloc(klass);
     rb_proc_t *proc = RTYPEDDATA_DATA(procval);
 
+    VM_ASSERT(VM_EP_IN_HEAP_P(GET_THREAD(), block->ep));
+
     /* copy block */
     RB_OBJ_WRITE(procval, &proc->block.self, block->self);
     RB_OBJ_WRITE(procval, &proc->block.code.val, block->code.val);
     *((const VALUE **)&proc->block.ep) = block->ep;
     RB_OBJ_WRITTEN(procval, Qundef, VM_EP_ENVVAL_IN_ENV(block->ep));
-
     proc->safe_level = safe_level;
     proc->is_from_method = is_from_method;
     proc->is_lambda = is_lambda;
@@ -872,20 +985,15 @@ VALUE
 rb_vm_make_proc_lambda(rb_thread_t *th, const rb_block_t *block, VALUE klass, int8_t is_lambda)
 {
     VALUE procval;
-    rb_control_frame_t *cfp = RUBY_VM_GET_CFP_FROM_BLOCK_PTR(block);
+    VM_ASSERT(vm_block_code_type(block->code) != block_code_type_proc);
 
-    if (vm_block_code_type(block->code) == block_code_type_proc) {
-	rb_bug("rb_vm_make_proc: Proc value is already created.");
+    if (!VM_ENV_FLAGS(block->ep, VM_ENV_FLAG_ESCAPED)) {
+	rb_control_frame_t *cfp = VM_BLOCK_PTR_TO_CFP(block);
+	vm_make_env_object(th, cfp);
     }
-
-    vm_make_env_object(th, cfp);
     procval = rb_proc_create(klass, block, (int8_t)th->safe_level, FALSE, is_lambda);
 
-    if (VMDEBUG) {
-	if (th->stack < block->ep && block->ep < th->stack + th->stack_size) {
-	    rb_bug("invalid ptr: block->ep");
-	}
-    }
+    VM_ASSERT(VM_EP_IN_HEAP_P(th, block->ep));
 
     return procval;
 }
@@ -2312,8 +2420,9 @@ rb_thread_mark(void *ptr)
 		GetEnvPtr(VM_EP_ENVVAL_IN_ENV(ep), env);
 		rb_gc_mark_values((long)env->env_size, env->env);
 	    }
-
 	    VM_ASSERT(!!VM_ENV_FLAGS(ep, VM_ENV_FLAG_ESCAPED) == vm_ep_in_heap_p_(th, ep));
+	    VM_ASSERT(!VM_ENV_FLAGS(ep, VM_ENV_FLAG_LEFT) ||
+		       VM_ENV_FLAGS(ep, VM_ENV_FLAG_FORCE_LEFT));
 
 	    rb_gc_mark(cfp->block_code.val);
 	    rb_gc_mark(cfp->self);
@@ -3026,6 +3135,7 @@ Init_VM(void)
 	 * The Binding of the top level scope
 	 */
 	rb_define_global_const("TOPLEVEL_BINDING", rb_binding_new());
+	VM_ENV_FLAGS_SET(th->cfp->ep, VM_ENV_FLAG_LEFT | VM_ENV_FLAG_FORCE_LEFT);
     }
     vm_init_redefined_flag();
 

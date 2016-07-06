@@ -155,13 +155,7 @@ vm_call0_body(rb_thread_t* th, struct rb_calling_info *calling, const struct rb_
 {
     VALUE ret;
 
-    if (th->passed_block) {
-	calling->blockptr = th->passed_block;
-	th->passed_block = NULL;
-    }
-    else {
-	calling->blockptr = NULL;
-    }
+    calling->blockptr = vm_passed_block(th);
 
   again:
     switch (cc->me->def->type) {
@@ -222,7 +216,7 @@ vm_call0_body(rb_thread_t* th, struct rb_calling_info *calling, const struct rb_
 	goto again;
       case VM_METHOD_TYPE_MISSING:
 	{
-	    th->passed_block = calling->blockptr;
+	    vm_passed_block_set(th, calling->blockptr);
 	    return method_missing(calling->recv, ci->mid, calling->argc,
 				  argv, MISSING_NOENTRY);
 	}
@@ -747,11 +741,10 @@ method_missing(VALUE obj, ID id, int argc, const VALUE *argv, enum method_missin
 {
     VALUE *nargv, result, work, klass;
     rb_thread_t *th = GET_THREAD();
-    const rb_block_t *blockptr = th->passed_block;
+    const rb_block_t *blockptr = vm_passed_block(th);
     const rb_callable_method_entry_t *me;
 
     th->method_missing_reason = call_status;
-    th->passed_block = 0;
 
     if (id == idMethodMissing) {
       missing:
@@ -768,7 +761,7 @@ method_missing(VALUE obj, ID id, int argc, const VALUE *argv, enum method_missin
     if (!klass) goto missing;
     me = rb_callable_method_entry(klass, idMethodMissing);
     if (!me || METHOD_ENTRY_BASIC(me)) goto missing;
-    th->passed_block = blockptr;
+    vm_passed_block_set(th, blockptr);
     result = vm_call0(th, obj, idMethodMissing, argc, argv, me);
     if (work) ALLOCV_END(work);
     return result;
@@ -778,7 +771,7 @@ void
 rb_raise_method_missing(rb_thread_t *th, int argc, const VALUE *argv,
 			VALUE obj, int call_status)
 {
-    th->passed_block = 0;
+    vm_passed_block_set(th, NULL);
     raise_method_missing(th, argc, argv, obj, call_status | MISSING_MISSING);
 }
 
@@ -886,7 +879,7 @@ rb_funcall_with_block(VALUE recv, ID mid, int argc, const VALUE *argv, VALUE pas
 	rb_thread_t *th = GET_THREAD();
 	rb_proc_t *passed_proc;
 	GetProcPtr(passed_procval, passed_proc);
-	th->passed_block = &passed_proc->block;
+	vm_passed_block_set(th, &passed_proc->block);
     }
 
     return rb_call(recv, mid, argc, argv, CALL_PUBLIC);
@@ -1165,14 +1158,14 @@ rb_iterate0(VALUE (* it_proc) (VALUE), VALUE data1,
 	    const rb_block_t *blockptr;
 
 	    if (ifunc) {
-		rb_block_t *block = RUBY_VM_GET_BLOCK_PTR_IN_CFP(cfp);
+		rb_block_t *block = VM_CFP_TO_BLOCK_PTR(cfp);
 		block->code.ifunc = ifunc;
 		blockptr = block;
 	    }
 	    else {
 		blockptr = VM_CF_BLOCK_PTR(cfp);
 	    }
-	    th->passed_block = blockptr;
+	    vm_passed_block_set(th, blockptr);
 	}
 	retval = (*it_proc) (data1);
     }
@@ -1325,7 +1318,7 @@ eval_string_with_cref(VALUE self, VALUE src, VALUE scope, rb_cref_t *const cref_
 	    rb_control_frame_t *cfp = rb_vm_get_ruby_level_next_cfp(th, th->cfp);
 
 	    if (cfp != 0) {
-		block = *RUBY_VM_GET_BLOCK_PTR_IN_CFP(cfp);
+		block = *VM_CFP_TO_BLOCK_PTR(cfp);
 		block.self = self;
 		block.code.iseq = cfp->iseq; /* TODO */
 		base_block = &block;

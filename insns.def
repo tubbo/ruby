@@ -790,7 +790,7 @@ checkkeyword
 	ret = (bits & (0x01 << keyword_index)) ? Qfalse : Qtrue;
     }
     else {
-	assert(RB_TYPE_P(kw_bits, T_HASH));
+	VM_ASSERT(RB_TYPE_P(kw_bits, T_HASH));
 	ret = rb_hash_has_key(kw_bits, INT2FIX(keyword_index)) ? Qfalse : Qtrue;
     }
 }
@@ -1118,9 +1118,6 @@ leave
 (VALUE val)
 (VALUE val)
 {
-    VALUE flags;
-    const VALUE *ep;
-
     if (OPT_CHECKED_RUN) {
 	const VALUE *const bp = vm_base_ptr(reg_cfp);
 	if (reg_cfp->sp != bp) {
@@ -1131,19 +1128,7 @@ leave
 
     RUBY_VM_CHECK_INTS(th);
 
-    ep = GET_EP();
-    flags = ep[VM_ENV_MANAGE_DATA_INDEX_FLAGS];
-
-    if (flags & VM_ENV_FLAG_ESCAPED) {
-	VM_ENV_FLAGS_SET(ep, VM_ENV_FLAG_LEFT);
-	if (flags & VM_ENV_FLAG_MODIFIED) {
-	    rb_gc_writebarrier_remember(VM_EP_ENVVAL_IN_ENV(ep));
-	}
-    }
-
-    if (UNLIKELY(flags & VM_FRAME_FLAG_FINISH)) {
-	vm_pop_frame(th);
-
+    if (vm_pop_frame(th)) {
 #if OPT_CALL_THREADED_CODE
 	th->retval = val;
 	return 0;

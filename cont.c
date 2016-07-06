@@ -532,6 +532,8 @@ cont_restore_thread(rb_context_t *cont)
 {
     rb_thread_t *th = GET_THREAD(), *sth = &cont->saved_thread;
 
+    rb_vm_unreachable_frames_maybe(th);
+
     /* restore thread context */
     if (cont->type == CONTINUATION_CONTEXT) {
 	/* continuation */
@@ -576,6 +578,11 @@ cont_restore_thread(rb_context_t *cont)
     th->root_svar = sth->root_svar;
     th->ensure_list = sth->ensure_list;
 
+#if VM_CHECK_MODE > 0
+    if (cont->type == CONTINUATION_CONTEXT) {
+	rb_vm_reachable_frames(th);
+    }
+#endif
 }
 
 #if FIBER_USE_NATIVE
@@ -1085,7 +1092,6 @@ rb_cont_call(int argc, VALUE *argv, VALUE contval)
 
     /* restore `tracing' context. see [Feature #4347] */
     th->trace_arg = cont->saved_thread.trace_arg;
-
     cont_restore_0(cont, &contval);
     return Qnil; /* unreachable */
 }

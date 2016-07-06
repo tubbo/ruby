@@ -918,21 +918,39 @@ enum vm_svar_index {
     VM_SVAR_FLIPFLOP_START = 2 /* flipflop */
 };
 
-#define VM_FRAME_MAGIC_METHOD 0x11
-#define VM_FRAME_MAGIC_BLOCK  0x21
-#define VM_FRAME_MAGIC_CLASS  0x31
-#define VM_FRAME_MAGIC_TOP    0x41
-#define VM_FRAME_MAGIC_CFUNC  0x61
-#define VM_FRAME_MAGIC_PROC   0x71
-#define VM_FRAME_MAGIC_IFUNC  0x81
-#define VM_FRAME_MAGIC_EVAL   0x91
-#define VM_FRAME_MAGIC_LAMBDA 0xa1
-#define VM_FRAME_MAGIC_RESCUE 0xb1
-#define VM_FRAME_MAGIC_DUMMY  0xc1
-#define VM_FRAME_MAGIC_MASK_BITS 8
-#define VM_FRAME_MAGIC_MASK   (~(~(VALUE)0<<VM_FRAME_MAGIC_MASK_BITS))
+enum {
+    /* frame types */
+    VM_FRAME_MAGIC_METHOD = 0x11,
+    VM_FRAME_MAGIC_BLOCK  = 0x21,
+    VM_FRAME_MAGIC_CLASS  = 0x31,
+    VM_FRAME_MAGIC_TOP    = 0x41,
+    VM_FRAME_MAGIC_CFUNC  = 0x61,
+    VM_FRAME_MAGIC_PROC   = 0x71,
+    VM_FRAME_MAGIC_IFUNC  = 0x81,
+    VM_FRAME_MAGIC_EVAL   = 0x91,
+    VM_FRAME_MAGIC_LAMBDA = 0xa1,
+    VM_FRAME_MAGIC_RESCUE = 0xb1,
+    VM_FRAME_MAGIC_DUMMY  = 0xc1,
+
+    VM_FRAME_MAGIC_MASK_BITS = 8,
+    VM_FRAME_MAGIC_MASK      = (~(~(VALUE)0<<VM_FRAME_MAGIC_MASK_BITS)),
+
+    /* other frame/env flag */
+    VM_FRAME_FLAG_PASSED  = 0x0100,
+    VM_FRAME_FLAG_FINISH  = 0x0200,
+    VM_FRAME_FLAG_BMETHOD = 0x0400,
+
+    VM_ENV_FLAG_ESCAPED   = 0x0800,
+    VM_ENV_FLAG_MODIFIED  = 0x1000,
+    VM_ENV_FLAG_LEFT      = 0x2000,
+    VM_ENV_FLAG_FORCE_LEFT= 0x4000
+};
 
 static inline void VM_FORCE_WRITE_SPECIAL_CONST(const VALUE *ptr, VALUE special_const_value);
+
+
+#define VM_FRAME_TYPE_FINISH_P(cfp)  (VM_ENV_FLAGS((cfp)->ep, VM_FRAME_FLAG_FINISH ) != 0)
+#define VM_FRAME_TYPE_BMETHOD_P(cfp) (VM_ENV_FLAGS((cfp)->ep, VM_FRAME_FLAG_BMETHOD) != 0)
 
 #define VM_ENV_MANAGE_DATA_SIZE             ( 3)
 #define VM_ENV_MANAGE_DATA_INDEX_FLAGS      (-2)
@@ -949,6 +967,14 @@ VM_ENV_FLAGS_SET(const VALUE *ep, VALUE flag)
     VM_FORCE_WRITE_SPECIAL_CONST(&ep[VM_ENV_MANAGE_DATA_INDEX_FLAGS], flags | flag);
 }
 
+static inline void
+VM_ENV_FLAGS_UNSET(const VALUE *ep, VALUE flag)
+{
+    VALUE flags = ep[VM_ENV_MANAGE_DATA_INDEX_FLAGS];
+    VM_ASSERT(FIXNUM_P(flags));
+    VM_FORCE_WRITE_SPECIAL_CONST(&ep[VM_ENV_MANAGE_DATA_INDEX_FLAGS], flags & ~flag);
+}
+
 static inline long
 VM_ENV_FLAGS(const VALUE *ep, long flag)
 {
@@ -962,18 +988,6 @@ VM_FRAME_TYPE(const rb_control_frame_t *cfp)
 {
     return VM_ENV_FLAGS(cfp->ep, VM_FRAME_MAGIC_MASK);
 }
-
-/* other frame/env flag */
-#define VM_FRAME_FLAG_PASSED  0x0100
-#define VM_FRAME_FLAG_FINISH  0x0200
-#define VM_FRAME_FLAG_BMETHOD 0x0400
-
-#define VM_ENV_FLAG_ESCAPED   0x0800
-#define VM_ENV_FLAG_MODIFIED  0x1000
-#define VM_ENV_FLAG_LEFT      0x2000
-
-#define VM_FRAME_TYPE_FINISH_P(cfp)  (VM_ENV_FLAGS((cfp)->ep, VM_FRAME_FLAG_FINISH ) != 0)
-#define VM_FRAME_TYPE_BMETHOD_P(cfp) (VM_ENV_FLAGS((cfp)->ep, VM_FRAME_FLAG_BMETHOD) != 0)
 
 #define RUBYVM_CFUNC_FRAME_P(cfp) \
   (VM_FRAME_TYPE(cfp) == VM_FRAME_MAGIC_CFUNC)
@@ -1022,6 +1036,7 @@ typedef rb_control_frame_t *
 
 #if VM_CHECK_MODE > 0
 int rb_vm_ep_in_heap_p(const VALUE *ep);
+#define VM_PTR_IN_STACK_P(th, p) (th->stack <= (VALUE *)p && (VALUE *)p < (th->stack + th->stack_size))
 #endif
 
 static inline int
@@ -1169,11 +1184,6 @@ vm_block_self(const rb_block_t *block)
     }
 }
 
-#define RUBY_VM_GET_BLOCK_PTR_IN_CFP(cfp) ((rb_block_t *)(&(cfp)->self))
-#define RUBY_VM_GET_CFP_FROM_BLOCK_PTR(b) \
-  ((rb_control_frame_t *)((VALUE *)(b) - 3))
-/* magic number `3' is depend on rb_control_frame_t layout. */
-
 /* VM related object allocate functions */
 VALUE rb_thread_alloc(VALUE klass);
 VALUE rb_proc_alloc(VALUE klass);
@@ -1209,6 +1219,16 @@ void rb_vm_gvl_destroy(rb_vm_t *vm);
 VALUE rb_vm_call(rb_thread_t *th, VALUE recv, VALUE id, int argc,
 		 const VALUE *argv, const rb_callable_method_entry_t *me);
 void rb_vm_pop_frame(rb_thread_t *th);
+
+void rb_vm_unreachable_frames(const rb_thread_t *th);
+
+#if VM_CHECK_MODE > 0
+void rb_vm_unreachable_frames_maybe(const rb_thread_t *th);
+void rb_vm_reachable_frames(const rb_thread_t *th);
+#else
+#define rb_vm_unreachable_frames_maybe(th)
+#define rb_vm_reachable_frames(th)
+#endif
 
 void rb_thread_start_timer_thread(void);
 void rb_thread_stop_timer_thread(void);

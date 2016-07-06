@@ -599,7 +599,7 @@ cfunc_proc_new(VALUE klass, VALUE ifunc, int8_t is_lambda)
 
     *(VALUE **)&proc->block.ep = ep = sproc->env + VM_ENV_MANAGE_DATA_SIZE-1;
     ep[VM_ENV_MANAGE_DATA_INDEX_FLAGS]   = VM_FRAME_MAGIC_IFUNC | VM_ENV_FLAG_ESCAPED;
-    ep[VM_ENV_MANAGE_DATA_INDEX_ME_CREF] = Qnil;
+    ep[VM_ENV_MANAGE_DATA_INDEX_ME_CREF] = Qfalse;
     ep[VM_ENV_MANAGE_DATA_INDEX_SPECVAL] = VM_ENVVAL_BLOCK_PTR(0);
     ep[1] = Qundef; /* envval */
 
@@ -662,7 +662,6 @@ proc_new(VALUE klass, int8_t is_lambda)
     }
 
     /* block is in cf */
-
     switch (vm_block_code_type(block->code)) {
       case block_code_type_proc:
 	procval = block->code.proc;
@@ -837,18 +836,22 @@ check_argc(long argc)
 #define check_argc(argc) (argc)
 #endif
 
+rb_block_t *rb_vm_cfp_to_block_ptr(const rb_control_frame_t *cfp);
+
 static const rb_block_t *
-passed_block(VALUE pass_procval)
+proc_block_setup(rb_thread_t *th, VALUE pass_procval)
 {
     if (!NIL_P(pass_procval)) {
-	rb_proc_t *pass_proc;
+	rb_block_t *block = rb_vm_cfp_to_block_ptr(th->cfp);
 	if (SYMBOL_P(pass_procval)) {
 	    pass_procval = sym_proc_new(rb_cProc, pass_procval);
 	}
-	GetProcPtr(pass_procval, pass_proc);
-	return &pass_proc->block;
+	block->code.proc = pass_procval;
+	return block;
     }
-    return 0;
+    else {
+	return NULL;
+    }
 }
 
 VALUE
@@ -866,13 +869,14 @@ rb_proc_call(VALUE self, VALUE args)
 VALUE
 rb_proc_call_with_block(VALUE self, int argc, const VALUE *argv, VALUE pass_procval)
 {
+    rb_thread_t *th = GET_THREAD();
     VALUE vret;
     rb_proc_t *proc;
     const rb_block_t *block = 0;
     GetProcPtr(self, proc);
 
-    block = passed_block(pass_procval);
-    vret = rb_vm_invoke_proc(GET_THREAD(), proc, argc, argv, block);
+    block = proc_block_setup(th, pass_procval);
+    vret = rb_vm_invoke_proc(th, proc, argc, argv, block);
     RB_GC_GUARD(self);
     RB_GC_GUARD(pass_procval);
     return vret;
@@ -2031,7 +2035,7 @@ static inline VALUE
 call_method_data(rb_thread_t *th, const struct METHOD *data,
 		 int argc, const VALUE *argv, VALUE pass_procval)
 {
-    th->passed_block = passed_block(pass_procval);
+    vm_passed_block_set(th, proc_block_setup(th, pass_procval));
     return rb_vm_call(th, data->recv, data->me->called_id, argc, argv,
 		      method_callable_method_entry(data));
 }

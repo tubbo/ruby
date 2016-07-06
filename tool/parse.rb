@@ -9,6 +9,7 @@ puts '# ' + '-' * 70
 puts $str
 puts '# ' + '-' * 70
 
+RubyVM::InstructionSequence.compile_option = false
 $parsed = RubyVM::InstructionSequence.compile_file($file)
 puts "# disasm result: "
 puts '# ' + '-' * 70
