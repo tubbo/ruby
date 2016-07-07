@@ -207,28 +207,66 @@ vm_push_frame(rb_thread_t *th,
     return cfp;
 }
 
+static VALUE *
+vm_base_ptr(const rb_control_frame_t *cfp)
+{
+    const rb_control_frame_t *prev_cfp = RUBY_VM_PREVIOUS_CONTROL_FRAME(cfp);
+
+    if (cfp->iseq && RUBY_VM_NORMAL_ISEQ_P(cfp->iseq)) {
+	VALUE *bp = prev_cfp->sp + cfp->iseq->body->local_table_size + VM_ENV_MANAGE_DATA_SIZE;
+	if (cfp->iseq->body->type == ISEQ_TYPE_METHOD) {
+	    /* adjust `self' */
+	    bp += 1;
+	}
+#if VM_DEBUG_BP_CHECK
+	if (bp != cfp->bp_check) {
+	    fprintf(stderr, "bp_check: %ld, bp: %ld\n",
+		    (long)(cfp->bp_check - GET_THREAD()->stack),
+		    (long)(bp - GET_THREAD()->stack));
+	    rb_bug("vm_base_ptr: unreachable");
+	}
+#endif
+	return bp;
+    }
+    else {
+	return NULL;
+    }
+}
+
+NOINLINE(static void vm_pop_frame_escaped_env(const VALUE *ep, VALUE flags));
+
+static void
+vm_pop_frame_escaped_env(const VALUE *ep, VALUE flags)
+{
+    VM_ASSERT(rb_vm_ep_in_heap_p(ep));
+    VM_ASSERT((flags & (VM_ENV_FLAG_LEFT)) == 0);
+
+    VM_ENV_FLAGS_SET(ep, VM_ENV_FLAG_LEFT);
+    rb_gc_writebarrier_remember(VM_EP_ENVVAL_IN_ENV(ep));
+}
+
 /* return TRUE if the frame is finished */
 static inline int
-vm_pop_frame(rb_thread_t *th)
+vm_pop_frame(rb_thread_t *th, rb_control_frame_t *cfp, const VALUE *ep)
 {
-    const rb_control_frame_t *cfp = th->cfp;
-    const VALUE *ep = cfp->ep;
     VALUE flags = ep[VM_ENV_MANAGE_DATA_INDEX_FLAGS];
 
     if (flags & VM_ENV_FLAG_ESCAPED) {
-	VM_ASSERT(rb_vm_ep_in_heap_p(ep));
-	VM_ASSERT((flags & (VM_ENV_FLAG_LEFT)) == 0);
-
-	VM_ENV_FLAGS_SET(ep, VM_ENV_FLAG_LEFT);
-	rb_gc_writebarrier_remember(VM_EP_ENVVAL_IN_ENV(ep));
+	vm_pop_frame_escaped_env(ep, flags);
     }
     else {
 	VM_ASSERT((flags & VM_ENV_FLAG_LEFT) == 0);
     }
 
-    th->cfp = RUBY_VM_PREVIOUS_CONTROL_FRAME(th->cfp);
+    th->cfp = RUBY_VM_PREVIOUS_CONTROL_FRAME(cfp);
 
     return flags & VM_FRAME_FLAG_FINISH;
+}
+
+void
+rb_vm_pop_frame(rb_thread_t *th)
+{
+    vm_pop_frame(th, th->cfp, th->cfp->ep);
 }
 
 /* method dispatch */
@@ -1442,8 +1480,7 @@ vm_call_iseq_setup_tailcall(rb_thread_t *th, rb_control_frame_t *cfp, struct rb_
     VALUE *sp_orig, *sp;
     VALUE finish_flag = VM_FRAME_TYPE_FINISH_P(cfp) ? VM_FRAME_FLAG_FINISH : 0;
 
-    vm_pop_frame(th);
-
+    vm_pop_frame(th, cfp, cfp->ep);
     cfp = th->cfp;
 
     RUBY_VM_CHECK_INTS(th);
