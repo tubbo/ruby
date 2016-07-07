@@ -207,34 +207,6 @@ vm_push_frame(rb_thread_t *th,
     return cfp;
 }
 
-static VALUE *
-vm_base_ptr(const rb_control_frame_t *cfp)
-{
-    const rb_control_frame_t *prev_cfp = RUBY_VM_PREVIOUS_CONTROL_FRAME(cfp);
-
-    if (cfp->iseq && RUBY_VM_NORMAL_ISEQ_P(cfp->iseq)) {
-	VALUE *bp = prev_cfp->sp + cfp->iseq->body->local_table_size + VM_ENV_MANAGE_DATA_SIZE;
-	if (cfp->iseq->body->type == ISEQ_TYPE_METHOD) {
-	    /* adjust `self' */
-	    bp += 1;
-	}
-#if VM_DEBUG_BP_CHECK
-	if (bp != cfp->bp_check) {
-	    fprintf(stderr, "bp_check: %ld, bp: %ld\n",
-		    (long)(cfp->bp_check - GET_THREAD()->stack),
-		    (long)(bp - GET_THREAD()->stack));
-	    rb_bug("vm_base_ptr: unreachable");
-	}
-#endif
-	return bp;
-    }
-    else {
-	return NULL;
-    }
-}
-
-NOINLINE(static void vm_pop_frame_escaped_env(const VALUE *ep, VALUE flags));
-
 static void
 vm_pop_frame_escaped_env(const VALUE *ep, VALUE flags)
 {
@@ -251,14 +223,17 @@ vm_pop_frame(rb_thread_t *th, rb_control_frame_t *cfp, const VALUE *ep)
 {
     VALUE flags = ep[VM_ENV_MANAGE_DATA_INDEX_FLAGS];
 
-    if (flags & VM_ENV_FLAG_ESCAPED) {
-	vm_pop_frame_escaped_env(ep, flags);
-    }
-    else {
-	VM_ASSERT((flags & VM_ENV_FLAG_LEFT) == 0);
-    }
+    if (VM_CHECK_MODE >= 4) rb_gc_verify_internal_consistency();
+    if (VMDEBUG == 2)       SDR();
 
     th->cfp = RUBY_VM_PREVIOUS_CONTROL_FRAME(cfp);
+
+    if ((flags & VM_ENV_FLAG_ESCAPED) == 0) {
+	VM_ASSERT((flags & VM_ENV_FLAG_LEFT) == 0);
+    }
+    else {
+	vm_pop_frame_escaped_env(ep, flags);
+    }
 
     return flags & VM_FRAME_FLAG_FINISH;
 }
@@ -1350,6 +1325,32 @@ double_cmp_ge(double a, double b)
 {
     CHECK_CMP_NAN(a, b);
     return a >= b ? Qtrue : Qfalse;
+}
+
+static VALUE *
+vm_base_ptr(const rb_control_frame_t *cfp)
+{
+    const rb_control_frame_t *prev_cfp = RUBY_VM_PREVIOUS_CONTROL_FRAME(cfp);
+
+    if (cfp->iseq && RUBY_VM_NORMAL_ISEQ_P(cfp->iseq)) {
+	VALUE *bp = prev_cfp->sp + cfp->iseq->body->local_table_size + VM_ENV_MANAGE_DATA_SIZE;
+	if (cfp->iseq->body->type == ISEQ_TYPE_METHOD) {
+	    /* adjust `self' */
+	    bp += 1;
+	}
+#if VM_DEBUG_BP_CHECK
+	if (bp != cfp->bp_check) {
+	    fprintf(stderr, "bp_check: %ld, bp: %ld\n",
+		    (long)(cfp->bp_check - GET_THREAD()->stack),
+		    (long)(bp - GET_THREAD()->stack));
+	    rb_bug("vm_base_ptr: unreachable");
+	}
+#endif
+	return bp;
+    }
+    else {
+	return NULL;
+    }
 }
 
 /* method call processes with call_info */
