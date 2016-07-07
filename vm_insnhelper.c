@@ -262,7 +262,6 @@ vm_env_write_check(const VALUE *ep, int index, VALUE v)
 	VM_ENV_WRITE(VM_EP_ENVVAL_IN_ENV(ep), ep, index, v);
     }
     else {
-	VM_ENV_FLAGS_SET(ep, VM_ENV_FLAG_MODIFIED);
 	VM_STACK_ENV_WRITE(ep, index, v);
     }
 }

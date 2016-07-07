@@ -188,10 +188,7 @@ rb_vm_unreachable_frames(const rb_thread_t *th)
 	if (VM_ENV_FLAGS(ep, VM_ENV_FLAG_ESCAPED)) {
 	    VM_ASSERT(rb_vm_ep_in_heap_p(ep));
 	    VM_ENV_FLAGS_SET(ep, VM_ENV_FLAG_LEFT | VM_ENV_FLAG_FORCE_LEFT);
-
-	    if (VM_ENV_FLAGS(ep, VM_ENV_FLAG_MODIFIED)) {
-		rb_gc_writebarrier_remember(VM_EP_ENVVAL_IN_ENV(ep));
-	    }
+	    rb_gc_writebarrier_remember(VM_EP_ENVVAL_IN_ENV(ep));
 	}
 	cfp = RUBY_VM_PREVIOUS_CONTROL_FRAME(cfp);
     }
