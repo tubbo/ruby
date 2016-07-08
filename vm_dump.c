@@ -223,7 +223,7 @@ rb_vmdebug_proc_dump_raw(rb_proc_t *proc)
 
     fprintf(stderr, "-- proc -------------------\n");
     fprintf(stderr, "self: %s\n", selfstr);
-    GetEnvPtr(VM_EP_ENVVAL_IN_ENV(proc->block.ep), env);
+    GetEnvPtr(VM_ENV_ENVVAL(proc->block.ep), env);
     rb_vmdebug_env_dump_raw(env, proc->block.ep);
 }
 

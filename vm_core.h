@@ -918,6 +918,22 @@ enum vm_svar_index {
     VM_SVAR_FLIPFLOP_START = 2 /* flipflop */
 };
 
+/* inline cache */
+typedef struct iseq_inline_cache_entry *IC;
+typedef struct rb_call_info *CALL_INFO;
+typedef struct rb_call_cache *CALL_CACHE;
+
+void rb_vm_change_state(void);
+
+typedef VALUE CDHASH;
+
+#ifndef FUNC_FASTCALL
+#define FUNC_FASTCALL(x) x
+#endif
+
+typedef rb_control_frame_t *
+  (FUNC_FASTCALL(*rb_insn_func_t))(rb_thread_t *, rb_control_frame_t *);
+
 enum {
     /* frame types */
     VM_FRAME_MAGIC_METHOD = 0x11,
@@ -946,7 +962,6 @@ enum {
 };
 
 static inline void VM_FORCE_WRITE_SPECIAL_CONST(const VALUE *ptr, VALUE special_const_value);
-
 
 #define VM_FRAME_TYPE_FINISH_P(cfp)  (VM_ENV_FLAGS((cfp)->ep, VM_FRAME_FLAG_FINISH ) != 0)
 #define VM_FRAME_TYPE_BMETHOD_P(cfp) (VM_ENV_FLAGS((cfp)->ep, VM_FRAME_FLAG_BMETHOD) != 0)
@@ -991,22 +1006,6 @@ VM_FRAME_TYPE(const rb_control_frame_t *cfp)
 #define RUBYVM_CFUNC_FRAME_P(cfp) \
   (VM_FRAME_TYPE(cfp) == VM_FRAME_MAGIC_CFUNC)
 
-/* inline cache */
-typedef struct iseq_inline_cache_entry *IC;
-typedef struct rb_call_info *CALL_INFO;
-typedef struct rb_call_cache *CALL_CACHE;
-
-void rb_vm_change_state(void);
-
-typedef VALUE CDHASH;
-
-#ifndef FUNC_FASTCALL
-#define FUNC_FASTCALL(x) x
-#endif
-
-typedef rb_control_frame_t *
-  (FUNC_FASTCALL(*rb_insn_func_t))(rb_thread_t *, rb_control_frame_t *);
-
 #define GC_GUARDED_PTR(p)     ((VALUE)((VALUE)(p) | 0x01))
 #define GC_GUARDED_PTR_REF(p) ((void *)(((VALUE)(p)) & ~0x03))
 #define GC_GUARDED_PTR_P(p)   (((VALUE)(p)) & 0x01)
@@ -1039,21 +1038,21 @@ int rb_vm_ep_in_heap_p(const VALUE *ep);
 #endif
 
 static inline int
-VM_EP_ESCAPED_P(const VALUE *ep)
+VM_ENV_ESCAPED_P(const VALUE *ep)
 {
     VM_ASSERT(rb_vm_ep_in_heap_p(ep) == !!VM_ENV_FLAGS(ep, VM_ENV_FLAG_ESCAPED));
     return VM_ENV_FLAGS(ep, VM_ENV_FLAG_ESCAPED) ? 1 : 0;
 }
 
 static inline VALUE
-VM_EP_ENVVAL_IN_ENV(const VALUE *ep)
+VM_ENV_ENVVAL(const VALUE *ep)
 {
     VM_ASSERT(rb_vm_ep_in_heap_p(ep));
     return ep[1];
 }
 
 static inline VALUE
-VM_EP_PROCVAL_IN_ENV(const VALUE *ep)
+VM_ENV_PROCVAL(const VALUE *ep)
 {
     VM_ASSERT(rb_vm_ep_in_heap_p(ep));
     VM_ASSERT(VM_EP_LEP_P(ep));
@@ -1096,7 +1095,7 @@ static inline void
 VM_ENV_WRITE(VALUE env, const VALUE *ep, int index, VALUE v)
 {
     VM_ASSERT(rb_vm_ep_in_heap_p(ep));
-    VM_ASSERT(env == VM_EP_ENVVAL_IN_ENV(ep));
+    VM_ASSERT(env == VM_ENV_ENVVAL(ep));
     VM_ASSERT(vm_env_ep(env) == ep);
 
     RB_OBJ_WRITE(env, &ep[index], v);

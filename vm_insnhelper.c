@@ -214,7 +214,7 @@ vm_pop_frame_escaped_env(const VALUE *ep, VALUE flags)
     VM_ASSERT((flags & (VM_ENV_FLAG_LEFT)) == 0);
 
     VM_ENV_FLAGS_SET(ep, VM_ENV_FLAG_LEFT);
-    rb_gc_writebarrier_remember(VM_EP_ENVVAL_IN_ENV(ep));
+    rb_gc_writebarrier_remember(VM_ENV_ENVVAL(ep));
 }
 
 /* return TRUE if the frame is finished */
@@ -272,7 +272,7 @@ static inline void
 vm_env_write_check(const VALUE *ep, int index, VALUE v)
 {
     if (VM_ENV_FLAGS(ep, VM_ENV_FLAG_LEFT)) {
-	VM_ENV_WRITE(VM_EP_ENVVAL_IN_ENV(ep), ep, index, v);
+	VM_ENV_WRITE(VM_ENV_ENVVAL(ep), ep, index, v);
     }
     else {
 	VM_STACK_ENV_WRITE(ep, index, v);
@@ -583,13 +583,13 @@ vm_cref_replace_with_duplicated_cref(const VALUE *ep)
 	VALUE envval;
 
 	while (!VM_EP_LEP_P(ep)) {
-	    envval = VM_EP_ESCAPED_P(ep) ? VM_EP_ENVVAL_IN_ENV(ep) : Qfalse;
+	    envval = VM_ENV_ESCAPED_P(ep) ? VM_ENV_ENVVAL(ep) : Qfalse;
 	    if ((cref = cref_replace_with_duplicated_cref_each_frame(&ep[VM_ENV_MANAGE_DATA_INDEX_ME_CREF], FALSE, envval)) != NULL) {
 		return cref;
 	    }
 	    ep = VM_EP_PREV_EP(ep);
 	}
-	envval = VM_EP_ESCAPED_P(ep) ? VM_EP_ENVVAL_IN_ENV(ep) : Qfalse;
+	envval = VM_ENV_ESCAPED_P(ep) ? VM_ENV_ENVVAL(ep) : Qfalse;
 	return cref_replace_with_duplicated_cref_each_frame(&ep[VM_ENV_MANAGE_DATA_INDEX_ME_CREF], TRUE, envval);
     }
     else {

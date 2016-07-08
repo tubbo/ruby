@@ -117,7 +117,7 @@ int
 vm_ep_in_heap_p_(const rb_thread_t *th, const VALUE *ep)
 {
     if (VM_EP_IN_HEAP_P(th, ep)) {
-	VALUE envval = ep[1]; /* VM_EP_ENVVAL_IN_ENV(ep); */
+	VALUE envval = ep[1]; /* VM_ENV_ENVVAL(ep); */
 
 	if (envval != Qundef) {
 	    rb_env_t *env;
@@ -188,7 +188,7 @@ rb_vm_unreachable_frames(const rb_thread_t *th)
 	if (VM_ENV_FLAGS(ep, VM_ENV_FLAG_ESCAPED)) {
 	    VM_ASSERT(rb_vm_ep_in_heap_p(ep));
 	    VM_ENV_FLAGS_SET(ep, VM_ENV_FLAG_LEFT | VM_ENV_FLAG_FORCE_LEFT);
-	    rb_gc_writebarrier_remember(VM_EP_ENVVAL_IN_ENV(ep));
+	    rb_gc_writebarrier_remember(VM_ENV_ENVVAL(ep));
 	}
 	cfp = RUBY_VM_PREVIOUS_CONTROL_FRAME(cfp);
     }
@@ -769,14 +769,14 @@ vm_make_env_each(rb_thread_t *const th, rb_control_frame_t *const cfp)
     const VALUE *new_ep;
     int local_size, env_size;
 
-    if (VM_EP_ESCAPED_P(ep)) {
-	return VM_EP_ENVVAL_IN_ENV(ep);
+    if (VM_ENV_ESCAPED_P(ep)) {
+	return VM_ENV_ENVVAL(ep);
     }
 
     if (!VM_EP_LEP_P(ep)) {
 	VALUE *prev_ep = VM_EP_PREV_EP(ep);
 
-	if (!VM_EP_ESCAPED_P(prev_ep)) {
+	if (!VM_ENV_ESCAPED_P(prev_ep)) {
 	    rb_control_frame_t *prev_cfp = RUBY_VM_PREVIOUS_CONTROL_FRAME(cfp);
 
 	    while (prev_cfp->ep != prev_ep) {
@@ -890,7 +890,7 @@ rb_vm_env_prev_envval(const rb_env_t *env)
 	return Qfalse;
     }
     else {
-	return VM_EP_ENVVAL_IN_ENV(VM_EP_PREV_EP(ep));
+	return VM_ENV_ENVVAL(VM_EP_PREV_EP(ep));
     }
 }
 
@@ -918,9 +918,9 @@ collect_local_variables_in_env(const rb_env_t *env, const struct local_var_list 
 static int
 vm_collect_local_variables_in_heap(rb_thread_t *th, const VALUE *ep, const struct local_var_list *vars)
 {
-    if (VM_EP_ESCAPED_P(ep)) {
+    if (VM_ENV_ESCAPED_P(ep)) {
 	rb_env_t *env;
-	GetEnvPtr(VM_EP_ENVVAL_IN_ENV(ep), env);
+	GetEnvPtr(VM_ENV_ENVVAL(ep), env);
 	collect_local_variables_in_env(env, vars);
 	return 1;
     }
@@ -964,7 +964,7 @@ rb_proc_create(VALUE klass, const rb_block_t *block,
     RB_OBJ_WRITE(procval, &proc->block.self, block->self);
     RB_OBJ_WRITE(procval, &proc->block.code.val, block->code.val);
     *((const VALUE **)&proc->block.ep) = block->ep;
-    RB_OBJ_WRITTEN(procval, Qundef, VM_EP_ENVVAL_IN_ENV(block->ep));
+    RB_OBJ_WRITTEN(procval, Qundef, VM_ENV_ENVVAL(block->ep));
     proc->safe_level = safe_level;
     proc->is_from_method = is_from_method;
     proc->is_lambda = is_lambda;
@@ -2414,7 +2414,7 @@ rb_thread_mark(void *ptr)
 	    const VALUE *ep = cfp->ep;
 	    if (VM_ENV_FLAGS(ep, VM_ENV_FLAG_ESCAPED)) {
 		const rb_env_t *env;
-		GetEnvPtr(VM_EP_ENVVAL_IN_ENV(ep), env);
+		GetEnvPtr(VM_ENV_ENVVAL(ep), env);
 		rb_gc_mark_values((long)env->env_size, env->env);
 	    }
 	    VM_ASSERT(!!VM_ENV_FLAGS(ep, VM_ENV_FLAG_ESCAPED) == vm_ep_in_heap_p_(th, ep));

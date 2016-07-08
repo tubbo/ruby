@@ -58,7 +58,7 @@ proc_mark(void *ptr)
     RUBY_MARK_UNLESS_NULL(proc->block.self);
     RUBY_MARK_UNLESS_NULL(proc->block.code.val);
     if (proc->block.ep && proc->block.ep[1] != Qundef /* cfunc_proc_t */) {
-	RUBY_MARK_UNLESS_NULL(VM_EP_ENVVAL_IN_ENV(proc->block.ep));
+	RUBY_MARK_UNLESS_NULL(VM_ENV_ENVVAL(proc->block.ep));
     }
     RUBY_MARK_LEAVE("proc");
 }
@@ -265,7 +265,7 @@ binding_mark(void *ptr)
     RUBY_MARK_UNLESS_NULL(bind->block.self);
     RUBY_MARK_UNLESS_NULL(bind->block.code.val);
     if (bind->block.ep) {
-	RUBY_MARK_UNLESS_NULL(VM_EP_ENVVAL_IN_ENV(bind->block.ep));
+	RUBY_MARK_UNLESS_NULL(VM_ENV_ENVVAL(bind->block.ep));
     }
     RUBY_MARK_UNLESS_NULL(bind->path);
 
@@ -454,7 +454,7 @@ bind_local_variables(VALUE bindval)
     const rb_env_t *env;
 
     GetBindingPtr(bindval, bind);
-    GetEnvPtr(VM_EP_ENVVAL_IN_ENV(bind->block.ep), env);
+    GetEnvPtr(VM_ENV_ENVVAL(bind->block.ep), env);
 
     return rb_vm_env_local_variables(env);
 }
@@ -487,7 +487,7 @@ bind_local_variable_get(VALUE bindval, VALUE sym)
 
     GetBindingPtr(bindval, bind);
 
-    if ((ptr = get_local_variable_ptr(VM_EP_ENVVAL_IN_ENV(bind->block.ep), lid)) == NULL) {
+    if ((ptr = get_local_variable_ptr(VM_ENV_ENVVAL(bind->block.ep), lid)) == NULL) {
 	sym = ID2SYM(lid);
       undefined:
 	rb_name_err_raise("local variable `%1$s' not defined for %2$s",
@@ -532,11 +532,11 @@ bind_local_variable_set(VALUE bindval, VALUE sym, VALUE val)
     if (!lid) lid = rb_intern_str(sym);
 
     GetBindingPtr(bindval, bind);
-    envval = VM_EP_ENVVAL_IN_ENV(bind->block.ep);
+    envval = VM_ENV_ENVVAL(bind->block.ep);
     if ((ptr = get_local_variable_ptr(envval, lid)) == NULL) {
 	/* not found. create new env */
 	ptr = rb_binding_add_dynavars(bind, 1, &lid);
-	envval = VM_EP_ENVVAL_IN_ENV(bind->block.ep);
+	envval = VM_ENV_ENVVAL(bind->block.ep);
     }
 
     RB_OBJ_WRITE(envval, ptr, val);
@@ -570,7 +570,7 @@ bind_local_variable_defined_p(VALUE bindval, VALUE sym)
     if (!lid) return Qfalse;
 
     GetBindingPtr(bindval, bind);
-    return get_local_variable_ptr(VM_EP_ENVVAL_IN_ENV(bind->block.ep), lid) ? Qtrue : Qfalse;
+    return get_local_variable_ptr(VM_ENV_ENVVAL(bind->block.ep), lid) ? Qtrue : Qfalse;
 }
 
 /*
@@ -644,8 +644,8 @@ proc_new(VALUE klass, int8_t is_lambda)
 	if ((block = rb_vm_control_frame_block_ptr(cfp)) != NULL) {
 	    const VALUE *lep = rb_vm_ep_local_ep(cfp->ep);
 
-	    if (VM_EP_ESCAPED_P(lep)) {
-		procval = VM_EP_PROCVAL_IN_ENV(lep);
+	    if (VM_ENV_ESCAPED_P(lep)) {
+		procval = VM_ENV_PROCVAL(lep);
 		goto return_existing_proc;
 	    }
 
@@ -2733,7 +2733,7 @@ proc_binding(VALUE self)
     const rb_env_t *env;
 
     GetProcPtr(self, proc);
-    envval = VM_EP_ENVVAL_IN_ENV(proc->block.ep);
+    envval = VM_ENV_ENVVAL(proc->block.ep);
     block = &proc->block;
     binding_self = block->self;
 
