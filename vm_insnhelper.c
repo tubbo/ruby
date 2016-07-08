@@ -1481,6 +1481,12 @@ vm_call_iseq_setup_tailcall(rb_thread_t *th, rb_control_frame_t *cfp, struct rb_
     VALUE *sp_orig, *sp;
     VALUE finish_flag = VM_FRAME_TYPE_FINISH_P(cfp) ? VM_FRAME_FLAG_FINISH : 0;
 
+    if (calling->blockptr == VM_CFP_TO_BLOCK_PTR(cfp)) {
+	rb_block_t *block = VM_CFP_TO_BLOCK_PTR(RUBY_VM_PREVIOUS_CONTROL_FRAME(cfp));
+	block->code = calling->blockptr->code;
+	calling->blockptr = block;
+    }
+
     vm_pop_frame(th, cfp, cfp->ep);
     cfp = th->cfp;
 
