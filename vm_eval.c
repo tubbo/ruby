@@ -121,8 +121,8 @@ vm_call0_cfunc_with_frame(rb_thread_t* th, struct rb_calling_info *calling, cons
     {
 	rb_control_frame_t *reg_cfp = th->cfp;
 
-	vm_push_frame(th, 0, VM_FRAME_MAGIC_CFUNC, recv,
-		      VM_ENVVAL_BLOCK_PTR(blockptr), (VALUE)me,
+	vm_push_frame(th, 0, VM_FRAME_MAGIC_CFUNC | VM_ENV_FLAG_LOCAL, recv,
+		      VM_GUARDED_BLOCK_PTR(blockptr), (VALUE)me,
 		      0, reg_cfp->sp, 0, 0);
 
 	if (len >= 0) rb_check_arity(argc, len, len);
@@ -1584,7 +1584,7 @@ yield_under(VALUE under, VALUE self, int argc, const VALUE *argv)
 	block = *blockptr;
 	block.self = self;
 
-	VM_FORCE_WRITE_SPECIAL_CONST(&VM_CF_LEP(th->cfp)[0], VM_ENVVAL_BLOCK_PTR(&block));
+	VM_FORCE_WRITE_SPECIAL_CONST(&VM_CF_LEP(th->cfp)[0], VM_GUARDED_BLOCK_PTR(&block));
     }
     cref = vm_cref_push(th, under, blockptr, TRUE);
 
@@ -1603,7 +1603,7 @@ rb_yield_refine_block(VALUE refinement, VALUE refinements)
 	block = *blockptr;
 	block.self = refinement;
 
-	VM_FORCE_WRITE_SPECIAL_CONST(&VM_CF_LEP(th->cfp)[0], VM_ENVVAL_BLOCK_PTR(&block));
+	VM_FORCE_WRITE_SPECIAL_CONST(&VM_CF_LEP(th->cfp)[0], VM_GUARDED_BLOCK_PTR(&block));
     }
     cref = vm_cref_push(th, refinement, blockptr, TRUE);
     CREF_REFINEMENTS_SET(cref, refinements);
@@ -2094,7 +2094,7 @@ rb_f_local_variables(void)
 		local_var_list_add(&vars, cfp->iseq->body->local_table[i]);
 	    }
 	}
-	if (!VM_EP_LEP_P(cfp->ep)) {
+	if (!VM_ENV_LOCAL_P(cfp->ep)) {
 	    /* block */
 	    const VALUE *ep = VM_CF_PREV_EP(cfp);
 

@@ -701,8 +701,8 @@ raise_argument_error(rb_thread_t *th, const rb_iseq_t *iseq, const VALUE exc)
     VALUE at;
 
     if (iseq) {
-	vm_push_frame(th, iseq, VM_FRAME_MAGIC_DUMMY, Qnil /* self */,
-		      VM_ENVVAL_BLOCK_PTR(0) /* specval*/, Qfalse /* me or cref */,
+	vm_push_frame(th, iseq, VM_FRAME_MAGIC_DUMMY | VM_ENV_FLAG_LOCAL, Qnil /* self */,
+		      VM_GUARDED_BLOCK_PTR(0) /* specval*/, Qfalse /* me or cref */,
 		      iseq->body->iseq_encoded, th->cfp->sp, 0, 0 /* stack_max */);
 	at = rb_vm_backtrace_object();
 	rb_vm_pop_frame(th);

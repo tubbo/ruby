@@ -82,10 +82,10 @@ vm_check_frame_detail(VALUE type, int req_block, int req_me, int req_cref, VALUE
 	req_me = TRUE;
     }
 
-    if (req_block && !VM_ENVVAL_BLOCK_PTR_P(specval)) {
+    if (req_block && (type & VM_ENV_FLAG_LOCAL) == 0) {
 	rb_bug("vm_push_frame: specval (%p) should be a block_ptr on %x frame", (void *)specval, magic);
     }
-    if (!req_block && VM_ENVVAL_BLOCK_PTR_P(specval)) {
+    if (!req_block && (type & VM_ENV_FLAG_LOCAL) != 0) {
 	rb_bug("vm_push_frame: specval (%p) should not be a block_ptr on %x frame", (void *)specval, magic);
     }
 
@@ -210,7 +210,7 @@ vm_push_frame(rb_thread_t *th,
 static void
 vm_pop_frame_escaped_env(const VALUE *ep, VALUE flags)
 {
-    VM_ASSERT(rb_vm_ep_in_heap_p(ep));
+    VM_ASSERT(VM_ENV_ESCAPED_P(ep));
     VM_ASSERT((flags & (VM_ENV_FLAG_LEFT)) == 0);
 
     VM_ENV_FLAGS_SET(ep, VM_ENV_FLAG_LEFT);
@@ -457,9 +457,9 @@ rb_vm_frame_method_entry(const rb_control_frame_t *cfp)
     const VALUE *ep = cfp->ep;
     rb_callable_method_entry_t *me;
 
-    while (!VM_EP_LEP_P(ep)) {
+    while (!VM_ENV_LOCAL_P(ep)) {
 	if ((me = check_method_entry(ep[VM_ENV_MANAGE_DATA_INDEX_ME_CREF], FALSE)) != NULL) return me;
-	ep = VM_EP_PREV_EP(ep);
+	ep = VM_ENV_PREV_EP(ep);
     }
 
     return check_method_entry(ep[VM_ENV_MANAGE_DATA_INDEX_ME_CREF], TRUE);
@@ -510,9 +510,9 @@ vm_env_cref(const VALUE *ep)
 {
     rb_cref_t *cref;
 
-    while (!VM_EP_LEP_P(ep)) {
+    while (!VM_ENV_LOCAL_P(ep)) {
 	if ((cref = check_cref(ep[VM_ENV_MANAGE_DATA_INDEX_ME_CREF], FALSE)) != NULL) return cref;
-	ep = VM_EP_PREV_EP(ep);
+	ep = VM_ENV_PREV_EP(ep);
     }
 
     return check_cref(ep[VM_ENV_MANAGE_DATA_INDEX_ME_CREF], TRUE);
@@ -537,9 +537,9 @@ is_cref(const VALUE v, int can_be_svar)
 static int
 vm_env_cref_by_cref(const VALUE *ep)
 {
-    while (!VM_EP_LEP_P(ep)) {
+    while (!VM_ENV_LOCAL_P(ep)) {
 	if (is_cref(ep[VM_ENV_MANAGE_DATA_INDEX_ME_CREF], FALSE)) return TRUE;
-	ep = VM_EP_PREV_EP(ep);
+	ep = VM_ENV_PREV_EP(ep);
     }
     return is_cref(ep[VM_ENV_MANAGE_DATA_INDEX_ME_CREF], TRUE);
 }
@@ -582,12 +582,12 @@ vm_cref_replace_with_duplicated_cref(const VALUE *ep)
 	rb_cref_t *cref;
 	VALUE envval;
 
-	while (!VM_EP_LEP_P(ep)) {
+	while (!VM_ENV_LOCAL_P(ep)) {
 	    envval = VM_ENV_ESCAPED_P(ep) ? VM_ENV_ENVVAL(ep) : Qfalse;
 	    if ((cref = cref_replace_with_duplicated_cref_each_frame(&ep[VM_ENV_MANAGE_DATA_INDEX_ME_CREF], FALSE, envval)) != NULL) {
 		return cref;
 	    }
-	    ep = VM_EP_PREV_EP(ep);
+	    ep = VM_ENV_PREV_EP(ep);
 	}
 	envval = VM_ENV_ESCAPED_P(ep) ? VM_ENV_ENVVAL(ep) : Qfalse;
 	return cref_replace_with_duplicated_cref_each_frame(&ep[VM_ENV_MANAGE_DATA_INDEX_ME_CREF], TRUE, envval);
@@ -980,7 +980,7 @@ vm_throw_start(rb_thread_t *const th, rb_control_frame_t *const reg_cfp, enum ru
 		base_iseq = escape_cfp->iseq;
 	    }
 	    else {
-		ep = VM_EP_PREV_EP(ep);
+		ep = VM_ENV_PREV_EP(ep);
 		base_iseq = base_iseq->body->parent_iseq;
 		escape_cfp = rb_vm_search_cf_from_ep(th, escape_cfp, ep);
 		VM_ASSERT(escape_cfp->iseq == base_iseq);
@@ -993,7 +993,7 @@ vm_throw_start(rb_thread_t *const th, rb_control_frame_t *const reg_cfp, enum ru
 	    state = TAG_RETURN;
 	}
 	else {
-	    ep = VM_EP_PREV_EP(ep);
+	    ep = VM_ENV_PREV_EP(ep);
 
 	    while (escape_cfp < eocfp) {
 		if (escape_cfp->ep == ep) {
@@ -1026,10 +1026,10 @@ vm_throw_start(rb_thread_t *const th, rb_control_frame_t *const reg_cfp, enum ru
     }
     else if (state == TAG_RETRY) {
 	rb_num_t i;
-	VALUE *ep = VM_EP_PREV_EP(GET_EP());
+	const VALUE *ep = VM_ENV_PREV_EP(GET_EP());
 
 	for (i = 0; i < level; i++) {
-	    ep = VM_EP_PREV_EP(ep);
+	    ep = VM_ENV_PREV_EP(ep);
 	}
 
 	escape_cfp = rb_vm_search_cf_from_ep(th, reg_cfp, ep);
@@ -1068,7 +1068,7 @@ vm_throw_start(rb_thread_t *const th, rb_control_frame_t *const reg_cfp, enum ru
 				/* in lambda */
 				goto valid_return;
 			    }
-			    tep = VM_EP_PREV_EP(tep);
+			    tep = VM_ENV_PREV_EP(tep);
 			}
 		    }
 		}
@@ -1461,8 +1461,8 @@ vm_call_iseq_setup_normal(rb_thread_t *th, rb_control_frame_t *cfp, struct rb_ca
     VALUE *sp = argv + param_size;
     cfp->sp = argv - 1 /* recv */;
 
-    vm_push_frame(th, iseq, VM_FRAME_MAGIC_METHOD, calling->recv,
-		  VM_ENVVAL_BLOCK_PTR(calling->blockptr), (VALUE)me,
+    vm_push_frame(th, iseq, VM_FRAME_MAGIC_METHOD | VM_ENV_FLAG_LOCAL, calling->recv,
+		  VM_GUARDED_BLOCK_PTR(calling->blockptr), (VALUE)me,
 		  iseq->body->iseq_encoded + opt_pc, sp,
 		  local_size - param_size,
 		  iseq->body->stack_max);
@@ -1503,8 +1503,8 @@ vm_call_iseq_setup_tailcall(rb_thread_t *th, rb_control_frame_t *cfp, struct rb_
 	*sp++ = src_argv[i];
     }
 
-    vm_push_frame(th, iseq, VM_FRAME_MAGIC_METHOD | finish_flag,
-		  calling->recv, VM_ENVVAL_BLOCK_PTR(calling->blockptr), (VALUE)me,
+    vm_push_frame(th, iseq, VM_FRAME_MAGIC_METHOD | VM_ENV_FLAG_LOCAL | finish_flag,
+		  calling->recv, VM_GUARDED_BLOCK_PTR(calling->blockptr), (VALUE)me,
 		  iseq->body->iseq_encoded + opt_pc, sp,
 		  iseq->body->local_table_size - iseq->body->param.size,
 		  iseq->body->stack_max);
@@ -1693,8 +1693,8 @@ vm_call_cfunc_with_frame(rb_thread_t *th, rb_control_frame_t *reg_cfp, struct rb
     RUBY_DTRACE_CMETHOD_ENTRY_HOOK(th, me->owner, me->called_id);
     EXEC_EVENT_HOOK(th, RUBY_EVENT_C_CALL, recv, me->called_id, me->owner, Qundef);
 
-    vm_push_frame(th, NULL, VM_FRAME_MAGIC_CFUNC, recv,
-		  VM_ENVVAL_BLOCK_PTR(blockptr), (VALUE)me,
+    vm_push_frame(th, NULL, VM_FRAME_MAGIC_CFUNC | VM_ENV_FLAG_LOCAL, recv,
+		  VM_GUARDED_BLOCK_PTR(blockptr), (VALUE)me,
 		  0, th->cfp->sp, 0, 0);
 
     if (len >= 0) rb_check_arity(argc, len, len);
@@ -1783,8 +1783,8 @@ rb_vm_call_cfunc_push_frame(rb_thread_t *th)
     const rb_callable_method_entry_t *me = calling->me;
     th->passed_ci = 0;
 
-    vm_push_frame(th, 0, VM_FRAME_MAGIC_CFUNC,
-		  calling->recv, VM_ENVVAL_BLOCK_PTR(calling->blockptr), (VALUE)me /* cref */,
+    vm_push_frame(th, 0, VM_FRAME_MAGIC_CFUNC | VM_ENV_FLAG_LOCAL,
+		  calling->recv, VM_GUARDED_BLOCK_PTR(calling->blockptr), (VALUE)me /* cref */,
 		  0, th->cfp->sp + cc->aux.inc_sp, 0, 0);
 
     if (calling->call != vm_call_general) {
@@ -2389,7 +2389,7 @@ vm_yield_with_cfunc0(rb_thread_t *th, const rb_block_t *block, VALUE self,
     }
 
     vm_push_frame(th, (rb_iseq_t *)block->code.val, VM_FRAME_MAGIC_IFUNC,
-		  self, VM_ENVVAL_PREV_EP_PTR(block->ep), (VALUE)me,
+		  self, VM_GUARDED_PREV_EP(block->ep), (VALUE)me,
 		  0, th->cfp->sp, 0, 0);
 
     val = (*func)(arg, data, argc, argv, blockarg);
@@ -2530,7 +2530,7 @@ vm_invoke_block(rb_thread_t *th, rb_control_frame_t *reg_cfp, struct rb_calling_
 	    vm_push_frame(th, iseq,
 			  is_lambda ? VM_FRAME_MAGIC_LAMBDA : VM_FRAME_MAGIC_BLOCK,
 			  block->self,
-			  VM_ENVVAL_PREV_EP_PTR(block->ep), 0,
+			  VM_GUARDED_PREV_EP(block->ep), 0,
 			  iseq->body->iseq_encoded + opt_pc,
 			  rsp + arg_size,
 			  iseq->body->local_table_size - arg_size, iseq->body->stack_max);

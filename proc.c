@@ -598,9 +598,9 @@ cfunc_proc_new(VALUE klass, VALUE ifunc, int8_t is_lambda)
     proc = &sproc->basic;
 
     *(VALUE **)&proc->block.ep = ep = sproc->env + VM_ENV_MANAGE_DATA_SIZE-1;
-    ep[VM_ENV_MANAGE_DATA_INDEX_FLAGS]   = VM_FRAME_MAGIC_IFUNC | VM_ENV_FLAG_ESCAPED;
+    ep[VM_ENV_MANAGE_DATA_INDEX_FLAGS]   = VM_FRAME_MAGIC_IFUNC | VM_ENV_FLAG_LOCAL | VM_ENV_FLAG_ESCAPED;
     ep[VM_ENV_MANAGE_DATA_INDEX_ME_CREF] = Qfalse;
-    ep[VM_ENV_MANAGE_DATA_INDEX_SPECVAL] = VM_ENVVAL_BLOCK_PTR(0);
+    ep[VM_ENV_MANAGE_DATA_INDEX_SPECVAL] = VM_GUARDED_BLOCK_PTR(0);
     ep[1] = Qundef; /* envval */
 
     /* self? */

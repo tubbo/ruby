@@ -25,8 +25,8 @@ PUREFUNC(static inline const VALUE *VM_EP_LEP(const VALUE *));
 static inline const VALUE *
 VM_EP_LEP(const VALUE *ep)
 {
-    while (!VM_EP_LEP_P(ep)) {
-	ep = VM_EP_PREV_EP(ep);
+    while (!VM_ENV_LOCAL_P(ep)) {
+	ep = VM_ENV_PREV_EP(ep);
     }
     return ep;
 }
@@ -67,7 +67,7 @@ VM_CF_LEP(const rb_control_frame_t * const cfp)
 static inline const VALUE *
 VM_CF_PREV_EP(const rb_control_frame_t * const cfp)
 {
-    return VM_EP_PREV_EP(cfp->ep);
+    return VM_ENV_PREV_EP(cfp->ep);
 }
 
 PUREFUNC(static inline const rb_block_t *VM_CF_BLOCK_PTR(const rb_control_frame_t * const cfp));
@@ -75,7 +75,7 @@ static inline const rb_block_t *
 VM_CF_BLOCK_PTR(const rb_control_frame_t * const cfp)
 {
     const VALUE *ep = VM_CF_LEP(cfp);
-    return VM_EP_BLOCK_PTR(ep);
+    return VM_ENV_BLOCK(ep);
 }
 
 const rb_block_t *
@@ -491,8 +491,8 @@ vm_set_top_stack(rb_thread_t *th, const rb_iseq_t *iseq)
     }
 
     /* for return */
-    vm_push_frame(th, iseq, VM_FRAME_MAGIC_TOP | VM_FRAME_FLAG_FINISH, th->top_self,
-		  VM_ENVVAL_BLOCK_PTR(0),
+    vm_push_frame(th, iseq, VM_FRAME_MAGIC_TOP | VM_ENV_FLAG_LOCAL | VM_FRAME_FLAG_FINISH, th->top_self,
+		  VM_GUARDED_BLOCK_PTR(0),
 		  (VALUE)vm_cref_new_toplevel(th), /* cref or me */
 		  iseq->body->iseq_encoded, th->cfp->sp, iseq->body->local_table_size, iseq->body->stack_max);
 }
@@ -501,7 +501,7 @@ static void
 vm_set_eval_stack(rb_thread_t * th, const rb_iseq_t *iseq, const rb_cref_t *cref, const rb_block_t *base_block)
 {
     vm_push_frame(th, iseq, VM_FRAME_MAGIC_EVAL | VM_FRAME_FLAG_FINISH,
-		  vm_block_self(base_block), VM_ENVVAL_PREV_EP_PTR(base_block->ep),
+		  vm_block_self(base_block), VM_GUARDED_PREV_EP(base_block->ep),
 		  (VALUE)cref, /* cref or me */
 		  iseq->body->iseq_encoded,
 		  th->cfp->sp, iseq->body->local_table_size, iseq->body->stack_max);
@@ -773,8 +773,8 @@ vm_make_env_each(rb_thread_t *const th, rb_control_frame_t *const cfp)
 	return VM_ENV_ENVVAL(ep);
     }
 
-    if (!VM_EP_LEP_P(ep)) {
-	VALUE *prev_ep = VM_EP_PREV_EP(ep);
+    if (!VM_ENV_LOCAL_P(ep)) {
+	const VALUE *prev_ep = VM_ENV_PREV_EP(ep);
 
 	if (!VM_ENV_ESCAPED_P(prev_ep)) {
 	    rb_control_frame_t *prev_cfp = RUBY_VM_PREVIOUS_CONTROL_FRAME(cfp);
@@ -785,14 +785,14 @@ vm_make_env_each(rb_thread_t *const th, rb_control_frame_t *const cfp)
 	    }
 
 	    vm_make_env_each(th, prev_cfp);
-	    VM_FORCE_WRITE_SPECIAL_CONST(ep, VM_ENVVAL_PREV_EP_PTR(prev_cfp->ep));
+	    VM_FORCE_WRITE_SPECIAL_CONST(ep, VM_GUARDED_PREV_EP(prev_cfp->ep));
 	}
     }
     else {
-	rb_block_t *block = VM_EP_BLOCK_PTR(ep);
+	const rb_block_t *block = VM_ENV_BLOCK(ep);
 
-	if (block && vm_make_proc_from_block(th, block, &blockprocval)) {
-	    VM_FORCE_WRITE_SPECIAL_CONST(ep, VM_ENVVAL_BLOCK_PTR(vm_proc_block(blockprocval)));
+	if (block && vm_make_proc_from_block(th, (rb_block_t *)block, &blockprocval)) {
+	    VM_FORCE_WRITE_SPECIAL_CONST(ep, VM_GUARDED_BLOCK_PTR(vm_proc_block(blockprocval)));
 	}
     }
 
@@ -886,11 +886,11 @@ rb_vm_env_prev_envval(const rb_env_t *env)
 {
     const VALUE *ep = env->ep;
 
-    if (VM_EP_LEP_P(ep)) {
+    if (VM_ENV_LOCAL_P(ep)) {
 	return Qfalse;
     }
     else {
-	return VM_ENV_ENVVAL(VM_EP_PREV_EP(ep));
+	return VM_ENV_ENVVAL(VM_ENV_PREV_EP(ep));
     }
 }
 
@@ -1078,7 +1078,7 @@ invoke_block(rb_thread_t *th, const rb_iseq_t *iseq, VALUE self, const rb_block_
     int arg_size = iseq->body->param.size;
 
     vm_push_frame(th, iseq, type | VM_FRAME_FLAG_FINISH, self,
-		  VM_ENVVAL_PREV_EP_PTR(block->ep),
+		  VM_GUARDED_PREV_EP(block->ep),
 		  (VALUE)cref, /* cref or method */
 		  iseq->body->iseq_encoded + opt_pc,
 		  th->cfp->sp + arg_size, iseq->body->local_table_size - arg_size,
@@ -1094,7 +1094,7 @@ invoke_bmethod(rb_thread_t *th, const rb_iseq_t *iseq, VALUE self, const rb_bloc
     VALUE ret;
 
     vm_push_frame(th, iseq, type | VM_FRAME_FLAG_FINISH | VM_FRAME_FLAG_BMETHOD, self,
-		  VM_ENVVAL_PREV_EP_PTR(block->ep),
+		  VM_GUARDED_PREV_EP(block->ep),
 		  (VALUE)me, /* cref or method (TODO: can we ignore cref?) */
 		  iseq->body->iseq_encoded + opt_pc,
 		  th->cfp->sp + arg_size, iseq->body->local_table_size - arg_size,
@@ -1524,10 +1524,19 @@ rb_vm_jump_tag_but_local_jump(int state)
 
 NORETURN(static void vm_iter_break(rb_thread_t *th, VALUE val));
 
+static rb_control_frame_t *
+next_not_local_frame(rb_control_frame_t *cfp)
+{
+    while (VM_ENV_LOCAL_P(cfp->ep)) {
+	cfp = RUBY_VM_PREVIOUS_CONTROL_FRAME(cfp);
+    }
+    return cfp;
+}
+
 static void
 vm_iter_break(rb_thread_t *th, VALUE val)
 {
-    rb_control_frame_t *cfp = th->cfp;
+    rb_control_frame_t *cfp = next_not_local_frame(th->cfp);
     const VALUE *ep = VM_CF_PREV_EP(cfp);
     const rb_control_frame_t *target_cfp = rb_vm_search_cf_from_ep(th, cfp, ep);
 
@@ -2016,7 +2025,7 @@ vm_exec(rb_thread_t *th)
 	    cfp->sp[0] = (VALUE)err;
 	    vm_push_frame(th, catch_iseq, VM_FRAME_MAGIC_RESCUE,
 			  cfp->self,
-			  VM_ENVVAL_PREV_EP_PTR(cfp->ep),
+			  VM_GUARDED_PREV_EP(cfp->ep),
 			  0, /* cref or me */
 			  catch_iseq->body->iseq_encoded,
 			  cfp->sp + arg_size /* push value */,
@@ -2132,8 +2141,8 @@ rb_vm_call_cfunc(VALUE recv, VALUE (*func)(VALUE), VALUE arg,
     const rb_iseq_t *iseq = rb_iseq_new(0, filename, filename, Qnil, 0, ISEQ_TYPE_TOP);
     VALUE val;
 
-    vm_push_frame(th, iseq, VM_FRAME_MAGIC_TOP | VM_FRAME_FLAG_FINISH,
-		  recv, VM_ENVVAL_BLOCK_PTR(blockptr),
+    vm_push_frame(th, iseq, VM_FRAME_MAGIC_TOP | VM_ENV_FLAG_LOCAL | VM_FRAME_FLAG_FINISH,
+		  recv, VM_GUARDED_BLOCK_PTR(blockptr),
 		  (VALUE)vm_cref_new_toplevel(th), /* cref or me */
 		  0, reg_cfp->sp, 0, 0);
 
@@ -2571,8 +2580,8 @@ th_init(rb_thread_t *th, VALUE self)
 
     th->cfp = (void *)(th->stack + th->stack_size);
 
-    vm_push_frame(th, 0 /* dummy iseq */, VM_FRAME_MAGIC_DUMMY | VM_FRAME_FLAG_FINISH /* dummy frame */,
-		  Qnil /* dummy self */, VM_ENVVAL_BLOCK_PTR(0) /* dummy block ptr */,
+    vm_push_frame(th, 0 /* dummy iseq */, VM_FRAME_MAGIC_DUMMY | VM_ENV_FLAG_LOCAL | VM_FRAME_FLAG_FINISH /* dummy frame */,
+		  Qnil /* dummy self */, VM_GUARDED_BLOCK_PTR(0) /* dummy block ptr */,
 		  0 /* dummy cref/me */,
 		  0 /* dummy pc */, th->stack, 0, 0);
 

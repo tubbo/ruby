@@ -17,7 +17,7 @@
  *   1: enable local assertions.
  */
 #ifndef VM_CHECK_MODE
-#define VM_CHECK_MODE 0
+#define VM_CHECK_MODE 1
 #endif
 
 /**
@@ -934,6 +934,10 @@ typedef VALUE CDHASH;
 typedef rb_control_frame_t *
   (FUNC_FASTCALL(*rb_insn_func_t))(rb_thread_t *, rb_control_frame_t *);
 
+#define GC_GUARDED_PTR(p)     ((VALUE)((VALUE)(p) | 0x01))
+#define GC_GUARDED_PTR_REF(p) ((void *)(((VALUE)(p)) & ~0x03))
+#define GC_GUARDED_PTR_P(p)   (((VALUE)(p)) & 0x01)
+
 enum {
     /* frame types */
     VM_FRAME_MAGIC_METHOD = 0x11,
@@ -956,6 +960,7 @@ enum {
     VM_FRAME_FLAG_FINISH  = 0x0200,
     VM_FRAME_FLAG_BMETHOD = 0x0400,
 
+    VM_ENV_FLAG_LOCAL     = 0x0800,
     VM_ENV_FLAG_ESCAPED   = 0x1000,
     VM_ENV_FLAG_LEFT      = 0x2000,
     VM_ENV_FLAG_FORCE_LEFT= 0x4000
@@ -970,6 +975,8 @@ static inline void VM_FORCE_WRITE_SPECIAL_CONST(const VALUE *ptr, VALUE special_
 #define VM_ENV_MANAGE_DATA_INDEX_FLAGS      (-2)
 #define VM_ENV_MANAGE_DATA_INDEX_ME_CREF    (-1)
 #define VM_ENV_MANAGE_DATA_INDEX_SPECVAL    ( 0)
+#define VM_ENV_MANAGE_DATA_INDEX_ENV        ( 1)
+#define VM_ENV_MANAGE_DATA_INDEX_ENV_PROC   ( 2)
 
 #define VM_ENV_INDEX_LAST_LVAR              (-VM_ENV_MANAGE_DATA_SIZE)
 
@@ -1006,10 +1013,6 @@ VM_FRAME_TYPE(const rb_control_frame_t *cfp)
 #define RUBYVM_CFUNC_FRAME_P(cfp) \
   (VM_FRAME_TYPE(cfp) == VM_FRAME_MAGIC_CFUNC)
 
-#define GC_GUARDED_PTR(p)     ((VALUE)((VALUE)(p) | 0x01))
-#define GC_GUARDED_PTR_REF(p) ((void *)(((VALUE)(p)) & ~0x03))
-#define GC_GUARDED_PTR_P(p)   (((VALUE)(p)) & 0x01)
-
 /*
  * block frame:
  *  ep[ 0]: prev frame
@@ -1017,24 +1020,36 @@ VM_FRAME_TYPE(const rb_control_frame_t *cfp)
  *  ep[-2]: type
  *
  * method frame:
- *  ep[ 0]: block pointer (ptr | VM_ENVVAL_BLOCK_PTR_FLAG)
+ *  ep[ 0]: block
  *  ep[-1]: me/svar
  *  ep[-2]: type
  */
 
-#define VM_ENVVAL_BLOCK_PTR_FLAG 0x02
-#define VM_ENVVAL_BLOCK_PTR(v)     (GC_GUARDED_PTR(v) | VM_ENVVAL_BLOCK_PTR_FLAG)
-#define VM_ENVVAL_BLOCK_PTR_P(v)   ((v) & VM_ENVVAL_BLOCK_PTR_FLAG)
-#define VM_ENVVAL_PREV_EP_PTR(v)   ((VALUE)GC_GUARDED_PTR(v))
-#define VM_ENVVAL_PREV_EP_PTR_P(v) (!(VM_ENVVAL_BLOCK_PTR_P(v)))
+#define VM_GUARDED_BLOCK_PTR(blockptr) GC_GUARDED_PTR(blockptr)
+#define VM_GUARDED_PREV_EP(ep)         GC_GUARDED_PTR(ep)
 
-#define VM_EP_PREV_EP(ep)   ((VALUE *)GC_GUARDED_PTR_REF((ep)[0]))
-#define VM_EP_BLOCK_PTR(ep) ((rb_block_t *)GC_GUARDED_PTR_REF((ep)[0]))
-#define VM_EP_LEP_P(ep)     VM_ENVVAL_BLOCK_PTR_P((ep)[0])
+static inline const VALUE *
+VM_ENV_PREV_EP(const VALUE *ep)
+{
+    VM_ASSERT(VM_ENV_FLAGS(ep, VM_ENV_FLAG_LOCAL) == 0);
+    return GC_GUARDED_PTR_REF(ep[VM_ENV_MANAGE_DATA_INDEX_SPECVAL]);
+}
+
+static inline const rb_block_t *
+VM_ENV_BLOCK(const VALUE *ep)
+{
+    VM_ASSERT(VM_ENV_FLAGS(ep, VM_ENV_FLAG_LOCAL) != 0);
+    return (const rb_block_t *)GC_GUARDED_PTR_REF(ep[VM_ENV_MANAGE_DATA_INDEX_SPECVAL]);
+}
+
+static inline int
+VM_ENV_LOCAL_P(const VALUE *ep)
+{
+    return VM_ENV_FLAGS(ep, VM_ENV_FLAG_LOCAL) ? 1 : 0;
+}
 
 #if VM_CHECK_MODE > 0
 int rb_vm_ep_in_heap_p(const VALUE *ep);
-#define VM_PTR_IN_STACK_P(th, p) (th->stack <= (VALUE *)p && (VALUE *)p < (th->stack + th->stack_size))
 #endif
 
 static inline int
@@ -1047,18 +1062,18 @@ VM_ENV_ESCAPED_P(const VALUE *ep)
 static inline VALUE
 VM_ENV_ENVVAL(const VALUE *ep)
 {
-    VM_ASSERT(rb_vm_ep_in_heap_p(ep));
-    return ep[1];
+    VM_ASSERT(VM_ENV_ESCAPED_P(ep));
+    return ep[VM_ENV_MANAGE_DATA_INDEX_ENV];
 }
 
 static inline VALUE
 VM_ENV_PROCVAL(const VALUE *ep)
 {
-    VM_ASSERT(rb_vm_ep_in_heap_p(ep));
-    VM_ASSERT(VM_EP_LEP_P(ep));
-    VM_ASSERT(VM_EP_BLOCK_PTR(ep) != NULL);
+    VM_ASSERT(VM_ENV_ESCAPED_P(ep));
+    VM_ASSERT(VM_ENV_LOCAL_P(ep));
+    VM_ASSERT(VM_ENV_BLOCK(ep) != NULL);
 
-    return ep[2];
+    return ep[VM_ENV_MANAGE_DATA_INDEX_ENV_PROC];
 }
 
 static inline void
@@ -1094,7 +1109,7 @@ vm_env_ep(VALUE envval)
 static inline void
 VM_ENV_WRITE(VALUE env, const VALUE *ep, int index, VALUE v)
 {
-    VM_ASSERT(rb_vm_ep_in_heap_p(ep));
+    VM_ASSERT(VM_ENV_ESCAPED_P(ep));
     VM_ASSERT(env == VM_ENV_ENVVAL(ep));
     VM_ASSERT(vm_env_ep(env) == ep);
 
