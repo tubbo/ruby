@@ -17,7 +17,7 @@
  *   1: enable local assertions.
  */
 #ifndef VM_CHECK_MODE
-#define VM_CHECK_MODE 1
+#define VM_CHECK_MODE 0
 #endif
 
 /**
