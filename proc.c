@@ -708,7 +708,7 @@ proc_new(VALUE klass, int8_t is_lambda)
 
       case block_handler_type_ifunc:
       case block_handler_type_iseq:
-	return rb_vm_make_proc_lambda(th, VM_BH_TO_CAPTURED_BLOCK(block_handler), klass, is_lambda);
+	return rb_vm_make_proc_lambda(th, VM_BH_TO_CAPT_BLOCK(block_handler), klass, is_lambda);
     }
     VM_UNREACHABLE(proc_new);
     return Qnil;
@@ -988,11 +988,11 @@ block_setup(rb_block_t *block, VALUE block_handler)
     switch (vm_block_handler_type(block_handler)) {
       case block_handler_type_iseq:
 	block->type = block_type_iseq;
-	block->as.captured = *VM_BH_TO_CAPTURED_BLOCK(block_handler);
+	block->as.captured = *VM_BH_TO_ISEQ_BLOCK(block_handler);
 	break;
       case block_handler_type_ifunc:
 	block->type = block_type_ifunc;
-	block->as.captured = *VM_BH_TO_CAPTURED_BLOCK(block_handler);
+	block->as.captured = *VM_BH_TO_IFUNC_BLOCK(block_handler);
 	break;
       case block_handler_type_symbol:
 	block->type = block_type_symbol;
@@ -1877,7 +1877,7 @@ rb_mod_define_method(int argc, VALUE *argv, VALUE mod)
 	    break;
 	  case block_handler_type_iseq:
 	  case block_handler_type_ifunc:
-	    body = rb_vm_make_proc_lambda(th, VM_BH_TO_CAPTURED_BLOCK(block_handler), rb_cProc, TRUE);
+	    body = rb_vm_make_proc_lambda(th, VM_BH_TO_CAPT_BLOCK(block_handler), rb_cProc, TRUE);
 	}
 #endif
     }

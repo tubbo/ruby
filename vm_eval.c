@@ -1153,7 +1153,7 @@ rb_iterate0(VALUE (* it_proc) (VALUE), VALUE data1,
 	    if (ifunc) {
 		struct rb_captured_block *captured = VM_CFP_TO_CAPTURED_BLOCK(cfp);
 		captured->code.ifunc = ifunc;
-		block_handler = VM_CAPTURED_BLOCK_TO_BH(captured);
+		block_handler = VM_IFUNC_BLOCK_TO_BH(captured);
 	    }
 	    else {
 		block_handler = VM_CF_BLOCK_HANDLER(cfp);
@@ -1565,47 +1565,36 @@ yield_under(VALUE under, VALUE self, int argc, const VALUE *argv)
     rb_thread_t *th = GET_THREAD();
     rb_control_frame_t *cfp = th->cfp;
     VALUE block_handler = VM_CF_BLOCK_HANDLER(cfp);
+    VALUE new_block_handler;
     const struct rb_captured_block *captured = NULL;
     struct rb_captured_block new_captured;
     const VALUE *ep = NULL;
     rb_cref_t *cref;
 
-    
     if (block_handler != VM_BLOCK_HANDLER_NONE) {
+      again:
 	switch (vm_block_handler_type(block_handler)) {
 	  case block_handler_type_iseq:
+	    captured = VM_BH_TO_CAPT_BLOCK(block_handler);
+	    new_captured = *captured;
+	    new_block_handler = VM_ISEQ_BLOCK_TO_BH(&new_captured);
+	    break;
 	  case block_handler_type_ifunc:
-	    captured = VM_BH_TO_CAPTURED_BLOCK(block_handler);
+	    captured = VM_BH_TO_CAPT_BLOCK(block_handler);
+	    new_captured = *captured;
+	    new_block_handler = VM_IFUNC_BLOCK_TO_BH(&new_captured);
 	    break;
 	  case block_handler_type_proc:
-	    {
-		const rb_block_t *block;
-		block = vm_proc_block(VM_BH_TO_PROC(block_handler));
-
-	      again:
-		switch (vm_block_type(block)) {
-		  case block_type_iseq:
-		  case block_type_ifunc:
-		    captured = &block->as.captured;
-		    break;
-		  case block_type_proc:
-		    block = vm_proc_block(block->as.proc);
-		    goto again;
-		  case block_type_symbol:
-		    return rb_sym_proc_call(SYM2ID(VM_BH_TO_SYMBOL(block_handler)), 1, &self, VM_BLOCK_HANDLER_NONE);
-		}
-	    }
-	    break;
+	    block_handler = vm_proc_to_block_handler(VM_BH_TO_PROC(block_handler));
+	    goto again;
 	  case block_handler_type_symbol:
 	    return rb_sym_proc_call(SYM2ID(VM_BH_TO_SYMBOL(block_handler)), 1, &self, VM_BLOCK_HANDLER_NONE);
 	}
 
-	new_captured = *captured;
 	new_captured.self = self;
 	ep = captured->ep;
 
-	VM_FORCE_WRITE_SPECIAL_CONST(&VM_CF_LEP(th->cfp)[VM_ENV_MANAGE_DATA_INDEX_SPECVAL],
-				     VM_CAPTURED_BLOCK_TO_BH(&new_captured));
+	VM_FORCE_WRITE_SPECIAL_CONST(&VM_CF_LEP(th->cfp)[VM_ENV_MANAGE_DATA_INDEX_SPECVAL], new_block_handler);
     }
 
     cref = vm_cref_push(th, under, ep, TRUE);
@@ -1618,6 +1607,7 @@ rb_yield_refine_block(VALUE refinement, VALUE refinements)
     rb_thread_t *th = GET_THREAD();
     rb_cref_t *cref;
     VALUE block_handler = VM_CF_BLOCK_HANDLER(th->cfp);
+    VALUE new_block_handler;
     const struct rb_captured_block *captured;
     struct rb_captured_block new_captured;
     const VALUE *ep = NULL;
@@ -1625,17 +1615,21 @@ rb_yield_refine_block(VALUE refinement, VALUE refinements)
     if (block_handler != VM_BLOCK_HANDLER_NONE) {
 	switch (vm_block_handler_type(block_handler)) {
 	  case block_handler_type_iseq:
+	    captured = VM_BH_TO_ISEQ_BLOCK(block_handler);
+	    new_captured = *captured;
+	    new_block_handler = VM_ISEQ_BLOCK_TO_BH(&new_captured);
+	    break;
 	  case block_handler_type_ifunc:
-	    captured = VM_BH_TO_CAPTURED_BLOCK(block_handler);
+	    captured = VM_BH_TO_IFUNC_BLOCK(block_handler);
+	    new_captured = *captured;
+	    new_block_handler = VM_IFUNC_BLOCK_TO_BH(&new_captured);
 	    break;
 	  default:
-	    rb_bug("unsupported");
+	    rb_bug("TODO: unsupported");
 	}
-	new_captured = *captured;
 	new_captured.self = refinement;
 	ep = captured->ep;
-	VM_FORCE_WRITE_SPECIAL_CONST(&VM_CF_LEP(th->cfp)[VM_ENV_MANAGE_DATA_INDEX_SPECVAL],
-				     VM_CAPTURED_BLOCK_TO_BH(&new_captured));
+	VM_FORCE_WRITE_SPECIAL_CONST(&VM_CF_LEP(th->cfp)[VM_ENV_MANAGE_DATA_INDEX_SPECVAL], new_block_handler);
     }
     cref = vm_cref_push(th, refinement, ep, TRUE);
     CREF_REFINEMENTS_SET(cref, refinements);

@@ -1141,21 +1141,89 @@ VALUE rb_vm_frame_block_handler(const rb_control_frame_t *cfp);
 
 #define RUBY_VM_NORMAL_ISEQ_P(ptr)  (RB_TYPE_P((VALUE)(ptr), T_IMEMO) && imemo_type((VALUE)ptr) == imemo_iseq && rb_iseq_check((rb_iseq_t *)ptr))
 
+#define VM_TAGGED_PTR_SET(p, tag)  ((VALUE)(p) | (tag))
+#define VM_TAGGED_PTR_REF(v, mask) ((void *)(v & ~mask))
+
+static inline int
+VM_ISEQ_BH_P(VALUE block_handler)
+{
+    if ((block_handler & 0x03) == 0x01) {
+#if VM_CHECK_MODE > 0
+	struct rb_captured_block *captured = VM_TAGGED_PTR_REF(block_handler, 0x03);
+	VM_ASSERT(RB_TYPE_P(captured->code.val, T_IMEMO));
+	VM_ASSERT(imemo_type(captured->code.val) == imemo_iseq);
+#endif
+	return 1;
+    }
+    else {
+	return 0;
+    }
+}
+
+static inline VALUE
+VM_ISEQ_BLOCK_TO_BH(const struct rb_captured_block *captured)
+{
+    VALUE block_handler = VM_TAGGED_PTR_SET(captured, 0x01);
+    VM_ASSERT(VM_ISEQ_BH_P(block_handler));
+    return block_handler;
+}
+
+static inline const struct rb_captured_block *
+VM_BH_TO_ISEQ_BLOCK(VALUE block_handler)
+{
+    struct rb_captured_block *captured = VM_TAGGED_PTR_REF(block_handler, 0x03);
+    VM_ASSERT(VM_ISEQ_BH_P(block_handler));
+    return captured;
+}
+
+static inline int
+VM_IFUNC_BH_P(VALUE block_handler)
+{
+    if ((block_handler & 0x03) == 0x03) {
+#if VM_CHECK_MODE > 0
+	struct rb_captured_block *captured = (void *)(block_handler & ~0x03);
+	VM_ASSERT(RB_TYPE_P(captured->code.val, T_IMEMO));
+	VM_ASSERT(imemo_type(captured->code.val) == imemo_ifunc);
+#endif
+	return 1;
+    }
+    else {
+	return 0;
+    }
+}
+
+static inline VALUE
+VM_IFUNC_BLOCK_TO_BH(const struct rb_captured_block *captured)
+{
+    VALUE block_handler = VM_TAGGED_PTR_SET(captured, 0x03);
+    VM_ASSERT(VM_IFUNC_BH_P(block_handler));
+    return block_handler;
+}
+
+static inline const struct rb_captured_block *
+VM_BH_TO_IFUNC_BLOCK(VALUE block_handler)
+{
+    struct rb_captured_block *captured = VM_TAGGED_PTR_REF(block_handler, 0x03);
+    VM_ASSERT(VM_IFUNC_BH_P(block_handler));
+    return captured;
+}
+
+static inline const struct rb_captured_block *
+VM_BH_TO_CAPT_BLOCK(VALUE block_handler)
+{
+    struct rb_captured_block *captured = VM_TAGGED_PTR_REF(block_handler, 0x03);
+    VM_ASSERT(VM_IFUNC_BH_P(block_handler) || VM_ISEQ_BH_P(block_handler));
+    return captured;
+}
+
 static inline rb_block_handler_type_t
 vm_block_handler_type(VALUE block_handler)
 {
-    if (GC_GUARDED_PTR_P(block_handler)) {
-	const struct rb_captured_block *captured = GC_GUARDED_PTR_REF(block_handler);
-
-	VM_ASSERT(RB_TYPE_P(captured->code.val, T_IMEMO));
-	switch (imemo_type(captured->code.val)) {
-	  case imemo_iseq:
-	    return block_handler_type_iseq;
-	  case imemo_ifunc:
-	    return block_handler_type_ifunc;
-	  default:
-	    VM_UNREACHABLE(vm_block_handler_type);
-	}
+    if (VM_ISEQ_BH_P(block_handler)) {
+	return block_handler_type_iseq;
+    }
+    else if (VM_IFUNC_BH_P(block_handler)) {
+	return block_handler_type_ifunc;
     }
     else if (SYMBOL_P(block_handler)) {
 	return block_handler_type_symbol;
@@ -1164,8 +1232,6 @@ vm_block_handler_type(VALUE block_handler)
 	VM_ASSERT(rb_obj_is_proc(block_handler));
 	return block_handler_type_proc;
     }
-    VM_UNREACHABLE(vm_block_handler_type);
-    return 0;
 }
 
 static inline int
@@ -1267,23 +1333,6 @@ vm_block_self(const rb_block_t *block)
 }
 
 static inline VALUE
-VM_CAPTURED_BLOCK_TO_BH(struct rb_captured_block *captured)
-{
-    return GC_GUARDED_PTR(captured);
-}
-
-static inline struct rb_captured_block *
-VM_BH_TO_CAPTURED_BLOCK(VALUE block_handler)
-{
-    struct rb_captured_block *captured = GC_GUARDED_PTR_REF(block_handler);
-    VM_ASSERT(GC_GUARDED_PTR_P(block_handler));
-    VM_ASSERT(RB_TYPE_P(captured->code.val, T_IMEMO));
-    VM_ASSERT(imemo_type(captured->code.val) == imemo_iseq ||
-	      imemo_type(captured->code.val) == imemo_ifunc);
-    return captured;
-}
-
-static inline VALUE
 VM_BH_TO_SYMBOL(VALUE block_handler)
 {
     VM_ASSERT(SYMBOL_P(block_handler));
@@ -1291,10 +1340,24 @@ VM_BH_TO_SYMBOL(VALUE block_handler)
 }
 
 static inline VALUE
+VM_SYMBOL_TO_BH(VALUE symbol)
+{
+    VM_ASSERT(SYMBOL_P(symbol));
+    return symbol;
+}
+
+static inline VALUE
 VM_BH_TO_PROC(VALUE block_handler)
 {
     VM_ASSERT(rb_obj_is_proc(block_handler));
     return block_handler;
+}
+
+static inline VALUE
+VM_PROC_TO_BH(VALUE procval)
+{
+    VM_ASSERT(rb_obj_is_proc(procval));
+    return procval;
 }
 
 /* VM related object allocate functions */

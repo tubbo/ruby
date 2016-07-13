@@ -474,7 +474,7 @@ args_setup_block_parameter(rb_thread_t *th, struct rb_calling_info *calling, VAL
 	switch (vm_block_handler_type(block_handler)) {
 	  case block_handler_type_iseq:
 	  case block_handler_type_ifunc:
-	    blockval = rb_vm_make_proc(th, VM_BH_TO_CAPTURED_BLOCK(block_handler), rb_cProc);
+	    blockval = rb_vm_make_proc(th, VM_BH_TO_CAPT_BLOCK(block_handler), rb_cProc);
 	    break;
 	  case block_handler_type_symbol:
 	    blockval = rb_sym_to_proc(VM_BH_TO_SYMBOL(block_handler));
@@ -806,8 +806,8 @@ vm_caller_setup_arg_block(const rb_thread_t *th, rb_control_frame_t *reg_cfp,
     }
     else if (blockiseq != NULL) { /* likely */
 	struct rb_captured_block *captured = VM_CFP_TO_CAPTURED_BLOCK(reg_cfp);
-	calling->block_handler = VM_CAPTURED_BLOCK_TO_BH(captured);
 	captured->code.iseq = blockiseq;
+	calling->block_handler = VM_ISEQ_BLOCK_TO_BH(captured);
     }
     else {
 	if (is_super) {

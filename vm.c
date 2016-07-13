@@ -148,12 +148,6 @@ VM_CFP_TO_CAPTURED_BLOCK(const rb_control_frame_t *cfp)
     return (struct rb_captured_block *)&cfp->self;
 }
 
-static VALUE
-VM_CFP_TO_BLOCK_HANDLER(const rb_control_frame_t *cfp)
-{
-    return VM_CAPTURED_BLOCK_TO_BH(VM_CFP_TO_CAPTURED_BLOCK(cfp));
-}
-
 static rb_control_frame_t *
 VM_CAPTURED_BLOCK_TO_CFP(const struct rb_captured_block *captured)
 {
@@ -161,6 +155,13 @@ VM_CAPTURED_BLOCK_TO_CFP(const struct rb_captured_block *captured)
     VM_ASSERT(!VM_CFP_IN_HEAP_P(GET_THREAD(), cfp));
     VM_ASSERT(sizeof(rb_control_frame_t)/sizeof(VALUE) == 6 + VM_DEBUG_BP_CHECK ? 1 : 0);
     return cfp;
+}
+
+static int
+VM_BH_FROM_CFP_P(VALUE block_handler, const rb_control_frame_t *cfp)
+{
+    const struct rb_captured_block *captured = VM_CFP_TO_CAPTURED_BLOCK(cfp);
+    return VM_TAGGED_PTR_REF(block_handler, 0x03) == captured;
 }
 
 static VALUE
@@ -736,7 +737,7 @@ vm_block_handler_escape(rb_thread_t *th, VALUE block_handler, VALUE *procvalptr)
     switch (vm_block_handler_type(block_handler)) {
       case block_handler_type_ifunc:
       case block_handler_type_iseq:
-	*procvalptr = rb_vm_make_proc(th, VM_BH_TO_CAPTURED_BLOCK(block_handler), rb_cProc);
+	*procvalptr = rb_vm_make_proc(th, VM_BH_TO_CAPT_BLOCK(block_handler), rb_cProc);
 	return;
 
       case block_handler_type_symbol:
@@ -1163,51 +1164,27 @@ invoke_iseq_block_from_c(rb_thread_t *th, const struct rb_captured_block *captur
 }
 
 static VALUE
-vm_yield_with_proc(rb_thread_t *th, VALUE proc, int argc, const VALUE *argv, VALUE passed_block_handler,
-		   VALUE self, const rb_cref_t *cref, const int splattable, int is_lambda)
-{
-    const rb_block_t *block = vm_proc_block(proc);
-
-    switch (vm_block_type(block)) {
-      case block_type_iseq:
-	return invoke_iseq_block_from_c(th, &block->as.captured, self == Qundef ? block->as.captured.self : self,
-					argc, argv, passed_block_handler, cref, splattable, is_lambda);
-      case block_type_ifunc:
-	return vm_yield_with_cfunc(th, &block->as.captured, self == Qundef ? block->as.captured.self : self,
-				   argc, argv, passed_block_handler);
-      case block_type_symbol:
-	return vm_yield_with_symbol(th, block->as.symbol, argc, argv, passed_block_handler);
-      case block_type_proc:
-	is_lambda = block_proc_is_lambda(block->as.proc);
-	return vm_yield_with_proc(th, block->as.proc, argc, argv, passed_block_handler,
-				  self, cref, splattable, is_lambda);
-    }
-    VM_UNREACHABLE(vm_yield_with_proc);
-    return Qundef;
-}
-
-static VALUE
 invoke_block_from_c_splattable(rb_thread_t *th, VALUE block_handler,
 			       int argc, const VALUE *argv,
 			       VALUE passed_block_handler, const rb_cref_t *cref)
 {
+    int is_lambda = FALSE;
+  again:
     switch (vm_block_handler_type(block_handler)) {
       case block_handler_type_iseq:
 	{
-	    struct rb_captured_block *captured = VM_BH_TO_CAPTURED_BLOCK(block_handler);
-	    return invoke_iseq_block_from_c(th, captured, captured->self, argc, argv, passed_block_handler, cref, TRUE, FALSE);
+	    const struct rb_captured_block *captured = VM_BH_TO_ISEQ_BLOCK(block_handler);
+	    return invoke_iseq_block_from_c(th, captured, captured->self, argc, argv, passed_block_handler, cref, TRUE, is_lambda);
 	}
       case block_handler_type_ifunc:
-	return vm_yield_with_cfunc(th, VM_BH_TO_CAPTURED_BLOCK(block_handler), VM_BH_TO_CAPTURED_BLOCK(block_handler)->self,
+	return vm_yield_with_cfunc(th, VM_BH_TO_IFUNC_BLOCK(block_handler), VM_BH_TO_IFUNC_BLOCK(block_handler)->self,
 				   argc, argv, passed_block_handler);
       case block_handler_type_symbol:
 	return vm_yield_with_symbol(th, VM_BH_TO_SYMBOL(block_handler), argc, argv, passed_block_handler);
       case block_handler_type_proc:
-	{
-	    VALUE procval = VM_BH_TO_PROC(block_handler);
-	    int is_lambda = block_proc_is_lambda(procval);
-	    return vm_yield_with_proc(th, procval, argc, argv, passed_block_handler, Qundef, cref, TRUE, is_lambda);
-	}
+	is_lambda = block_proc_is_lambda(VM_BH_TO_PROC(block_handler));
+	block_handler = vm_proc_to_block_handler(VM_BH_TO_PROC(block_handler));
+	goto again;
     }
     VM_UNREACHABLE(invoke_block_from_c_splattable);
     return Qundef;
@@ -1248,6 +1225,7 @@ invoke_block_from_c_unsplattable(rb_thread_t *th, const rb_block_t *block,
 				 VALUE self, int argc, const VALUE *argv,
 				 VALUE passed_block_handler, int is_lambda)
 {
+  again:
     switch (vm_block_type(block)) {
       case block_type_iseq:
 	return invoke_iseq_block_from_c(th, &block->as.captured, self, argc, argv, passed_block_handler, NULL, FALSE, is_lambda);
@@ -1256,7 +1234,9 @@ invoke_block_from_c_unsplattable(rb_thread_t *th, const rb_block_t *block,
       case block_type_symbol:
 	return vm_yield_with_symbol(th, block->as.symbol, argc, argv, passed_block_handler);
       case block_type_proc:
-	return vm_yield_with_proc(th, block->as.proc, argc, argv, passed_block_handler, self, NULL, FALSE, is_lambda);
+	is_lambda = block_proc_is_lambda(block->as.proc);
+	block = vm_proc_block(block->as.proc);
+	goto again;
     }
     VM_UNREACHABLE(invoke_block_from_c_unsplattable);
     return Qundef;
