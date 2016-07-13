@@ -1828,7 +1828,6 @@ vm_call_bmethod_body(rb_thread_t *th, struct rb_calling_info *calling, const str
     /* control block frame */
     th->passed_bmethod_me = cc->me;
     GetProcPtr(cc->me->def->body.proc, proc);
-bp();
     val = vm_invoke_bmethod(th, proc, calling->recv, calling->argc, argv, calling->block_handler);
 
     return val;
