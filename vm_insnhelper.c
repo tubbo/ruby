@@ -190,10 +190,8 @@ vm_push_frame(rb_thread_t *th,
     *sp++ = type;       /* ep[-2] / ENV_FLAGS */
     *sp++ = cref_or_me; /* ep[-1] / Qnil or T_IMEMO(cref) or T_IMEMO(ment) */
     *sp   = specval     /* ep[ 0] / block handler or prev env ptr */;
+
     cfp->ep = sp;
-
-    /* setup vm control frame stack */
-
     cfp->sp = sp+1;
 
 #if VM_DEBUG_BP_CHECK
