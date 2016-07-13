@@ -229,7 +229,7 @@ struct rb_call_info_with_kwarg {
 };
 
 struct rb_calling_info {
-    const struct rb_block_struct *blockptr;
+    VALUE block_handler;
     VALUE recv;
     int argc;
 };
@@ -594,21 +594,38 @@ typedef struct rb_vm_struct {
 #define VM_DEBUG_VERIFY_METHOD_CACHE (VM_DEBUG_MODE != 0)
 #endif
 
-typedef union rb_block_code_union {
-    const rb_iseq_t *iseq;
-    const struct vm_ifunc *ifunc;
-    VALUE symbol;
-    VALUE proc;
-
-    VALUE val;
-} rb_block_code;
+struct rb_captured_block {
+    VALUE self;
+    const VALUE *ep;
+    union {
+	const rb_iseq_t *iseq;
+	const struct vm_ifunc *ifunc;
+	VALUE val;
+    } code;
+};
 
 typedef enum {
-    block_code_type_iseq,
-    block_code_type_ifunc,
-    block_code_type_symbol,
-    block_code_type_proc
-} rb_block_code_type_t;
+    block_handler_type_iseq,
+    block_handler_type_ifunc,
+    block_handler_type_symbol,
+    block_handler_type_proc
+} rb_block_handler_type_t;
+
+typedef enum {
+    block_type_iseq,
+    block_type_ifunc,
+    block_type_symbol,
+    block_type_proc
+} rb_block_type_t;
+
+typedef struct rb_block_struct {
+    union {
+	struct rb_captured_block captured;
+	VALUE symbol;
+	VALUE proc;
+    } as;
+    rb_block_type_t type;
+} rb_block_t;
 
 typedef struct rb_control_frame_struct {
     const VALUE *pc;		/* cfp[0] */
@@ -616,18 +633,12 @@ typedef struct rb_control_frame_struct {
     const rb_iseq_t *iseq;	/* cfp[2] */
     VALUE self;			/* cfp[3] / block[0] */
     const VALUE *ep;		/* cfp[4] / block[1] */
-    rb_block_code block_code;   /* cfp[5] / block[2] */
+    const void *block_code;     /* cfp[5] / block[2] */ /* iseq or ifunc */
 
 #if VM_DEBUG_BP_CHECK
     VALUE *bp_check;		/* cfp[6] */
 #endif
 } rb_control_frame_t;
-
-typedef struct rb_block_struct {
-    VALUE self;			/* share with method frame if it's only block */
-    const VALUE *ep;		/* share with method frame if it's only block */
-    rb_block_code code;
-} rb_block_t;
 
 extern const rb_data_type_t ruby_threadptr_data_type;
 
@@ -704,7 +715,7 @@ typedef struct rb_thread_struct {
     int waiting_fd;
 
     /* for rb_iterate */
-    const rb_block_t *passed_block;
+    VALUE passed_block_handler;
 
     /* for bmethod */
     const rb_callable_method_entry_t *passed_bmethod_me;
@@ -1025,8 +1036,8 @@ VM_FRAME_TYPE(const rb_control_frame_t *cfp)
  *  ep[-2]: type
  */
 
-#define VM_GUARDED_BLOCK_PTR(blockptr) GC_GUARDED_PTR(blockptr)
 #define VM_GUARDED_PREV_EP(ep)         GC_GUARDED_PTR(ep)
+#define VM_BLOCK_HANDLER_NONE 0
 
 static inline const VALUE *
 VM_ENV_PREV_EP(const VALUE *ep)
@@ -1035,11 +1046,11 @@ VM_ENV_PREV_EP(const VALUE *ep)
     return GC_GUARDED_PTR_REF(ep[VM_ENV_MANAGE_DATA_INDEX_SPECVAL]);
 }
 
-static inline const rb_block_t *
-VM_ENV_BLOCK(const VALUE *ep)
+static inline VALUE
+VM_ENV_BLOCK_HANDLER(const VALUE *ep)
 {
     VM_ASSERT(VM_ENV_FLAGS(ep, VM_ENV_FLAG_LOCAL) != 0);
-    return (const rb_block_t *)GC_GUARDED_PTR_REF(ep[VM_ENV_MANAGE_DATA_INDEX_SPECVAL]);
+    return ep[VM_ENV_MANAGE_DATA_INDEX_SPECVAL];
 }
 
 static inline int
@@ -1071,7 +1082,7 @@ VM_ENV_PROCVAL(const VALUE *ep)
 {
     VM_ASSERT(VM_ENV_ESCAPED_P(ep));
     VM_ASSERT(VM_ENV_LOCAL_P(ep));
-    VM_ASSERT(VM_ENV_BLOCK(ep) != NULL);
+    VM_ASSERT(VM_ENV_BLOCK_HANDLER(ep) != VM_BLOCK_HANDLER_NONE);
 
     return ep[VM_ENV_MANAGE_DATA_INDEX_ENV_PROC];
 }
@@ -1117,7 +1128,7 @@ VM_ENV_WRITE(VALUE env, const VALUE *ep, int index, VALUE v)
 }
 
 const VALUE *rb_vm_ep_local_ep(const VALUE *ep);
-const rb_block_t *rb_vm_control_frame_block_ptr(const rb_control_frame_t *cfp);
+VALUE rb_vm_frame_block_handler(const rb_control_frame_t *cfp);
 
 #define RUBY_VM_PREVIOUS_CONTROL_FRAME(cfp) ((cfp)+1)
 #define RUBY_VM_NEXT_CONTROL_FRAME(cfp) ((cfp)-1)
@@ -1130,71 +1141,160 @@ const rb_block_t *rb_vm_control_frame_block_ptr(const rb_control_frame_t *cfp);
 
 #define RUBY_VM_NORMAL_ISEQ_P(ptr)  (RB_TYPE_P((VALUE)(ptr), T_IMEMO) && imemo_type((VALUE)ptr) == imemo_iseq && rb_iseq_check((rb_iseq_t *)ptr))
 
-static inline rb_block_code_type_t
-vm_block_code_type(rb_block_code code)
+static inline rb_block_handler_type_t
+vm_block_handler_type(VALUE block_handler)
 {
-    if (RB_TYPE_P(code.val, T_IMEMO)) {
-	if (imemo_type(code.val) == imemo_iseq) {
-	    return block_code_type_iseq;
+    if (GC_GUARDED_PTR_P(block_handler)) {
+	const struct rb_captured_block *captured = GC_GUARDED_PTR_REF(block_handler);
+
+	VM_ASSERT(RB_TYPE_P(captured->code.val, T_IMEMO));
+	switch (imemo_type(captured->code.val)) {
+	  case imemo_iseq:
+	    return block_handler_type_iseq;
+	  case imemo_ifunc:
+	    return block_handler_type_ifunc;
+	  default:
+	    VM_UNREACHABLE(vm_block_handler_type);
 	}
-	else if (imemo_type(code.val) == imemo_ifunc) {
-	    return block_code_type_ifunc;
-	}
-	VM_UNREACHABLE(vm_block_code_type);
     }
-    else if (SYMBOL_P(code.val)) {
-	return block_code_type_symbol;
+    else if (SYMBOL_P(block_handler)) {
+	return block_handler_type_symbol;
     }
-    else if (rb_obj_is_proc(code.val)) {
-	return block_code_type_proc;
+    else {
+	VM_ASSERT(rb_obj_is_proc(block_handler));
+	return block_handler_type_proc;
     }
-    VM_UNREACHABLE(vm_block_code_type);
-    return block_code_type_iseq;
+    VM_UNREACHABLE(vm_block_handler_type);
+    return 0;
+}
+
+static inline int
+vm_block_handler_verify(VALUE block_handler)
+{
+    VM_ASSERT(block_handler == VM_BLOCK_HANDLER_NONE ||
+	      vm_block_handler_type(block_handler) >= 0);
+    return 1;
+}
+
+static inline rb_block_type_t
+vm_block_type(const rb_block_t *block)
+{
+#if VM_CHECK_MODE > 0
+    switch (block->type) {
+      case block_type_iseq:
+	VM_ASSERT(RB_TYPE_P(block->as.captured.code.val, T_IMEMO));
+	VM_ASSERT(imemo_type(block->as.captured.code.val) == imemo_iseq);
+	break;
+      case block_type_ifunc:
+	VM_ASSERT(RB_TYPE_P(block->as.captured.code.val, T_IMEMO));
+	VM_ASSERT(imemo_type(block->as.captured.code.val) == imemo_ifunc);
+	break;
+      case block_type_symbol:
+	VM_ASSERT(SYMBOL_P(block->as.symbol));
+	break;
+      case block_type_proc:
+	VM_ASSERT(rb_obj_is_proc(block->as.proc));
+	break;
+    }
+#endif
+    return block->type;
 }
 
 static inline const rb_block_t *
 vm_proc_block(VALUE procval)
 {
     rb_proc_t *proc = RTYPEDDATA_DATA(procval);
+    VM_ASSERT(rb_obj_is_proc(procval));
     return &proc->block;
 }
 
-static inline const rb_iseq_t *vm_block_code_iseq(rb_block_code code);
+static inline const rb_iseq_t *vm_block_iseq(const rb_block_t *block);
+static inline const VALUE *vm_block_ep(const rb_block_t *block);
 
 static inline const rb_iseq_t *
 vm_proc_iseq(VALUE procval)
 {
-    return vm_block_code_iseq(vm_proc_block(procval)->code);
+    VM_ASSERT(rb_obj_is_proc(procval));
+    return vm_block_iseq(vm_proc_block(procval));
+}
+
+static inline const VALUE *
+vm_proc_ep(VALUE procval)
+{
+    return vm_block_ep(vm_proc_block(procval));
 }
 
 static inline const rb_iseq_t *
-vm_block_code_iseq(rb_block_code code)
+vm_block_iseq(const rb_block_t *block)
 {
-    if (code.val == 0) return NULL; /* TODO: env->block can contain such code */
-
-    switch (vm_block_code_type(code)) {
-      case block_code_type_iseq: return code.iseq;
-      case block_code_type_proc: return vm_proc_iseq(code.proc);
-
-      case block_code_type_ifunc:
-      case block_code_type_symbol: return NULL;
+    switch (vm_block_type(block)) {
+      case block_type_iseq: return block->as.captured.code.iseq;
+      case block_type_proc: return vm_proc_iseq(block->as.proc);
+      case block_type_ifunc:
+      case block_type_symbol: return NULL;
     }
-    VM_UNREACHABLE(vm_block_code_iseq);
+    VM_UNREACHABLE(vm_block_iseq);
+    return NULL;
+}
+
+static inline const VALUE *
+vm_block_ep(const rb_block_t *block)
+{
+    switch (vm_block_type(block)) {
+      case block_type_iseq: 
+      case block_type_ifunc:  return block->as.captured.ep;
+      case block_type_proc:   return vm_proc_ep(block->as.proc);
+      case block_type_symbol: return NULL;
+    }
+    VM_UNREACHABLE(vm_block_ep);
     return NULL;
 }
 
 static inline VALUE
 vm_block_self(const rb_block_t *block)
 {
-    switch (vm_block_code_type(block->code)) {
-      case block_code_type_proc:
-	{
-	    rb_proc_t *proc = RTYPEDDATA_DATA(block->code.proc);
-	    return vm_block_self(&proc->block);
-	}
-      default:
-	return block->self;
+    switch (vm_block_type(block)) {
+      case block_type_iseq:
+      case block_type_ifunc:
+	return block->as.captured.self;
+      case block_type_proc:
+	return vm_block_self(vm_proc_block(block->as.proc));
+      case block_type_symbol:
+	return Qundef;
     }
+    VM_UNREACHABLE(vm_block_self);
+    return Qundef;
+}
+
+static inline VALUE
+VM_CAPTURED_BLOCK_TO_BH(struct rb_captured_block *captured)
+{
+    return GC_GUARDED_PTR(captured);
+}
+
+static inline struct rb_captured_block *
+VM_BH_TO_CAPTURED_BLOCK(VALUE block_handler)
+{
+    struct rb_captured_block *captured = GC_GUARDED_PTR_REF(block_handler);
+    VM_ASSERT(GC_GUARDED_PTR_P(block_handler));
+    VM_ASSERT(RB_TYPE_P(captured->code.val, T_IMEMO));
+    VM_ASSERT(imemo_type(captured->code.val) == imemo_iseq ||
+	      imemo_type(captured->code.val) == imemo_ifunc);
+    return captured;
+}
+
+static inline VALUE
+VM_BH_TO_SYMBOL(VALUE block_handler)
+{
+    VM_ASSERT(SYMBOL_P(block_handler));
+    return block_handler;
+}
+
+static inline VALUE
+VM_BH_TO_PROC(VALUE block_handler)
+{
+    VM_ASSERT(rb_obj_is_proc(block_handler));
+    return block_handler;
 }
 
 /* VM related object allocate functions */
@@ -1219,10 +1319,9 @@ VALUE rb_iseq_eval_main(const rb_iseq_t *iseq);
 RUBY_SYMBOL_EXPORT_END
 int rb_thread_method_id_and_class(rb_thread_t *th, ID *idp, VALUE *klassp);
 
-VALUE rb_vm_invoke_proc(rb_thread_t *th, rb_proc_t *proc,
-			int argc, const VALUE *argv, const rb_block_t *blockptr);
-VALUE rb_vm_make_proc_lambda(rb_thread_t *th, const rb_block_t *block, VALUE klass, int8_t is_lambda);
-VALUE rb_vm_make_proc(rb_thread_t *th, const rb_block_t *block, VALUE klass);
+VALUE rb_vm_invoke_proc(rb_thread_t *th, rb_proc_t *proc, int argc, const VALUE *argv, VALUE block_handler);
+VALUE rb_vm_make_proc_lambda(rb_thread_t *th, const struct rb_captured_block *captured, VALUE klass, int8_t is_lambda);
+VALUE rb_vm_make_proc(rb_thread_t *th, const struct rb_captured_block *captured, VALUE klass);
 VALUE rb_vm_make_binding(rb_thread_t *th, const rb_control_frame_t *src_cfp);
 VALUE rb_vm_env_local_variables(const rb_env_t *env);
 VALUE rb_vm_env_prev_envval(const rb_env_t *env);

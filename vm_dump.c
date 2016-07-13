@@ -38,12 +38,6 @@ control_frame_dump(rb_thread_t *th, rb_control_frame_t *cfp)
 
     const rb_callable_method_entry_t *me;
 
-#if 0
-    if (vm_block_code_iseq(cfp->block_code) != NULL) {
-	biseq_name = ""; /* RSTRING(vm_block_code_iseq(cfp)->body->location.label)->ptr; */
-    }
-#endif
-
     if (ep < 0 || (size_t)ep > th->stack_size) {
 	ep = (ptrdiff_t)cfp->ep;
 	ep_in_heap = 'p';
@@ -218,13 +212,13 @@ rb_vmdebug_proc_dump_raw(rb_proc_t *proc)
 {
     rb_env_t *env;
     char *selfstr;
-    VALUE val = rb_inspect(proc->block.self);
+    VALUE val = rb_inspect(vm_block_self(&proc->block));
     selfstr = StringValueCStr(val);
 
     fprintf(stderr, "-- proc -------------------\n");
     fprintf(stderr, "self: %s\n", selfstr);
-    GetEnvPtr(VM_ENV_ENVVAL(proc->block.ep), env);
-    rb_vmdebug_env_dump_raw(env, proc->block.ep);
+    GetEnvPtr(VM_ENV_ENVVAL(vm_block_ep(&proc->block)), env);
+    rb_vmdebug_env_dump_raw(env, vm_block_ep(&proc->block));
 }
 
 void

@@ -611,7 +611,7 @@ rb_iseq_compile_with_option(VALUE src, VALUE file, VALUE absolute_path, VALUE li
 {
     rb_thread_t *th = GET_THREAD();
     rb_iseq_t *iseq = NULL;
-    const rb_iseq_t *const parent = base_block ? vm_block_code_iseq(base_block->code) : NULL;
+    const rb_iseq_t *const parent = base_block ? vm_block_iseq(base_block) : NULL;
     rb_compile_option_t option;
     const enum iseq_type type = parent ? ISEQ_TYPE_EVAL : ISEQ_TYPE_TOP;
 #if !defined(__GNUC__) || (__GNUC__ == 4 && __GNUC_MINOR__ == 8)

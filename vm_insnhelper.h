@@ -148,7 +148,7 @@ enum vm_regan_acttype {
 #define CI_SET_FASTPATH(ci, func, enabled) /* do nothing */
 #endif
 
-#define GET_BLOCK_PTR() ((rb_block_t *)(GC_GUARDED_PTR_REF(GET_LEP()[0])))
+#define GET_BLOCK_HANDLER() (GET_LEP()[VM_ENV_MANAGE_DATA_INDEX_SPECVAL])
 
 /**********************************************************/
 /* deal with control flow 3: exception                    */
@@ -173,7 +173,7 @@ enum vm_regan_acttype {
 
 #define CALL_SIMPLE_METHOD(recv_) do { \
     struct rb_calling_info calling; \
-    calling.blockptr = NULL; \
+    calling.block_handler = VM_BLOCK_HANDLER_NONE; \
     calling.argc = ci->orig_argc; \
     vm_search_method(ci, cc, calling.recv = (recv_)); \
     CALL_METHOD(&calling, ci, cc); \

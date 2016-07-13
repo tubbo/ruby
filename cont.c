@@ -1222,12 +1222,12 @@ fiber_init(VALUE fibval, VALUE proc)
     th->cfp->bp_check = 0;
 #endif
     th->cfp->ep = th->cfp->sp - 1;
-    VM_FORCE_WRITE_SPECIAL_CONST(&th->cfp->ep[VM_ENV_MANAGE_DATA_INDEX_SPECVAL], VM_GUARDED_BLOCK_PTR(0));
+    VM_FORCE_WRITE_SPECIAL_CONST(&th->cfp->ep[VM_ENV_MANAGE_DATA_INDEX_SPECVAL], VM_BLOCK_HANDLER_NONE);
     VM_FORCE_WRITE_SPECIAL_CONST(&th->cfp->ep[VM_ENV_MANAGE_DATA_INDEX_ME_CREF], 0);
     VM_FORCE_WRITE_SPECIAL_CONST(&th->cfp->ep[VM_ENV_MANAGE_DATA_INDEX_FLAGS], VM_FRAME_MAGIC_DUMMY | VM_ENV_FLAG_LOCAL | VM_FRAME_FLAG_FINISH);
     th->cfp->self = Qnil;
     th->cfp->iseq = 0;
-    th->cfp->block_code.val = 0;
+    th->cfp->block_code = NULL;
     th->tag = 0;
     th->local_storage = st_init_numtable();
     th->local_storage_recursive_hash = Qnil;
@@ -1274,12 +1274,12 @@ rb_fiber_start(void)
 	argv = (argc = cont->argc) > 1 ? RARRAY_CONST_PTR(args) : &args;
 	cont->value = Qnil;
 	th->errinfo = Qnil;
-	th->root_lep = rb_vm_ep_local_ep(proc->block.ep);
+	th->root_lep = rb_vm_ep_local_ep(vm_block_ep(&proc->block));
 	th->root_svar = Qfalse;
 	fib->status = RUNNING;
 
 	EXEC_EVENT_HOOK(th, RUBY_EVENT_FIBER_SWITCH, th->self, 0, 0, Qnil);
-	cont->value = rb_vm_invoke_proc(th, proc, argc, argv, 0);
+	cont->value = rb_vm_invoke_proc(th, proc, argc, argv, VM_BLOCK_HANDLER_NONE);
     }
     TH_POP_TAG();
 

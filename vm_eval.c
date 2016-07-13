@@ -18,7 +18,7 @@ struct local_var_list {
 static inline VALUE method_missing(VALUE obj, ID id, int argc, const VALUE *argv, enum method_missing_reason call_status);
 static inline VALUE vm_yield_with_cref(rb_thread_t *th, int argc, const VALUE *argv, const rb_cref_t *cref);
 static inline VALUE vm_yield(rb_thread_t *th, int argc, const VALUE *argv);
-static inline VALUE vm_yield_with_block(rb_thread_t *th, int argc, const VALUE *argv, const rb_block_t *blockargptr);
+static inline VALUE vm_yield_with_block(rb_thread_t *th, int argc, const VALUE *argv, VALUE block_handler);
 static VALUE vm_exec(rb_thread_t *th);
 static void vm_set_eval_stack(rb_thread_t * th, const rb_iseq_t *iseq, const rb_cref_t *cref, const rb_block_t *base_block);
 static int vm_collect_local_variables_in_heap(rb_thread_t *th, const VALUE *dfp, const struct local_var_list *vars);
@@ -114,7 +114,7 @@ vm_call0_cfunc_with_frame(rb_thread_t* th, struct rb_calling_info *calling, cons
     VALUE recv = calling->recv;
     int argc = calling->argc;
     ID mid = ci->mid;
-    const rb_block_t *blockptr = calling->blockptr;
+    VALUE block_handler = calling->block_handler;
 
     RUBY_DTRACE_CMETHOD_ENTRY_HOOK(th, me->owner, mid);
     EXEC_EVENT_HOOK(th, RUBY_EVENT_C_CALL, recv, mid, me->owner, Qnil);
@@ -122,7 +122,7 @@ vm_call0_cfunc_with_frame(rb_thread_t* th, struct rb_calling_info *calling, cons
 	rb_control_frame_t *reg_cfp = th->cfp;
 
 	vm_push_frame(th, 0, VM_FRAME_MAGIC_CFUNC | VM_ENV_FLAG_LOCAL, recv,
-		      VM_GUARDED_BLOCK_PTR(blockptr), (VALUE)me,
+		      block_handler, (VALUE)me,
 		      0, reg_cfp->sp, 0, 0);
 
 	if (len >= 0) rb_check_arity(argc, len, len);
@@ -155,7 +155,7 @@ vm_call0_body(rb_thread_t* th, struct rb_calling_info *calling, const struct rb_
 {
     VALUE ret;
 
-    calling->blockptr = vm_passed_block(th);
+    calling->block_handler = vm_passed_block_handler(th);
 
   again:
     switch (cc->me->def->type) {
@@ -216,7 +216,7 @@ vm_call0_body(rb_thread_t* th, struct rb_calling_info *calling, const struct rb_
 	goto again;
       case VM_METHOD_TYPE_MISSING:
 	{
-	    vm_passed_block_set(th, calling->blockptr);
+	    vm_passed_block_handler_set(th, calling->block_handler);
 	    return method_missing(calling->recv, ci->mid, calling->argc,
 				  argv, MISSING_NOENTRY);
 	}
@@ -229,7 +229,7 @@ vm_call0_body(rb_thread_t* th, struct rb_calling_info *calling, const struct rb_
 	    {
 		rb_proc_t *proc;
 		GetProcPtr(calling->recv, proc);
-		ret = rb_vm_invoke_proc(th, proc, calling->argc, argv, calling->blockptr);
+		ret = rb_vm_invoke_proc(th, proc, calling->argc, argv, calling->block_handler);
 		goto success;
 	    }
 	  default:
@@ -282,8 +282,9 @@ vm_call_super(rb_thread_t *th, int argc, const VALUE *argv)
 VALUE
 rb_call_super(int argc, const VALUE *argv)
 {
-    PASS_PASSED_BLOCK();
-    return vm_call_super(GET_THREAD(), argc, argv);
+    rb_thread_t *th = GET_THREAD();
+    PASS_PASSED_BLOCK_HANDLER_TH(th);
+    return vm_call_super(th, argc, argv);
 }
 
 VALUE
@@ -741,7 +742,7 @@ method_missing(VALUE obj, ID id, int argc, const VALUE *argv, enum method_missin
 {
     VALUE *nargv, result, work, klass;
     rb_thread_t *th = GET_THREAD();
-    const rb_block_t *blockptr = vm_passed_block(th);
+    VALUE block_handler = vm_passed_block_handler(th);
     const rb_callable_method_entry_t *me;
 
     th->method_missing_reason = call_status;
@@ -761,7 +762,7 @@ method_missing(VALUE obj, ID id, int argc, const VALUE *argv, enum method_missin
     if (!klass) goto missing;
     me = rb_callable_method_entry(klass, idMethodMissing);
     if (!me || METHOD_ENTRY_BASIC(me)) goto missing;
-    vm_passed_block_set(th, blockptr);
+    vm_passed_block_handler_set(th, block_handler);
     result = vm_call0(th, obj, idMethodMissing, argc, argv, me);
     if (work) ALLOCV_END(work);
     return result;
@@ -771,7 +772,7 @@ void
 rb_raise_method_missing(rb_thread_t *th, int argc, const VALUE *argv,
 			VALUE obj, int call_status)
 {
-    vm_passed_block_set(th, NULL);
+    vm_passed_block_handler_set(th, VM_BLOCK_HANDLER_NONE);
     raise_method_missing(th, argc, argv, obj, call_status | MISSING_MISSING);
 }
 
@@ -867,8 +868,7 @@ rb_funcallv_public(VALUE recv, ID mid, int argc, const VALUE *argv)
 VALUE
 rb_funcall_passing_block(VALUE recv, ID mid, int argc, const VALUE *argv)
 {
-    PASS_PASSED_BLOCK();
-
+    PASS_PASSED_BLOCK_HANDLER();
     return rb_call(recv, mid, argc, argv, CALL_PUBLIC);
 }
 
@@ -877,9 +877,7 @@ rb_funcall_with_block(VALUE recv, ID mid, int argc, const VALUE *argv, VALUE pas
 {
     if (!NIL_P(passed_procval)) {
 	rb_thread_t *th = GET_THREAD();
-	rb_proc_t *passed_proc;
-	GetProcPtr(passed_procval, passed_proc);
-	vm_passed_block_set(th, &passed_proc->block);
+	vm_passed_block_handler_set(th, passed_procval);
     }
 
     return rb_call(recv, mid, argc, argv, CALL_PUBLIC);
@@ -946,7 +944,7 @@ send_internal(int argc, const VALUE *argv, VALUE recv, call_type scope)
     else {
 	argv++; argc--;
     }
-    PASS_PASSED_BLOCK_TH(th);
+    PASS_PASSED_BLOCK_HANDLER_TH(th);
     ret = rb_call0(recv, id, argc, argv, scope, self);
     ALLOCV_END(vargv);
     return ret;
@@ -1069,13 +1067,8 @@ rb_yield_splat(VALUE values)
 VALUE
 rb_yield_block(VALUE val, VALUE arg, int argc, const VALUE *argv, VALUE blockarg)
 {
-    const rb_block_t *blockptr = NULL;
-    if (!NIL_P(blockarg)) {
-	rb_proc_t *blockproc;
-	GetProcPtr(blockarg, blockproc);
-	blockptr = &blockproc->block;
-    }
-    return vm_yield_with_block(GET_THREAD(), argc, argv, blockptr);
+    return vm_yield_with_block(GET_THREAD(), argc, argv,
+			       NIL_P(blockarg) ? VM_BLOCK_HANDLER_NONE : blockarg);
 }
 
 static VALUE
@@ -1155,17 +1148,17 @@ rb_iterate0(VALUE (* it_proc) (VALUE), VALUE data1,
     if (state == 0) {
       iter_retry:
 	{
-	    const rb_block_t *blockptr;
+	    VALUE block_handler;
 
 	    if (ifunc) {
-		rb_block_t *block = VM_CFP_TO_BLOCK_PTR(cfp);
-		block->code.ifunc = ifunc;
-		blockptr = block;
+		struct rb_captured_block *captured = VM_CFP_TO_CAPTURED_BLOCK(cfp);
+		captured->code.ifunc = ifunc;
+		block_handler = VM_CAPTURED_BLOCK_TO_BH(captured);
 	    }
 	    else {
-		blockptr = VM_CF_BLOCK_PTR(cfp);
+		block_handler = VM_CF_BLOCK_HANDLER(cfp);
 	    }
-	    vm_passed_block_set(th, blockptr);
+	    vm_passed_block_handler_set(th, block_handler);
 	}
 	retval = (*it_proc) (data1);
     }
@@ -1318,9 +1311,10 @@ eval_string_with_cref(VALUE self, VALUE src, VALUE scope, rb_cref_t *const cref_
 	    rb_control_frame_t *cfp = rb_vm_get_ruby_level_next_cfp(th, th->cfp);
 
 	    if (cfp != 0) {
-		block = *VM_CFP_TO_BLOCK_PTR(cfp);
-		block.self = self;
-		block.code.iseq = cfp->iseq; /* TODO */
+		block.as.captured = *VM_CFP_TO_CAPTURED_BLOCK(cfp);
+		block.as.captured.self = self;
+		block.as.captured.code.iseq = cfp->iseq;
+		block.type = block_type_iseq;
 		base_block = &block;
 	    }
 	    else {
@@ -1345,9 +1339,9 @@ eval_string_with_cref(VALUE self, VALUE src, VALUE scope, rb_cref_t *const cref_
 	}
 
 	/* TODO: what the code checking? */
-	if (!cref && base_block->code.val) {
+	if (!cref && base_block->as.captured.code.val) {
 	    if (NIL_P(scope)) {
-		rb_cref_t *orig_cref = rb_vm_get_cref(base_block->ep);
+		rb_cref_t *orig_cref = rb_vm_get_cref(vm_block_ep(base_block));
 		cref = vm_cref_dup(orig_cref);
 	    }
 	    else {
@@ -1569,25 +1563,52 @@ static VALUE
 yield_under(VALUE under, VALUE self, int argc, const VALUE *argv)
 {
     rb_thread_t *th = GET_THREAD();
-    rb_block_t block;
-    const rb_block_t *blockptr;
+    rb_control_frame_t *cfp = th->cfp;
+    VALUE block_handler = VM_CF_BLOCK_HANDLER(cfp);
+    const struct rb_captured_block *captured = NULL;
+    struct rb_captured_block new_captured;
+    const VALUE *ep = NULL;
     rb_cref_t *cref;
 
-    if ((blockptr = VM_CF_BLOCK_PTR(th->cfp)) != 0) {
-      again:
-	if (vm_block_code_type(blockptr->code) == block_code_type_proc) {
-	    const rb_proc_t *proc;
-	    GetProcPtr(blockptr->code.proc, proc);
-	    blockptr = &proc->block;
-	    goto again;
+    
+    if (block_handler != VM_BLOCK_HANDLER_NONE) {
+	switch (vm_block_handler_type(block_handler)) {
+	  case block_handler_type_iseq:
+	  case block_handler_type_ifunc:
+	    captured = VM_BH_TO_CAPTURED_BLOCK(block_handler);
+	    break;
+	  case block_handler_type_proc:
+	    {
+		const rb_block_t *block;
+		block = vm_proc_block(VM_BH_TO_PROC(block_handler));
+
+	      again:
+		switch (vm_block_type(block)) {
+		  case block_type_iseq:
+		  case block_type_ifunc:
+		    captured = &block->as.captured;
+		    break;
+		  case block_type_proc:
+		    block = vm_proc_block(block->as.proc);
+		    goto again;
+		  case block_type_symbol:
+		    return rb_sym_proc_call(SYM2ID(VM_BH_TO_SYMBOL(block_handler)), 1, &self, VM_BLOCK_HANDLER_NONE);
+		}
+	    }
+	    break;
+	  case block_handler_type_symbol:
+	    return rb_sym_proc_call(SYM2ID(VM_BH_TO_SYMBOL(block_handler)), 1, &self, VM_BLOCK_HANDLER_NONE);
 	}
-	block = *blockptr;
-	block.self = self;
 
-	VM_FORCE_WRITE_SPECIAL_CONST(&VM_CF_LEP(th->cfp)[0], VM_GUARDED_BLOCK_PTR(&block));
+	new_captured = *captured;
+	new_captured.self = self;
+	ep = captured->ep;
+
+	VM_FORCE_WRITE_SPECIAL_CONST(&VM_CF_LEP(th->cfp)[VM_ENV_MANAGE_DATA_INDEX_SPECVAL],
+				     VM_CAPTURED_BLOCK_TO_BH(&new_captured));
     }
-    cref = vm_cref_push(th, under, blockptr, TRUE);
 
+    cref = vm_cref_push(th, under, ep, TRUE);
     return vm_yield_with_cref(th, argc, argv, cref);
 }
 
@@ -1595,17 +1616,28 @@ VALUE
 rb_yield_refine_block(VALUE refinement, VALUE refinements)
 {
     rb_thread_t *th = GET_THREAD();
-    rb_block_t block;
-    const rb_block_t *blockptr;
     rb_cref_t *cref;
+    VALUE block_handler = VM_CF_BLOCK_HANDLER(th->cfp);
+    const struct rb_captured_block *captured;
+    struct rb_captured_block new_captured;
+    const VALUE *ep = NULL;
 
-    if ((blockptr = VM_CF_BLOCK_PTR(th->cfp)) != 0) {
-	block = *blockptr;
-	block.self = refinement;
-
-	VM_FORCE_WRITE_SPECIAL_CONST(&VM_CF_LEP(th->cfp)[0], VM_GUARDED_BLOCK_PTR(&block));
+    if (block_handler != VM_BLOCK_HANDLER_NONE) {
+	switch (vm_block_handler_type(block_handler)) {
+	  case block_handler_type_iseq:
+	  case block_handler_type_ifunc:
+	    captured = VM_BH_TO_CAPTURED_BLOCK(block_handler);
+	    break;
+	  default:
+	    rb_bug("unsupported");
+	}
+	new_captured = *captured;
+	new_captured.self = refinement;
+	ep = captured->ep;
+	VM_FORCE_WRITE_SPECIAL_CONST(&VM_CF_LEP(th->cfp)[VM_ENV_MANAGE_DATA_INDEX_SPECVAL],
+				     VM_CAPTURED_BLOCK_TO_BH(&new_captured));
     }
-    cref = vm_cref_push(th, refinement, blockptr, TRUE);
+    cref = vm_cref_push(th, refinement, ep, TRUE);
     CREF_REFINEMENTS_SET(cref, refinements);
 
     return vm_yield_with_cref(th, 0, NULL, cref);
@@ -2143,7 +2175,7 @@ rb_f_block_given_p(void)
     rb_control_frame_t *cfp = th->cfp;
     cfp = vm_get_ruby_level_caller_cfp(th, RUBY_VM_PREVIOUS_CONTROL_FRAME(cfp));
 
-    if (cfp != 0 && VM_CF_BLOCK_PTR(cfp)) {
+    if (cfp != NULL && VM_CF_BLOCK_HANDLER(cfp) != VM_BLOCK_HANDLER_NONE) {
 	return Qtrue;
     }
     else {

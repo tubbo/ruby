@@ -933,7 +933,7 @@ defineclass
 
     /* enter scope */
     vm_push_frame(th, class_iseq, VM_FRAME_MAGIC_CLASS | VM_ENV_FLAG_LOCAL, klass,
-		  VM_GUARDED_BLOCK_PTR(GET_BLOCK_PTR()),
+		  GET_BLOCK_HANDLER(),
 		  (VALUE)vm_cref_push(th, klass, NULL, FALSE),
 		  class_iseq->body->iseq_encoded, GET_SP(),
 		  class_iseq->body->local_table_size,
@@ -1059,7 +1059,7 @@ opt_send_without_block
 (VALUE val) // inc += -ci->orig_argc;
 {
     struct rb_calling_info calling;
-    calling.blockptr = NULL;
+    calling.block_handler = VM_BLOCK_HANDLER_NONE;
     vm_search_method(ci, cc, calling.recv = TOPN(calling.argc = ci->orig_argc));
     CALL_METHOD(&calling, ci, cc);
 }
@@ -1097,7 +1097,7 @@ invokeblock
 {
     struct rb_calling_info calling;
     calling.argc = ci->orig_argc;
-    calling.blockptr = NULL;
+    calling.block_handler = VM_BLOCK_HANDLER_NONE;
     calling.recv = GET_SELF();
 
     val = vm_invoke_block(th, GET_CFP(), &calling, ci);
