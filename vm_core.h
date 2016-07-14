@@ -949,6 +949,8 @@ typedef rb_control_frame_t *
 #define GC_GUARDED_PTR_REF(p) ((void *)(((VALUE)(p)) & ~0x03))
 #define GC_GUARDED_PTR_P(p)   (((VALUE)(p)) & 0x01)
 
+#define REMEMBER_AT_POP_FRAME 0
+
 enum {
     /* frame types */
     VM_FRAME_MAGIC_METHOD = 0x11,
@@ -973,8 +975,12 @@ enum {
 
     VM_ENV_FLAG_LOCAL     = 0x0800,
     VM_ENV_FLAG_ESCAPED   = 0x1000,
+#if REMEMBER_AT_POP_FRAME
     VM_ENV_FLAG_LEFT      = 0x2000,
     VM_ENV_FLAG_FORCE_LEFT= 0x4000
+#else
+    
+#endif
 };
 
 static inline void VM_FORCE_WRITE_SPECIAL_CONST(const VALUE *ptr, VALUE special_const_value);
@@ -1103,7 +1109,11 @@ VM_FORCE_WRITE_SPECIAL_CONST(const VALUE *ptr, VALUE special_const_value)
 static inline void
 VM_STACK_ENV_WRITE(const VALUE *ep, int index, VALUE v)
 {
+#if REMEMBER_AT_POP_FRAME
     VM_ASSERT(!VM_ENV_FLAGS(ep, VM_ENV_FLAG_LEFT));
+#else
+    VM_ASSERT(!VM_ENV_FLAGS(ep, VM_ENV_FLAG_ESCAPED));
+#endif
     VM_FORCE_WRITE(&ep[index], v);
 }
 

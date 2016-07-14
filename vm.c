@@ -175,6 +175,7 @@ vm_passed_block_handler(rb_thread_t *th)
 void
 rb_vm_unreachable_frames(const rb_thread_t *th)
 {
+#if REMEMBER_AT_POP_FRAME
     const rb_control_frame_t *cfp = th->cfp;
     const rb_control_frame_t *limit_cfp = (void *)(th->stack + th->stack_size);
 
@@ -187,12 +188,14 @@ rb_vm_unreachable_frames(const rb_thread_t *th)
 	}
 	cfp = RUBY_VM_PREVIOUS_CONTROL_FRAME(cfp);
     }
+#endif
 }
 
 #if VM_CHECK_MODE > 0
 void
 rb_vm_unreachable_frames_maybe(const rb_thread_t *th)
 {
+#if REMEMBER_AT_POP_FRAME
     const rb_control_frame_t *cfp = th->cfp;
     const rb_control_frame_t *limit_cfp = (void *)(th->stack + th->stack_size);
 
@@ -200,11 +203,13 @@ rb_vm_unreachable_frames_maybe(const rb_thread_t *th)
 	VM_ENV_FLAGS_SET(cfp->ep, VM_ENV_FLAG_FORCE_LEFT);
 	cfp = RUBY_VM_PREVIOUS_CONTROL_FRAME(cfp);
     }
+#endif
 }
 
 void
 rb_vm_reachable_frames(const rb_thread_t *th)
 {
+#if REMEMBER_AT_POP_FRAME
     const rb_control_frame_t *cfp = th->cfp;
     const rb_control_frame_t *limit_cfp = (void *)(th->stack + th->stack_size);
 
@@ -212,6 +217,7 @@ rb_vm_reachable_frames(const rb_thread_t *th)
 	VM_ENV_FLAGS_UNSET(cfp->ep, VM_ENV_FLAG_LEFT);
 	cfp = RUBY_VM_PREVIOUS_CONTROL_FRAME(cfp);
     }
+#endif
 }
 #endif
 
@@ -642,9 +648,13 @@ env_mark(void * const ptr)
     RUBY_GC_INFO("env->env\n");
     VM_ASSERT(VM_ENV_FLAGS(env->ep, VM_ENV_FLAG_ESCAPED));
 
+#if REMEMBER_AT_POP_FRAME
     if (VM_ENV_FLAGS(env->ep, VM_ENV_FLAG_LEFT)) {
 	rb_gc_mark_values((long)env->env_size, env->env);
     }
+#else
+    rb_gc_mark_values((long)env->env_size, env->env);
+#endif
 
     RUBY_MARK_UNLESS_NULL(rb_vm_env_prev_envval(env));
     RUBY_MARK_UNLESS_NULL((VALUE)env->iseq);
@@ -670,9 +680,11 @@ env_free(void *ptr)
     if (ptr) {
 	rb_env_t * const env = ptr;
 	VM_ASSERT(VM_ENV_FLAGS(env->ep, VM_ENV_FLAG_ESCAPED));
+#if REMEMBER_AT_POP_FRAME
 	if (objspace_call_finalizer_running == 0) {
 	    VM_ASSERT(VM_ENV_FLAGS(env->ep, VM_ENV_FLAG_LEFT | VM_ENV_FLAG_FORCE_LEFT) != 0);
 	}
+#endif
 	free(env);
     }
 }
@@ -2459,6 +2471,7 @@ rb_thread_mark(void *ptr)
 	rb_gc_mark_values((long)(sp - p), p);
 
 	while (cfp != limit_cfp) {
+#if REMEMBER_AT_POP_FRAME
 	    const VALUE *ep = cfp->ep;
 	    if (VM_ENV_FLAGS(ep, VM_ENV_FLAG_ESCAPED)) {
 		const rb_env_t *env;
@@ -2468,7 +2481,7 @@ rb_thread_mark(void *ptr)
 	    VM_ASSERT(!!VM_ENV_FLAGS(ep, VM_ENV_FLAG_ESCAPED) == vm_ep_in_heap_p_(th, ep));
 	    VM_ASSERT(!VM_ENV_FLAGS(ep, VM_ENV_FLAG_LEFT) ||
 		       VM_ENV_FLAGS(ep, VM_ENV_FLAG_FORCE_LEFT));
-
+#endif
 	    rb_gc_mark((VALUE)cfp->block_code);
 	    rb_gc_mark(cfp->self);
 	    rb_gc_mark((VALUE)cfp->iseq);
@@ -3180,7 +3193,9 @@ Init_VM(void)
 	 * The Binding of the top level scope
 	 */
 	rb_define_global_const("TOPLEVEL_BINDING", rb_binding_new());
+#if REMEMBER_AT_POP_FRAME
 	VM_ENV_FLAGS_SET(th->cfp->ep, VM_ENV_FLAG_LEFT | VM_ENV_FLAG_FORCE_LEFT);
+#endif
     }
     vm_init_redefined_flag();
 

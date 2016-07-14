@@ -205,16 +205,6 @@ vm_push_frame(rb_thread_t *th,
     return cfp;
 }
 
-static void
-vm_pop_frame_escaped_env(const VALUE *ep, VALUE flags)
-{
-    VM_ASSERT(VM_ENV_ESCAPED_P(ep));
-    VM_ASSERT((flags & (VM_ENV_FLAG_LEFT)) == 0);
-
-    VM_ENV_FLAGS_SET(ep, VM_ENV_FLAG_LEFT);
-    rb_gc_writebarrier_remember(VM_ENV_ENVVAL(ep));
-}
-
 /* return TRUE if the frame is finished */
 static inline int
 vm_pop_frame(rb_thread_t *th, rb_control_frame_t *cfp, const VALUE *ep)
@@ -226,12 +216,17 @@ vm_pop_frame(rb_thread_t *th, rb_control_frame_t *cfp, const VALUE *ep)
 
     th->cfp = RUBY_VM_PREVIOUS_CONTROL_FRAME(cfp);
 
+#if REMEMBER_AT_POP_FRAME
     if ((flags & VM_ENV_FLAG_ESCAPED) == 0) {
 	VM_ASSERT((flags & VM_ENV_FLAG_LEFT) == 0);
     }
     else {
-	vm_pop_frame_escaped_env(ep, flags);
+	VM_ASSERT(VM_ENV_ESCAPED_P(ep));
+	VM_ASSERT((flags & (VM_ENV_FLAG_LEFT)) == 0);
+	VM_ENV_FLAGS_SET(ep, VM_ENV_FLAG_LEFT);
+	rb_gc_writebarrier_remember(VM_ENV_ENVVAL(ep));
     }
+#endif
 
     return flags & VM_FRAME_FLAG_FINISH;
 }
@@ -269,12 +264,21 @@ rb_error_arity(int argc, int min, int max)
 static inline void
 vm_env_write_check(const VALUE *ep, int index, VALUE v)
 {
-    if (VM_ENV_FLAGS(ep, VM_ENV_FLAG_LEFT)) {
-	VM_ENV_WRITE(VM_ENV_ENVVAL(ep), ep, index, v);
-    }
-    else {
+#if REMEMBER_AT_POP_FRAME
+    if (VM_ENV_FLAGS(ep, VM_ENV_FLAG_LEFT) == 0) {
 	VM_STACK_ENV_WRITE(ep, index, v);
     }
+    else {
+	VM_ENV_WRITE(VM_ENV_ENVVAL(ep), ep, index, v);
+    }
+#else
+    if (VM_ENV_FLAGS(ep, VM_ENV_FLAG_ESCAPED) == 0) {
+	VM_STACK_ENV_WRITE(ep, index, v);
+    }
+    else {
+	VM_ENV_WRITE(VM_ENV_ENVVAL(ep), ep, index, v);
+    }
+#endif
 }
 
 /* svar */
