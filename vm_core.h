@@ -979,7 +979,7 @@ enum {
     VM_ENV_FLAG_LEFT      = 0x2000,
     VM_ENV_FLAG_FORCE_LEFT= 0x4000
 #else
-    
+    VM_ENV_FLAG_REMEMBERED= 0x2000
 #endif
 };
 
@@ -1112,7 +1112,8 @@ VM_STACK_ENV_WRITE(const VALUE *ep, int index, VALUE v)
 #if REMEMBER_AT_POP_FRAME
     VM_ASSERT(!VM_ENV_FLAGS(ep, VM_ENV_FLAG_LEFT));
 #else
-    VM_ASSERT(!VM_ENV_FLAGS(ep, VM_ENV_FLAG_ESCAPED));
+    VM_ASSERT(VM_ENV_FLAGS(ep, VM_ENV_FLAG_ESCAPED) == 0 ||
+	      VM_ENV_FLAGS(ep, VM_ENV_FLAG_REMEMBERED) != 0);
 #endif
     VM_FORCE_WRITE(&ep[index], v);
 }

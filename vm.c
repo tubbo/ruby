@@ -654,6 +654,7 @@ env_mark(void * const ptr)
     }
 #else
     rb_gc_mark_values((long)env->env_size, env->env);
+    VM_ENV_FLAGS_UNSET(env->ep, VM_ENV_FLAG_REMEMBERED);
 #endif
 
     RUBY_MARK_UNLESS_NULL(rb_vm_env_prev_envval(env));

@@ -261,6 +261,18 @@ rb_error_arity(int argc, int min, int max)
 }
 
 /* lvar */
+
+NOINLINE(static void vm_env_write_slowpath(const VALUE *ep, int index, VALUE v));
+
+static void
+vm_env_write_slowpath(const VALUE *ep, int index, VALUE v)
+{
+    /* remember env value forcely */
+    rb_gc_writebarrier_remember(VM_ENV_ENVVAL(ep));
+    VM_FORCE_WRITE(&ep[index], v);
+    VM_ENV_FLAGS_SET(ep, VM_ENV_FLAG_REMEMBERED);
+}
+
 static inline void
 vm_env_write_check(const VALUE *ep, int index, VALUE v)
 {
@@ -272,14 +284,23 @@ vm_env_write_check(const VALUE *ep, int index, VALUE v)
 	VM_ENV_WRITE(VM_ENV_ENVVAL(ep), ep, index, v);
     }
 #else
-    if (VM_ENV_FLAGS(ep, VM_ENV_FLAG_ESCAPED) == 0) {
+    VALUE flags = ep[VM_ENV_MANAGE_DATA_INDEX_FLAGS];
+    if (LIKELY((flags & VM_ENV_FLAG_ESCAPED) == 0 ||
+	       (flags & VM_ENV_FLAG_REMEMBERED) != 0)) {
 	VM_STACK_ENV_WRITE(ep, index, v);
     }
     else {
-	VM_ENV_WRITE(VM_ENV_ENVVAL(ep), ep, index, v);
+	vm_env_write_slowpath(ep, index, v);
     }
 #endif
 }
+
+void
+rb_vm_env_write_check(const VALUE *ep, int index, VALUE v)
+{
+    vm_env_write_check(ep, index, v);
+}
+
 
 /* svar */
 
