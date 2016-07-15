@@ -1189,6 +1189,18 @@ fiber_t_alloc(VALUE fibval)
     return fib;
 }
 
+rb_control_frame_t *
+rb_vm_push_frame(rb_thread_t *th,
+		 const rb_iseq_t *iseq,
+		 VALUE type,
+		 VALUE self,
+		 VALUE specval,
+		 VALUE cref_or_me,
+		 const VALUE *pc,
+		 VALUE *sp,
+		 int local_size,
+		 int stack_max);
+
 static VALUE
 fiber_init(VALUE fibval, VALUE proc)
 {
@@ -1205,21 +1217,19 @@ fiber_init(VALUE fibval, VALUE proc)
 
     th->stack_size = cth->vm->default_params.fiber_vm_stack_size / sizeof(VALUE);
     th->stack = ALLOC_N(VALUE, th->stack_size);
-
     th->cfp = (void *)(th->stack + th->stack_size);
-    th->cfp--;
-    th->cfp->pc = 0;
-    th->cfp->sp = th->stack + VM_ENV_MANAGE_DATA_SIZE;
-#if VM_DEBUG_BP_CHECK
-    th->cfp->bp_check = 0;
-#endif
-    th->cfp->ep = th->cfp->sp - 1;
-    VM_FORCE_WRITE_SPECIAL_CONST(&th->cfp->ep[VM_ENV_MANAGE_DATA_INDEX_SPECVAL], VM_BLOCK_HANDLER_NONE);
-    VM_FORCE_WRITE_SPECIAL_CONST(&th->cfp->ep[VM_ENV_MANAGE_DATA_INDEX_ME_CREF], 0);
-    VM_FORCE_WRITE_SPECIAL_CONST(&th->cfp->ep[VM_ENV_MANAGE_DATA_INDEX_FLAGS], VM_FRAME_MAGIC_DUMMY | VM_ENV_FLAG_LOCAL | VM_FRAME_FLAG_FINISH);
-    th->cfp->self = Qnil;
-    th->cfp->iseq = 0;
-    th->cfp->block_code = NULL;
+
+    rb_vm_push_frame(th,
+		     NULL,
+		     VM_FRAME_MAGIC_DUMMY | VM_ENV_FLAG_LOCAL | VM_FRAME_FLAG_FINISH,
+		     Qnil, /* self */
+		     VM_BLOCK_HANDLER_NONE,
+		     0, /* specval */
+		     NULL, /* pc */
+		     th->stack, /* sp */
+		     0, /* local_size */
+		     0);
+
     th->tag = 0;
     th->local_storage = st_init_numtable();
     th->local_storage_recursive_hash = Qnil;

@@ -117,7 +117,7 @@ int
 vm_ep_in_heap_p_(const rb_thread_t *th, const VALUE *ep)
 {
     if (VM_EP_IN_HEAP_P(th, ep)) {
-	VALUE envval = ep[1]; /* VM_ENV_ENVVAL(ep); */
+	VALUE envval = ep[VM_ENV_MANAGE_DATA_INDEX_ENV]; /* VM_ENV_ENVVAL(ep); */
 
 	if (envval != Qundef) {
 	    rb_env_t *env;
@@ -3120,7 +3120,7 @@ Init_VM(void)
 	th->cfp->pc = iseq->body->iseq_encoded;
 	th->cfp->self = th->top_self;
 
-	VM_STACK_ENV_WRITE(th->cfp->ep, -1, (VALUE)vm_cref_new(rb_cObject, METHOD_VISI_PRIVATE, FALSE, NULL, FALSE));
+	VM_STACK_ENV_WRITE(th->cfp->ep, VM_ENV_MANAGE_DATA_INDEX_ME_CREF, (VALUE)vm_cref_new(rb_cObject, METHOD_VISI_PRIVATE, FALSE, NULL, FALSE));
 
 	/*
 	 * The Binding of the top level scope

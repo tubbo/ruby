@@ -187,12 +187,15 @@ vm_push_frame(rb_thread_t *th,
     }
 
     /* setup ep with managing data */
-    *sp++ = type;       /* ep[-2] / ENV_FLAGS */
-    *sp++ = cref_or_me; /* ep[-1] / Qnil or T_IMEMO(cref) or T_IMEMO(ment) */
-    *sp   = specval     /* ep[ 0] / block handler or prev env ptr */;
+    VM_ASSERT(VM_ENV_MANAGE_DATA_INDEX_ME_CREF == -2);
+    VM_ASSERT(VM_ENV_MANAGE_DATA_INDEX_SPECVAL == -1);
+    VM_ASSERT(VM_ENV_MANAGE_DATA_INDEX_FLAGS   == -0);
+    *sp++ = cref_or_me; /* ep[-2] / Qnil or T_IMEMO(cref) or T_IMEMO(ment) */
+    *sp++ = specval     /* ep[-1] / block handler or prev env ptr */;
+    *sp   = type;       /* ep[-0] / ENV_FLAGS */
 
     cfp->ep = sp;
-    cfp->sp = sp+1;
+    cfp->sp = sp + 1;
 
 #if VM_DEBUG_BP_CHECK
     cfp->bp_check = sp + 1;
@@ -205,8 +208,6 @@ vm_push_frame(rb_thread_t *th,
     return cfp;
 }
 
-#if 0
-/* use this function to see asm code */
 rb_control_frame_t *
 rb_vm_push_frame(rb_thread_t *th,
 		 const rb_iseq_t *iseq,
@@ -221,7 +222,6 @@ rb_vm_push_frame(rb_thread_t *th,
 {
     return vm_push_frame(th, iseq, type, self, specval, cref_or_me, pc, sp, local_size, stack_max);
 }
-#endif
 
 /* return TRUE if the frame is finished */
 static inline int
@@ -342,7 +342,7 @@ lep_svar_write(rb_thread_t *th, const VALUE *lep, const struct vm_svar *svar)
     VM_ASSERT(vm_svar_valid_p((VALUE)svar));
 
     if (lep && (th == NULL || th->root_lep != lep)) {
-	vm_env_write(lep, -1, (VALUE)svar);
+	vm_env_write(lep, VM_ENV_MANAGE_DATA_INDEX_ME_CREF, (VALUE)svar);
     }
     else {
 	RB_OBJ_WRITE(th->self, &th->root_svar, svar);

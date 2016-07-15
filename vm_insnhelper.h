@@ -104,7 +104,7 @@ enum vm_regan_acttype {
 /* deal with variables                                    */
 /**********************************************************/
 
-#define GET_PREV_EP(ep)                ((VALUE *)((ep)[0] & ~0x03))
+#define GET_PREV_EP(ep)                ((VALUE *)((ep)[VM_ENV_MANAGE_DATA_INDEX_SPECVAL] & ~0x03))
 
 #define GET_GLOBAL(entry)       rb_gvar_get((struct rb_global_entry*)(entry))
 #define SET_GLOBAL(entry, val)  rb_gvar_set((struct rb_global_entry*)(entry), (val))

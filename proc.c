@@ -618,7 +618,7 @@ cfunc_proc_new(VALUE klass, VALUE ifunc, int8_t is_lambda)
     ep[VM_ENV_MANAGE_DATA_INDEX_FLAGS]   = VM_FRAME_MAGIC_IFUNC | VM_ENV_FLAG_LOCAL | VM_ENV_FLAG_ESCAPED;
     ep[VM_ENV_MANAGE_DATA_INDEX_ME_CREF] = Qfalse;
     ep[VM_ENV_MANAGE_DATA_INDEX_SPECVAL] = VM_BLOCK_HANDLER_NONE;
-    ep[1] = Qundef; /* envval */
+    ep[VM_ENV_MANAGE_DATA_INDEX_ENV]     = Qundef; /* envval */
 
     /* self? */
     RB_OBJ_WRITE(procval, &proc->block.as.captured.code.ifunc, ifunc);
@@ -2731,9 +2731,9 @@ env_clone(VALUE envval, const rb_cref_t *cref)
     memcpy(newenv, env, envsize);
     VM_ASSERT(env->ep > env->env);
     newenv->ep = &newenv->env[env->ep - env->env];
-    VM_FORCE_WRITE(&newenv->ep[1], newenvval);
+    VM_FORCE_WRITE(&newenv->ep[VM_ENV_MANAGE_DATA_INDEX_ENV], newenvval);
     RTYPEDDATA_DATA(newenvval) = newenv;
-    env_write(newenvval, newenv->ep, -1, (VALUE)cref);
+    env_write(newenvval, newenv->ep, VM_ENV_MANAGE_DATA_INDEX_ME_CREF, (VALUE)cref);
     return newenvval;
 }
 

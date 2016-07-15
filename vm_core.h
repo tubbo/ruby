@@ -982,11 +982,12 @@ static inline void VM_FORCE_WRITE_SPECIAL_CONST(const VALUE *ptr, VALUE special_
 #define VM_FRAME_TYPE_BMETHOD_P(cfp) (VM_ENV_FLAGS((cfp)->ep, VM_FRAME_FLAG_BMETHOD) != 0)
 
 #define VM_ENV_MANAGE_DATA_SIZE             ( 3)
-#define VM_ENV_MANAGE_DATA_INDEX_FLAGS      (-2)
-#define VM_ENV_MANAGE_DATA_INDEX_ME_CREF    (-1)
-#define VM_ENV_MANAGE_DATA_INDEX_SPECVAL    ( 0)
-#define VM_ENV_MANAGE_DATA_INDEX_ENV        ( 1)
-#define VM_ENV_MANAGE_DATA_INDEX_ENV_PROC   ( 2)
+
+#define VM_ENV_MANAGE_DATA_INDEX_ME_CREF    (-2) /* ep[-2] */
+#define VM_ENV_MANAGE_DATA_INDEX_SPECVAL    (-1) /* ep[-1] */
+#define VM_ENV_MANAGE_DATA_INDEX_FLAGS      ( 0) /* ep[ 0] */
+#define VM_ENV_MANAGE_DATA_INDEX_ENV        ( 1) /* ep[ 1] */
+#define VM_ENV_MANAGE_DATA_INDEX_ENV_PROC   ( 2) /* ep[ 2] */
 
 #define VM_ENV_INDEX_LAST_LVAR              (-VM_ENV_MANAGE_DATA_SIZE)
 
