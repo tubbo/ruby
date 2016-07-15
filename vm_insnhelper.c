@@ -283,7 +283,7 @@ static inline void
 vm_env_write(const VALUE *ep, int index, VALUE v)
 {
     VALUE flags = ep[VM_ENV_MANAGE_DATA_INDEX_FLAGS];
-    if ((flags & VM_ENV_FLAG_WB_REQUIRED) == 0) {
+    if (LIKELY((flags & VM_ENV_FLAG_WB_REQUIRED) == 0)) {
 	VM_STACK_ENV_WRITE(ep, index, v);
     }
     else {
