@@ -945,8 +945,11 @@ typedef VALUE CDHASH;
 typedef rb_control_frame_t *
   (FUNC_FASTCALL(*rb_insn_func_t))(rb_thread_t *, rb_control_frame_t *);
 
-#define GC_GUARDED_PTR(p)     ((VALUE)((VALUE)(p) | 0x01))
-#define GC_GUARDED_PTR_REF(p) ((void *)(((VALUE)(p)) & ~0x03))
+#define VM_TAGGED_PTR_SET(p, tag)  ((VALUE)(p) | (tag))
+#define VM_TAGGED_PTR_REF(v, mask) ((void *)((v) & ~mask))
+
+#define GC_GUARDED_PTR(p)     VM_TAGGED_PTR_SET((p), 0x01)
+#define GC_GUARDED_PTR_REF(p) VM_TAGGED_PTR_REF((p), 0x03)
 #define GC_GUARDED_PTR_P(p)   (((VALUE)(p)) & 0x01)
 
 enum {
@@ -1130,9 +1133,6 @@ VALUE rb_vm_frame_block_handler(const rb_control_frame_t *cfp);
   (!RUBY_VM_VALID_CONTROL_FRAME_P((cfp), RUBY_VM_END_CONTROL_FRAME(th)))
 
 #define RUBY_VM_NORMAL_ISEQ_P(ptr)  (RB_TYPE_P((VALUE)(ptr), T_IMEMO) && imemo_type((VALUE)ptr) == imemo_iseq && rb_iseq_check((rb_iseq_t *)ptr))
-
-#define VM_TAGGED_PTR_SET(p, tag)  ((VALUE)(p) | (tag))
-#define VM_TAGGED_PTR_REF(v, mask) ((void *)(v & ~mask))
 
 static inline int
 VM_ISEQ_BH_P(VALUE block_handler)
