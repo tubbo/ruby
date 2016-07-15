@@ -17,7 +17,7 @@
  *   1: enable local assertions.
  */
 #ifndef VM_CHECK_MODE
-#define VM_CHECK_MODE 0
+#define VM_CHECK_MODE 1
 #endif
 
 /**
@@ -951,29 +951,29 @@ typedef rb_control_frame_t *
 
 enum {
     /* frame types */
-    VM_FRAME_MAGIC_METHOD = 0x11,
-    VM_FRAME_MAGIC_BLOCK  = 0x21,
-    VM_FRAME_MAGIC_CLASS  = 0x31,
-    VM_FRAME_MAGIC_TOP    = 0x41,
-    VM_FRAME_MAGIC_CFUNC  = 0x61,
-    VM_FRAME_MAGIC_PROC   = 0x71,
-    VM_FRAME_MAGIC_IFUNC  = 0x81,
-    VM_FRAME_MAGIC_EVAL   = 0x91,
-    VM_FRAME_MAGIC_LAMBDA = 0xa1,
-    VM_FRAME_MAGIC_RESCUE = 0xb1,
-    VM_FRAME_MAGIC_DUMMY  = 0xc1,
+    VM_FRAME_MAGIC_METHOD = 0x11110001,
+    VM_FRAME_MAGIC_BLOCK  = 0x22220001,
+    VM_FRAME_MAGIC_CLASS  = 0x33330001,
+    VM_FRAME_MAGIC_TOP    = 0x44440001,
+    VM_FRAME_MAGIC_CFUNC  = 0x55550001,
+    VM_FRAME_MAGIC_PROC   = 0x66660001,
+    VM_FRAME_MAGIC_IFUNC  = 0x77770001,
+    VM_FRAME_MAGIC_EVAL   = 0x88880001,
+    VM_FRAME_MAGIC_LAMBDA = 0x99990001,
+    VM_FRAME_MAGIC_RESCUE = 0xaaaa0001,
+    VM_FRAME_MAGIC_DUMMY  = 0xbbbb0001,
 
-    VM_FRAME_MAGIC_MASK_BITS = 8,
-    VM_FRAME_MAGIC_MASK      = (~(~(VALUE)0<<VM_FRAME_MAGIC_MASK_BITS)),
+    VM_FRAME_MAGIC_MASK   = 0xffff0001,
 
-    /* other frame/env flag */
-    VM_FRAME_FLAG_PASSED    = 0x0100,
-    VM_FRAME_FLAG_FINISH    = 0x0200,
-    VM_FRAME_FLAG_BMETHOD   = 0x0400,
+    /* frame flag */
+    VM_FRAME_FLAG_PASSED    = 0x0010,
+    VM_FRAME_FLAG_FINISH    = 0x0020,
+    VM_FRAME_FLAG_BMETHOD   = 0x0040,
 
-    VM_ENV_FLAG_LOCAL       = 0x0800,
-    VM_ENV_FLAG_ESCAPED     = 0x1000,
-    VM_ENV_FLAG_WB_REQUIRED = 0x2000
+    /* env flag */
+    VM_ENV_FLAG_LOCAL       = 0x0002,
+    VM_ENV_FLAG_ESCAPED     = 0x0004,
+    VM_ENV_FLAG_WB_REQUIRED = 0x0008
 };
 
 static inline void VM_FORCE_WRITE_SPECIAL_CONST(const VALUE *ptr, VALUE special_const_value);

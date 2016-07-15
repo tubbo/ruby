@@ -72,7 +72,7 @@ callable_method_entry_p(const rb_callable_method_entry_t *me)
 static void
 vm_check_frame_detail(VALUE type, int req_block, int req_me, int req_cref, VALUE specval, VALUE cref_or_me)
 {
-    int magic = (int)(type & VM_FRAME_MAGIC_MASK);
+    unsigned int magic = (unsigned int)(type & VM_FRAME_MAGIC_MASK);
     enum imemo_type cref_or_me_type = imemo_none;
 
     if (RB_TYPE_P(cref_or_me, T_IMEMO)) {
@@ -204,6 +204,24 @@ vm_push_frame(rb_thread_t *th,
 
     return cfp;
 }
+
+#if 0
+/* use this function to see asm code */
+rb_control_frame_t *
+rb_vm_push_frame(rb_thread_t *th,
+		 const rb_iseq_t *iseq,
+		 VALUE type,
+		 VALUE self,
+		 VALUE specval,
+		 VALUE cref_or_me,
+		 const VALUE *pc,
+		 VALUE *sp,
+		 int local_size,
+		 int stack_max)
+{
+    return vm_push_frame(th, iseq, type, self, specval, cref_or_me, pc, sp, local_size, stack_max);
+}
+#endif
 
 /* return TRUE if the frame is finished */
 static inline int
