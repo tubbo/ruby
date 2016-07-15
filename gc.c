@@ -2868,13 +2868,6 @@ rb_objspace_call_finalizer(rb_objspace_t *objspace)
     /* prohibit GC because force T_DATA finalizers can break an object graph consistency */
     dont_gc = 1;
 
-#if VM_CHECK_MODE > 0
-    {
-	extern int objspace_call_finalizer_running;
-	objspace_call_finalizer_running = 1;
-    }
-#endif
-
     /* running data/file finalizers are part of garbage collection */
     gc_enter(objspace, "rb_objspace_call_finalizer");
 

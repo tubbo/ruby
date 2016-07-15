@@ -87,7 +87,7 @@ setlocal
     for (i = 0; i < lev; i++) {
 	ep = GET_PREV_EP(ep);
     }
-    vm_env_write_check(ep, -(int)idx, val);
+    vm_env_write(ep, -(int)idx, val);
 }
 
 /**

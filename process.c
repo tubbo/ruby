@@ -3680,8 +3680,6 @@ rb_f_fork(VALUE obj)
 	rb_thread_atfork();
 	if (rb_block_given_p()) {
 	    int status;
-
-	    rb_vm_unreachable_frames(GET_THREAD());
 	    rb_protect(rb_yield, Qundef, &status);
 	    ruby_stop(status);
 	}

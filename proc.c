@@ -2704,6 +2704,16 @@ localjump_reason(VALUE exc)
 
 rb_cref_t *rb_vm_cref_new_toplevel(void); /* vm.c */
 
+static inline void
+env_write(VALUE env, const VALUE *ep, int index, VALUE v)
+{
+    VM_ASSERT(VM_ENV_ESCAPED_P(ep));
+    VM_ASSERT(env == VM_ENV_ENVVAL(ep));
+    VM_ASSERT(vm_env_ep(env) == ep);
+
+    RB_OBJ_WRITE(env, &ep[index], v);
+}
+
 static VALUE
 env_clone(VALUE envval, const rb_cref_t *cref)
 {
@@ -2723,7 +2733,7 @@ env_clone(VALUE envval, const rb_cref_t *cref)
     newenv->ep = &newenv->env[env->ep - env->env];
     VM_FORCE_WRITE(&newenv->ep[1], newenvval);
     RTYPEDDATA_DATA(newenvval) = newenv;
-    VM_ENV_WRITE(newenvval, newenv->ep, -1, (VALUE)cref);
+    env_write(newenvval, newenv->ep, -1, (VALUE)cref);
     return newenvval;
 }
 

@@ -949,8 +949,6 @@ typedef rb_control_frame_t *
 #define GC_GUARDED_PTR_REF(p) ((void *)(((VALUE)(p)) & ~0x03))
 #define GC_GUARDED_PTR_P(p)   (((VALUE)(p)) & 0x01)
 
-#define REMEMBER_AT_POP_FRAME 0
-
 enum {
     /* frame types */
     VM_FRAME_MAGIC_METHOD = 0x11,
@@ -969,18 +967,13 @@ enum {
     VM_FRAME_MAGIC_MASK      = (~(~(VALUE)0<<VM_FRAME_MAGIC_MASK_BITS)),
 
     /* other frame/env flag */
-    VM_FRAME_FLAG_PASSED  = 0x0100,
-    VM_FRAME_FLAG_FINISH  = 0x0200,
-    VM_FRAME_FLAG_BMETHOD = 0x0400,
+    VM_FRAME_FLAG_PASSED    = 0x0100,
+    VM_FRAME_FLAG_FINISH    = 0x0200,
+    VM_FRAME_FLAG_BMETHOD   = 0x0400,
 
-    VM_ENV_FLAG_LOCAL     = 0x0800,
-    VM_ENV_FLAG_ESCAPED   = 0x1000,
-#if REMEMBER_AT_POP_FRAME
-    VM_ENV_FLAG_LEFT      = 0x2000,
-    VM_ENV_FLAG_FORCE_LEFT= 0x4000
-#else
-    VM_ENV_FLAG_REMEMBERED= 0x2000
-#endif
+    VM_ENV_FLAG_LOCAL       = 0x0800,
+    VM_ENV_FLAG_ESCAPED     = 0x1000,
+    VM_ENV_FLAG_WB_REQUIRED = 0x2000
 };
 
 static inline void VM_FORCE_WRITE_SPECIAL_CONST(const VALUE *ptr, VALUE special_const_value);
@@ -1109,12 +1102,7 @@ VM_FORCE_WRITE_SPECIAL_CONST(const VALUE *ptr, VALUE special_const_value)
 static inline void
 VM_STACK_ENV_WRITE(const VALUE *ep, int index, VALUE v)
 {
-#if REMEMBER_AT_POP_FRAME
-    VM_ASSERT(!VM_ENV_FLAGS(ep, VM_ENV_FLAG_LEFT));
-#else
-    VM_ASSERT(VM_ENV_FLAGS(ep, VM_ENV_FLAG_ESCAPED) == 0 ||
-	      VM_ENV_FLAGS(ep, VM_ENV_FLAG_REMEMBERED) != 0);
-#endif
+    VM_ASSERT(VM_ENV_FLAGS(ep, VM_ENV_FLAG_WB_REQUIRED) == 0);
     VM_FORCE_WRITE(&ep[index], v);
 }
 
@@ -1127,16 +1115,6 @@ vm_env_ep(VALUE envval)
     return env->ep;
 }
 #endif
-
-static inline void
-VM_ENV_WRITE(VALUE env, const VALUE *ep, int index, VALUE v)
-{
-    VM_ASSERT(VM_ENV_ESCAPED_P(ep));
-    VM_ASSERT(env == VM_ENV_ENVVAL(ep));
-    VM_ASSERT(vm_env_ep(env) == ep);
-
-    RB_OBJ_WRITE(env, &ep[index], v);
-}
 
 const VALUE *rb_vm_ep_local_ep(const VALUE *ep);
 VALUE rb_vm_frame_block_handler(const rb_control_frame_t *cfp);
@@ -1405,16 +1383,6 @@ void rb_vm_gvl_destroy(rb_vm_t *vm);
 VALUE rb_vm_call(rb_thread_t *th, VALUE recv, VALUE id, int argc,
 		 const VALUE *argv, const rb_callable_method_entry_t *me);
 void rb_vm_pop_frame(rb_thread_t *th);
-
-void rb_vm_unreachable_frames(const rb_thread_t *th);
-
-#if VM_CHECK_MODE > 0
-void rb_vm_unreachable_frames_maybe(const rb_thread_t *th);
-void rb_vm_reachable_frames(const rb_thread_t *th);
-#else
-#define rb_vm_unreachable_frames_maybe(th)
-#define rb_vm_reachable_frames(th)
-#endif
 
 void rb_thread_start_timer_thread(void);
 void rb_thread_stop_timer_thread(void);

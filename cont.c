@@ -532,8 +532,6 @@ cont_restore_thread(rb_context_t *cont)
 {
     rb_thread_t *th = GET_THREAD(), *sth = &cont->saved_thread;
 
-    rb_vm_unreachable_frames_maybe(th);
-
     /* restore thread context */
     if (cont->type == CONTINUATION_CONTEXT) {
 	/* continuation */
@@ -577,12 +575,6 @@ cont_restore_thread(rb_context_t *cont)
     th->root_lep = sth->root_lep;
     th->root_svar = sth->root_svar;
     th->ensure_list = sth->ensure_list;
-
-#if VM_CHECK_MODE > 0
-    if (cont->type == CONTINUATION_CONTEXT) {
-	rb_vm_reachable_frames(th);
-    }
-#endif
 }
 
 #if FIBER_USE_NATIVE

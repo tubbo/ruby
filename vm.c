@@ -172,55 +172,6 @@ vm_passed_block_handler(rb_thread_t *th)
     return block_handler;
 }
 
-void
-rb_vm_unreachable_frames(const rb_thread_t *th)
-{
-#if REMEMBER_AT_POP_FRAME
-    const rb_control_frame_t *cfp = th->cfp;
-    const rb_control_frame_t *limit_cfp = (void *)(th->stack + th->stack_size);
-
-    while(cfp != limit_cfp) {
-	const VALUE *ep = cfp->ep;
-	if (VM_ENV_FLAGS(ep, VM_ENV_FLAG_ESCAPED)) {
-	    VM_ASSERT(rb_vm_ep_in_heap_p(ep));
-	    VM_ENV_FLAGS_SET(ep, VM_ENV_FLAG_LEFT | VM_ENV_FLAG_FORCE_LEFT);
-	    rb_gc_writebarrier_remember(VM_ENV_ENVVAL(ep));
-	}
-	cfp = RUBY_VM_PREVIOUS_CONTROL_FRAME(cfp);
-    }
-#endif
-}
-
-#if VM_CHECK_MODE > 0
-void
-rb_vm_unreachable_frames_maybe(const rb_thread_t *th)
-{
-#if REMEMBER_AT_POP_FRAME
-    const rb_control_frame_t *cfp = th->cfp;
-    const rb_control_frame_t *limit_cfp = (void *)(th->stack + th->stack_size);
-
-    while(cfp != limit_cfp) {
-	VM_ENV_FLAGS_SET(cfp->ep, VM_ENV_FLAG_FORCE_LEFT);
-	cfp = RUBY_VM_PREVIOUS_CONTROL_FRAME(cfp);
-    }
-#endif
-}
-
-void
-rb_vm_reachable_frames(const rb_thread_t *th)
-{
-#if REMEMBER_AT_POP_FRAME
-    const rb_control_frame_t *cfp = th->cfp;
-    const rb_control_frame_t *limit_cfp = (void *)(th->stack + th->stack_size);
-
-    while(cfp != limit_cfp) {
-	VM_ENV_FLAGS_UNSET(cfp->ep, VM_ENV_FLAG_LEFT);
-	cfp = RUBY_VM_PREVIOUS_CONTROL_FRAME(cfp);
-    }
-#endif
-}
-#endif
-
 static rb_cref_t *
 vm_cref_new0(VALUE klass, rb_method_visibility_t visi, int module_func, rb_cref_t *prev_cref, int pushed_by_eval, int use_prev_prev)
 {
@@ -648,14 +599,8 @@ env_mark(void * const ptr)
     RUBY_GC_INFO("env->env\n");
     VM_ASSERT(VM_ENV_FLAGS(env->ep, VM_ENV_FLAG_ESCAPED));
 
-#if REMEMBER_AT_POP_FRAME
-    if (VM_ENV_FLAGS(env->ep, VM_ENV_FLAG_LEFT)) {
-	rb_gc_mark_values((long)env->env_size, env->env);
-    }
-#else
     rb_gc_mark_values((long)env->env_size, env->env);
-    VM_ENV_FLAGS_UNSET(env->ep, VM_ENV_FLAG_REMEMBERED);
-#endif
+    VM_ENV_FLAGS_SET(env->ep, VM_ENV_FLAG_WB_REQUIRED);
 
     RUBY_MARK_UNLESS_NULL(rb_vm_env_prev_envval(env));
     RUBY_MARK_UNLESS_NULL((VALUE)env->iseq);
@@ -673,19 +618,12 @@ env_memsize(const void *ptr)
 }
 
 #if VM_CHECK_MODE > 0
-int objspace_call_finalizer_running = 0;
-
 static void
 env_free(void *ptr)
 {
     if (ptr) {
 	rb_env_t * const env = ptr;
 	VM_ASSERT(VM_ENV_FLAGS(env->ep, VM_ENV_FLAG_ESCAPED));
-#if REMEMBER_AT_POP_FRAME
-	if (objspace_call_finalizer_running == 0) {
-	    VM_ASSERT(VM_ENV_FLAGS(env->ep, VM_ENV_FLAG_LEFT | VM_ENV_FLAG_FORCE_LEFT) != 0);
-	}
-#endif
 	free(env);
     }
 }
@@ -843,7 +781,7 @@ vm_make_env_each(rb_thread_t *const th, rb_control_frame_t *const cfp)
     new_ep = &env->env[local_size - 1 /* specval */];
     RB_OBJ_WRITE(envval, &new_ep[1], envval);
     if (blockprocval) RB_OBJ_WRITE(envval, &new_ep[2], blockprocval);
-    VM_ENV_FLAGS_SET(new_ep, VM_ENV_FLAG_ESCAPED);
+    VM_ENV_FLAGS_SET(new_ep, VM_ENV_FLAG_ESCAPED | VM_ENV_FLAG_WB_REQUIRED);
 
     /*
     * must happen after TypedData_Wrap_Struct to ensure penvval is markable
@@ -2472,20 +2410,14 @@ rb_thread_mark(void *ptr)
 	rb_gc_mark_values((long)(sp - p), p);
 
 	while (cfp != limit_cfp) {
-#if REMEMBER_AT_POP_FRAME
+#if VM_CHECK_MODE > 0
 	    const VALUE *ep = cfp->ep;
-	    if (VM_ENV_FLAGS(ep, VM_ENV_FLAG_ESCAPED)) {
-		const rb_env_t *env;
-		GetEnvPtr(VM_ENV_ENVVAL(ep), env);
-		rb_gc_mark_values((long)env->env_size, env->env);
-	    }
 	    VM_ASSERT(!!VM_ENV_FLAGS(ep, VM_ENV_FLAG_ESCAPED) == vm_ep_in_heap_p_(th, ep));
-	    VM_ASSERT(!VM_ENV_FLAGS(ep, VM_ENV_FLAG_LEFT) ||
-		       VM_ENV_FLAGS(ep, VM_ENV_FLAG_FORCE_LEFT));
 #endif
-	    rb_gc_mark((VALUE)cfp->block_code);
 	    rb_gc_mark(cfp->self);
 	    rb_gc_mark((VALUE)cfp->iseq);
+	    rb_gc_mark((VALUE)cfp->block_code);
+
 	    cfp = RUBY_VM_PREVIOUS_CONTROL_FRAME(cfp);
 	}
     }
@@ -3194,9 +3126,6 @@ Init_VM(void)
 	 * The Binding of the top level scope
 	 */
 	rb_define_global_const("TOPLEVEL_BINDING", rb_binding_new());
-#if REMEMBER_AT_POP_FRAME
-	VM_ENV_FLAGS_SET(th->cfp->ep, VM_ENV_FLAG_LEFT | VM_ENV_FLAG_FORCE_LEFT);
-#endif
     }
     vm_init_redefined_flag();
 
