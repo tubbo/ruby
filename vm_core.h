@@ -984,36 +984,36 @@ static inline void VM_FORCE_WRITE_SPECIAL_CONST(const VALUE *ptr, VALUE special_
 #define VM_FRAME_TYPE_FINISH_P(cfp)  (VM_ENV_FLAGS((cfp)->ep, VM_FRAME_FLAG_FINISH ) != 0)
 #define VM_FRAME_TYPE_BMETHOD_P(cfp) (VM_ENV_FLAGS((cfp)->ep, VM_FRAME_FLAG_BMETHOD) != 0)
 
-#define VM_ENV_MANAGE_DATA_SIZE             ( 3)
+#define VM_ENV_DATA_SIZE             ( 3)
 
-#define VM_ENV_MANAGE_DATA_INDEX_ME_CREF    (-2) /* ep[-2] */
-#define VM_ENV_MANAGE_DATA_INDEX_SPECVAL    (-1) /* ep[-1] */
-#define VM_ENV_MANAGE_DATA_INDEX_FLAGS      ( 0) /* ep[ 0] */
-#define VM_ENV_MANAGE_DATA_INDEX_ENV        ( 1) /* ep[ 1] */
-#define VM_ENV_MANAGE_DATA_INDEX_ENV_PROC   ( 2) /* ep[ 2] */
+#define VM_ENV_DATA_INDEX_ME_CREF    (-2) /* ep[-2] */
+#define VM_ENV_DATA_INDEX_SPECVAL    (-1) /* ep[-1] */
+#define VM_ENV_DATA_INDEX_FLAGS      ( 0) /* ep[ 0] */
+#define VM_ENV_DATA_INDEX_ENV        ( 1) /* ep[ 1] */
+#define VM_ENV_DATA_INDEX_ENV_PROC   ( 2) /* ep[ 2] */
 
-#define VM_ENV_INDEX_LAST_LVAR              (-VM_ENV_MANAGE_DATA_SIZE)
+#define VM_ENV_INDEX_LAST_LVAR              (-VM_ENV_DATA_SIZE)
 
 static inline void
 VM_ENV_FLAGS_SET(const VALUE *ep, VALUE flag)
 {
-    VALUE flags = ep[VM_ENV_MANAGE_DATA_INDEX_FLAGS];
+    VALUE flags = ep[VM_ENV_DATA_INDEX_FLAGS];
     VM_ASSERT(FIXNUM_P(flags));
-    VM_FORCE_WRITE_SPECIAL_CONST(&ep[VM_ENV_MANAGE_DATA_INDEX_FLAGS], flags | flag);
+    VM_FORCE_WRITE_SPECIAL_CONST(&ep[VM_ENV_DATA_INDEX_FLAGS], flags | flag);
 }
 
 static inline void
 VM_ENV_FLAGS_UNSET(const VALUE *ep, VALUE flag)
 {
-    VALUE flags = ep[VM_ENV_MANAGE_DATA_INDEX_FLAGS];
+    VALUE flags = ep[VM_ENV_DATA_INDEX_FLAGS];
     VM_ASSERT(FIXNUM_P(flags));
-    VM_FORCE_WRITE_SPECIAL_CONST(&ep[VM_ENV_MANAGE_DATA_INDEX_FLAGS], flags & ~flag);
+    VM_FORCE_WRITE_SPECIAL_CONST(&ep[VM_ENV_DATA_INDEX_FLAGS], flags & ~flag);
 }
 
 static inline long
 VM_ENV_FLAGS(const VALUE *ep, long flag)
 {
-    VALUE flags = ep[VM_ENV_MANAGE_DATA_INDEX_FLAGS];
+    VALUE flags = ep[VM_ENV_DATA_INDEX_FLAGS];
     VM_ASSERT(FIXNUM_P(flags));
     return flags & flag;
 }
@@ -1046,14 +1046,14 @@ static inline const VALUE *
 VM_ENV_PREV_EP(const VALUE *ep)
 {
     VM_ASSERT(VM_ENV_FLAGS(ep, VM_ENV_FLAG_LOCAL) == 0);
-    return GC_GUARDED_PTR_REF(ep[VM_ENV_MANAGE_DATA_INDEX_SPECVAL]);
+    return GC_GUARDED_PTR_REF(ep[VM_ENV_DATA_INDEX_SPECVAL]);
 }
 
 static inline VALUE
 VM_ENV_BLOCK_HANDLER(const VALUE *ep)
 {
     VM_ASSERT(VM_ENV_FLAGS(ep, VM_ENV_FLAG_LOCAL) != 0);
-    return ep[VM_ENV_MANAGE_DATA_INDEX_SPECVAL];
+    return ep[VM_ENV_DATA_INDEX_SPECVAL];
 }
 
 static inline int
@@ -1077,7 +1077,7 @@ static inline VALUE
 VM_ENV_ENVVAL(const VALUE *ep)
 {
     VM_ASSERT(VM_ENV_ESCAPED_P(ep));
-    return ep[VM_ENV_MANAGE_DATA_INDEX_ENV];
+    return ep[VM_ENV_DATA_INDEX_ENV];
 }
 
 static inline VALUE
@@ -1087,7 +1087,7 @@ VM_ENV_PROCVAL(const VALUE *ep)
     VM_ASSERT(VM_ENV_LOCAL_P(ep));
     VM_ASSERT(VM_ENV_BLOCK_HANDLER(ep) != VM_BLOCK_HANDLER_NONE);
 
-    return ep[VM_ENV_MANAGE_DATA_INDEX_ENV_PROC];
+    return ep[VM_ENV_DATA_INDEX_ENV_PROC];
 }
 
 static inline void

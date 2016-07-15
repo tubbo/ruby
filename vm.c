@@ -117,7 +117,7 @@ int
 vm_ep_in_heap_p_(const rb_thread_t *th, const VALUE *ep)
 {
     if (VM_EP_IN_HEAP_P(th, ep)) {
-	VALUE envval = ep[VM_ENV_MANAGE_DATA_INDEX_ENV]; /* VM_ENV_ENVVAL(ep); */
+	VALUE envval = ep[VM_ENV_DATA_INDEX_ENV]; /* VM_ENV_ENVVAL(ep); */
 
 	if (envval != Qundef) {
 	    rb_env_t *env;
@@ -725,7 +725,7 @@ vm_make_env_each(rb_thread_t *const th, rb_control_frame_t *const cfp)
 	    }
 
 	    vm_make_env_each(th, prev_cfp);
-	    VM_FORCE_WRITE_SPECIAL_CONST(&ep[VM_ENV_MANAGE_DATA_INDEX_SPECVAL], VM_GUARDED_PREV_EP(prev_cfp->ep));
+	    VM_FORCE_WRITE_SPECIAL_CONST(&ep[VM_ENV_DATA_INDEX_SPECVAL], VM_GUARDED_PREV_EP(prev_cfp->ep));
 	}
     }
     else {
@@ -733,15 +733,15 @@ vm_make_env_each(rb_thread_t *const th, rb_control_frame_t *const cfp)
 
 	if (block_handler != VM_BLOCK_HANDLER_NONE) {
 	    vm_block_handler_escape(th, block_handler, &blockprocval);
-	    VM_STACK_ENV_WRITE(ep, VM_ENV_MANAGE_DATA_INDEX_SPECVAL, blockprocval);
+	    VM_STACK_ENV_WRITE(ep, VM_ENV_DATA_INDEX_SPECVAL, blockprocval);
 	}
     }
 
     if (!RUBY_VM_NORMAL_ISEQ_P(cfp->iseq)) {
-	local_size = VM_ENV_MANAGE_DATA_SIZE;
+	local_size = VM_ENV_DATA_SIZE;
     }
     else {
-	local_size = cfp->iseq->body->local_table_size + VM_ENV_MANAGE_DATA_SIZE;
+	local_size = cfp->iseq->body->local_table_size + VM_ENV_DATA_SIZE;
     }
 
     /*
@@ -3120,7 +3120,7 @@ Init_VM(void)
 	th->cfp->pc = iseq->body->iseq_encoded;
 	th->cfp->self = th->top_self;
 
-	VM_STACK_ENV_WRITE(th->cfp->ep, VM_ENV_MANAGE_DATA_INDEX_ME_CREF, (VALUE)vm_cref_new(rb_cObject, METHOD_VISI_PRIVATE, FALSE, NULL, FALSE));
+	VM_STACK_ENV_WRITE(th->cfp->ep, VM_ENV_DATA_INDEX_ME_CREF, (VALUE)vm_cref_new(rb_cObject, METHOD_VISI_PRIVATE, FALSE, NULL, FALSE));
 
 	/*
 	 * The Binding of the top level scope

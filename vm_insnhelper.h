@@ -104,7 +104,7 @@ enum vm_regan_acttype {
 /* deal with variables                                    */
 /**********************************************************/
 
-#define GET_PREV_EP(ep)                ((VALUE *)((ep)[VM_ENV_MANAGE_DATA_INDEX_SPECVAL] & ~0x03))
+#define GET_PREV_EP(ep)                ((VALUE *)((ep)[VM_ENV_DATA_INDEX_SPECVAL] & ~0x03))
 
 #define GET_GLOBAL(entry)       rb_gvar_get((struct rb_global_entry*)(entry))
 #define SET_GLOBAL(entry, val)  rb_gvar_set((struct rb_global_entry*)(entry), (val))
@@ -148,7 +148,7 @@ enum vm_regan_acttype {
 #define CI_SET_FASTPATH(ci, func, enabled) /* do nothing */
 #endif
 
-#define GET_BLOCK_HANDLER() (GET_LEP()[VM_ENV_MANAGE_DATA_INDEX_SPECVAL])
+#define GET_BLOCK_HANDLER() (GET_LEP()[VM_ENV_DATA_INDEX_SPECVAL])
 
 /**********************************************************/
 /* deal with control flow 3: exception                    */

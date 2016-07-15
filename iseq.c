@@ -1269,7 +1269,7 @@ rb_insn_operand_intern(const rb_iseq_t *iseq,
 		    diseq = diseq->body->parent_iseq;
 		}
 		lid = diseq->body->local_table[diseq->body->local_table_size +
-					       VM_ENV_MANAGE_DATA_SIZE - 1 - op];
+					       VM_ENV_DATA_SIZE - 1 - op];
 		ret = id_to_name(lid, INT2FIX('*'));
 	    }
 	    else {

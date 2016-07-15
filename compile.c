@@ -267,12 +267,12 @@ r_value(VALUE value)
 
 #define ADD_GETLOCAL(seq, line, idx, level) \
   do { \
-      ADD_INSN2((seq), (line), getlocal, INT2FIX((idx) + VM_ENV_MANAGE_DATA_SIZE - 1), INT2FIX(level)); \
+      ADD_INSN2((seq), (line), getlocal, INT2FIX((idx) + VM_ENV_DATA_SIZE - 1), INT2FIX(level)); \
   } while (0)
 
 #define ADD_SETLOCAL(seq, line, idx, level) \
   do { \
-      ADD_INSN2((seq), (line), setlocal, INT2FIX((idx) + VM_ENV_MANAGE_DATA_SIZE - 1), INT2FIX(level)); \
+      ADD_INSN2((seq), (line), setlocal, INT2FIX((idx) + VM_ENV_DATA_SIZE - 1), INT2FIX(level)); \
   } while (0)
 
 /* add label */
@@ -6038,7 +6038,7 @@ iseq_compile_each(rb_iseq_t *iseq, LINK_ANCHOR *ret, NODE * node, int poped)
 		int kw_bits_idx = iseq->body->local_table_size - iseq->body->param.keyword->bits_start;
 		int keyword_idx = iseq->body->param.keyword->num;
 
-		ADD_INSN2(ret, line, checkkeyword, INT2FIX(kw_bits_idx + VM_ENV_MANAGE_DATA_SIZE - 1), INT2FIX(keyword_idx));
+		ADD_INSN2(ret, line, checkkeyword, INT2FIX(kw_bits_idx + VM_ENV_DATA_SIZE - 1), INT2FIX(keyword_idx));
 		ADD_INSNL(ret, line, branchif, end_label);
 		COMPILE_POPED(ret, "keyword default argument", node->nd_body);
 		ADD_LABEL(ret, end_label);

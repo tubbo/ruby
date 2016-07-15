@@ -187,9 +187,9 @@ vm_push_frame(rb_thread_t *th,
     }
 
     /* setup ep with managing data */
-    VM_ASSERT(VM_ENV_MANAGE_DATA_INDEX_ME_CREF == -2);
-    VM_ASSERT(VM_ENV_MANAGE_DATA_INDEX_SPECVAL == -1);
-    VM_ASSERT(VM_ENV_MANAGE_DATA_INDEX_FLAGS   == -0);
+    VM_ASSERT(VM_ENV_DATA_INDEX_ME_CREF == -2);
+    VM_ASSERT(VM_ENV_DATA_INDEX_SPECVAL == -1);
+    VM_ASSERT(VM_ENV_DATA_INDEX_FLAGS   == -0);
     *sp++ = cref_or_me; /* ep[-2] / Qnil or T_IMEMO(cref) or T_IMEMO(ment) */
     *sp++ = specval     /* ep[-1] / block handler or prev env ptr */;
     *sp   = type;       /* ep[-0] / ENV_FLAGS */
@@ -227,7 +227,7 @@ rb_vm_push_frame(rb_thread_t *th,
 static inline int
 vm_pop_frame(rb_thread_t *th, rb_control_frame_t *cfp, const VALUE *ep)
 {
-    VALUE flags = ep[VM_ENV_MANAGE_DATA_INDEX_FLAGS];
+    VALUE flags = ep[VM_ENV_DATA_INDEX_FLAGS];
 
     if (VM_CHECK_MODE >= 4) rb_gc_verify_internal_consistency();
     if (VMDEBUG == 2)       SDR();
@@ -282,7 +282,7 @@ vm_env_write_slowpath(const VALUE *ep, int index, VALUE v)
 static inline void
 vm_env_write(const VALUE *ep, int index, VALUE v)
 {
-    VALUE flags = ep[VM_ENV_MANAGE_DATA_INDEX_FLAGS];
+    VALUE flags = ep[VM_ENV_DATA_INDEX_FLAGS];
     if (LIKELY((flags & VM_ENV_FLAG_WB_REQUIRED) == 0)) {
 	VM_STACK_ENV_WRITE(ep, index, v);
     }
@@ -325,7 +325,7 @@ lep_svar(rb_thread_t *th, const VALUE *lep)
     VALUE svar;
 
     if (lep && (th == NULL || th->root_lep != lep)) {
-	svar = lep[VM_ENV_MANAGE_DATA_INDEX_ME_CREF];
+	svar = lep[VM_ENV_DATA_INDEX_ME_CREF];
     }
     else {
 	svar = th->root_svar;
@@ -342,7 +342,7 @@ lep_svar_write(rb_thread_t *th, const VALUE *lep, const struct vm_svar *svar)
     VM_ASSERT(vm_svar_valid_p((VALUE)svar));
 
     if (lep && (th == NULL || th->root_lep != lep)) {
-	vm_env_write(lep, VM_ENV_MANAGE_DATA_INDEX_ME_CREF, (VALUE)svar);
+	vm_env_write(lep, VM_ENV_DATA_INDEX_ME_CREF, (VALUE)svar);
     }
     else {
 	RB_OBJ_WRITE(th->self, &th->root_svar, svar);
@@ -477,11 +477,11 @@ rb_vm_frame_method_entry(const rb_control_frame_t *cfp)
     rb_callable_method_entry_t *me;
 
     while (!VM_ENV_LOCAL_P(ep)) {
-	if ((me = check_method_entry(ep[VM_ENV_MANAGE_DATA_INDEX_ME_CREF], FALSE)) != NULL) return me;
+	if ((me = check_method_entry(ep[VM_ENV_DATA_INDEX_ME_CREF], FALSE)) != NULL) return me;
 	ep = VM_ENV_PREV_EP(ep);
     }
 
-    return check_method_entry(ep[VM_ENV_MANAGE_DATA_INDEX_ME_CREF], TRUE);
+    return check_method_entry(ep[VM_ENV_DATA_INDEX_ME_CREF], TRUE);
 }
 
 static rb_cref_t *
@@ -530,11 +530,11 @@ vm_env_cref(const VALUE *ep)
     rb_cref_t *cref;
 
     while (!VM_ENV_LOCAL_P(ep)) {
-	if ((cref = check_cref(ep[VM_ENV_MANAGE_DATA_INDEX_ME_CREF], FALSE)) != NULL) return cref;
+	if ((cref = check_cref(ep[VM_ENV_DATA_INDEX_ME_CREF], FALSE)) != NULL) return cref;
 	ep = VM_ENV_PREV_EP(ep);
     }
 
-    return check_cref(ep[VM_ENV_MANAGE_DATA_INDEX_ME_CREF], TRUE);
+    return check_cref(ep[VM_ENV_DATA_INDEX_ME_CREF], TRUE);
 }
 
 static int
@@ -557,10 +557,10 @@ static int
 vm_env_cref_by_cref(const VALUE *ep)
 {
     while (!VM_ENV_LOCAL_P(ep)) {
-	if (is_cref(ep[VM_ENV_MANAGE_DATA_INDEX_ME_CREF], FALSE)) return TRUE;
+	if (is_cref(ep[VM_ENV_DATA_INDEX_ME_CREF], FALSE)) return TRUE;
 	ep = VM_ENV_PREV_EP(ep);
     }
-    return is_cref(ep[VM_ENV_MANAGE_DATA_INDEX_ME_CREF], TRUE);
+    return is_cref(ep[VM_ENV_DATA_INDEX_ME_CREF], TRUE);
 }
 
 static rb_cref_t *
@@ -603,13 +603,13 @@ vm_cref_replace_with_duplicated_cref(const VALUE *ep)
 
 	while (!VM_ENV_LOCAL_P(ep)) {
 	    envval = VM_ENV_ESCAPED_P(ep) ? VM_ENV_ENVVAL(ep) : Qfalse;
-	    if ((cref = cref_replace_with_duplicated_cref_each_frame(&ep[VM_ENV_MANAGE_DATA_INDEX_ME_CREF], FALSE, envval)) != NULL) {
+	    if ((cref = cref_replace_with_duplicated_cref_each_frame(&ep[VM_ENV_DATA_INDEX_ME_CREF], FALSE, envval)) != NULL) {
 		return cref;
 	    }
 	    ep = VM_ENV_PREV_EP(ep);
 	}
 	envval = VM_ENV_ESCAPED_P(ep) ? VM_ENV_ENVVAL(ep) : Qfalse;
-	return cref_replace_with_duplicated_cref_each_frame(&ep[VM_ENV_MANAGE_DATA_INDEX_ME_CREF], TRUE, envval);
+	return cref_replace_with_duplicated_cref_each_frame(&ep[VM_ENV_DATA_INDEX_ME_CREF], TRUE, envval);
     }
     else {
 	rb_bug("vm_cref_dup: unreachable");
@@ -1352,7 +1352,7 @@ vm_base_ptr(const rb_control_frame_t *cfp)
     const rb_control_frame_t *prev_cfp = RUBY_VM_PREVIOUS_CONTROL_FRAME(cfp);
 
     if (cfp->iseq && RUBY_VM_NORMAL_ISEQ_P(cfp->iseq)) {
-	VALUE *bp = prev_cfp->sp + cfp->iseq->body->local_table_size + VM_ENV_MANAGE_DATA_SIZE;
+	VALUE *bp = prev_cfp->sp + cfp->iseq->body->local_table_size + VM_ENV_DATA_SIZE;
 	if (cfp->iseq->body->type == ISEQ_TYPE_METHOD) {
 	    /* adjust `self' */
 	    bp += 1;

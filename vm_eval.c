@@ -1594,7 +1594,7 @@ yield_under(VALUE under, VALUE self, int argc, const VALUE *argv)
 	new_captured.self = self;
 	ep = captured->ep;
 
-	VM_FORCE_WRITE_SPECIAL_CONST(&VM_CF_LEP(th->cfp)[VM_ENV_MANAGE_DATA_INDEX_SPECVAL], new_block_handler);
+	VM_FORCE_WRITE_SPECIAL_CONST(&VM_CF_LEP(th->cfp)[VM_ENV_DATA_INDEX_SPECVAL], new_block_handler);
     }
 
     cref = vm_cref_push(th, under, ep, TRUE);
@@ -1629,7 +1629,7 @@ rb_yield_refine_block(VALUE refinement, VALUE refinements)
 	}
 	new_captured.self = refinement;
 	ep = captured->ep;
-	VM_FORCE_WRITE_SPECIAL_CONST(&VM_CF_LEP(th->cfp)[VM_ENV_MANAGE_DATA_INDEX_SPECVAL], new_block_handler);
+	VM_FORCE_WRITE_SPECIAL_CONST(&VM_CF_LEP(th->cfp)[VM_ENV_DATA_INDEX_SPECVAL], new_block_handler);
     }
     cref = vm_cref_push(th, refinement, ep, TRUE);
     CREF_REFINEMENTS_SET(cref, refinements);
