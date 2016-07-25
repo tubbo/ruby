@@ -807,7 +807,7 @@ vm_caller_setup_arg_block(const rb_thread_t *th, rb_control_frame_t *reg_cfp,
     else if (blockiseq != NULL) { /* likely */
 	struct rb_captured_block *captured = VM_CFP_TO_CAPTURED_BLOCK(reg_cfp);
 	captured->code.iseq = blockiseq;
-	calling->block_handler = VM_ISEQ_BLOCK_TO_BH(captured);
+	calling->block_handler = VM_BH_FROM_ISEQ_BLOCK(captured);
     }
     else {
 	if (is_super) {

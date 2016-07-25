@@ -1153,7 +1153,7 @@ rb_iterate0(VALUE (* it_proc) (VALUE), VALUE data1,
 	    if (ifunc) {
 		struct rb_captured_block *captured = VM_CFP_TO_CAPTURED_BLOCK(cfp);
 		captured->code.ifunc = ifunc;
-		block_handler = VM_IFUNC_BLOCK_TO_BH(captured);
+		block_handler = VM_BH_FROM_IFUNC_BLOCK(captured);
 	    }
 	    else {
 		block_handler = VM_CF_BLOCK_HANDLER(cfp);
@@ -1577,12 +1577,12 @@ yield_under(VALUE under, VALUE self, int argc, const VALUE *argv)
 	  case block_handler_type_iseq:
 	    captured = VM_BH_TO_CAPT_BLOCK(block_handler);
 	    new_captured = *captured;
-	    new_block_handler = VM_ISEQ_BLOCK_TO_BH(&new_captured);
+	    new_block_handler = VM_BH_FROM_ISEQ_BLOCK(&new_captured);
 	    break;
 	  case block_handler_type_ifunc:
 	    captured = VM_BH_TO_CAPT_BLOCK(block_handler);
 	    new_captured = *captured;
-	    new_block_handler = VM_IFUNC_BLOCK_TO_BH(&new_captured);
+	    new_block_handler = VM_BH_FROM_IFUNC_BLOCK(&new_captured);
 	    break;
 	  case block_handler_type_proc:
 	    block_handler = vm_proc_to_block_handler(VM_BH_TO_PROC(block_handler));
@@ -1617,12 +1617,12 @@ rb_yield_refine_block(VALUE refinement, VALUE refinements)
 	  case block_handler_type_iseq:
 	    captured = VM_BH_TO_ISEQ_BLOCK(block_handler);
 	    new_captured = *captured;
-	    new_block_handler = VM_ISEQ_BLOCK_TO_BH(&new_captured);
+	    new_block_handler = VM_BH_FROM_ISEQ_BLOCK(&new_captured);
 	    break;
 	  case block_handler_type_ifunc:
 	    captured = VM_BH_TO_IFUNC_BLOCK(block_handler);
 	    new_captured = *captured;
-	    new_block_handler = VM_IFUNC_BLOCK_TO_BH(&new_captured);
+	    new_block_handler = VM_BH_FROM_IFUNC_BLOCK(&new_captured);
 	    break;
 	  default:
 	    rb_bug("TODO: unsupported");

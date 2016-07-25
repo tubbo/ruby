@@ -1504,11 +1504,11 @@ vm_call_iseq_setup_tailcall(rb_thread_t *th, rb_control_frame_t *cfp, struct rb_
 	struct rb_captured_block *dst_captured = VM_CFP_TO_CAPTURED_BLOCK(RUBY_VM_PREVIOUS_CONTROL_FRAME(cfp));
 	const struct rb_captured_block *src_captured = VM_BH_TO_CAPT_BLOCK(calling->block_handler);
 	dst_captured->code.val = src_captured->code.val;
-	if (VM_ISEQ_BH_P(calling->block_handler)) {
-	    calling->block_handler = VM_ISEQ_BLOCK_TO_BH(dst_captured);
+	if (VM_BH_ISEQ_BLOCK_P(calling->block_handler)) {
+	    calling->block_handler = VM_BH_FROM_ISEQ_BLOCK(dst_captured);
 	}
 	else {
-	    calling->block_handler = VM_IFUNC_BLOCK_TO_BH(dst_captured);
+	    calling->block_handler = VM_BH_FROM_IFUNC_BLOCK(dst_captured);
 	}
     }
 
@@ -2589,9 +2589,9 @@ vm_proc_to_block_handler(VALUE procval)
 
     switch (vm_block_type(block)) {
       case block_type_iseq:
-	return VM_ISEQ_BLOCK_TO_BH(&block->as.captured);
+	return VM_BH_FROM_ISEQ_BLOCK(&block->as.captured);
       case block_type_ifunc:
-	return VM_IFUNC_BLOCK_TO_BH(&block->as.captured);
+	return VM_BH_FROM_IFUNC_BLOCK(&block->as.captured);
       case block_type_symbol:
 	return VM_SYMBOL_TO_BH(block->as.symbol);
       case block_type_proc:

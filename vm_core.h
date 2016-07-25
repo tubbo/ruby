@@ -1135,7 +1135,7 @@ VALUE rb_vm_frame_block_handler(const rb_control_frame_t *cfp);
 #define RUBY_VM_NORMAL_ISEQ_P(ptr)  (RB_TYPE_P((VALUE)(ptr), T_IMEMO) && imemo_type((VALUE)ptr) == imemo_iseq && rb_iseq_check((rb_iseq_t *)ptr))
 
 static inline int
-VM_ISEQ_BH_P(VALUE block_handler)
+VM_BH_ISEQ_BLOCK_P(VALUE block_handler)
 {
     if ((block_handler & 0x03) == 0x01) {
 #if VM_CHECK_MODE > 0
@@ -1151,10 +1151,10 @@ VM_ISEQ_BH_P(VALUE block_handler)
 }
 
 static inline VALUE
-VM_ISEQ_BLOCK_TO_BH(const struct rb_captured_block *captured)
+VM_BH_FROM_ISEQ_BLOCK(const struct rb_captured_block *captured)
 {
     VALUE block_handler = VM_TAGGED_PTR_SET(captured, 0x01);
-    VM_ASSERT(VM_ISEQ_BH_P(block_handler));
+    VM_ASSERT(VM_BH_ISEQ_BLOCK_P(block_handler));
     return block_handler;
 }
 
@@ -1162,12 +1162,12 @@ static inline const struct rb_captured_block *
 VM_BH_TO_ISEQ_BLOCK(VALUE block_handler)
 {
     struct rb_captured_block *captured = VM_TAGGED_PTR_REF(block_handler, 0x03);
-    VM_ASSERT(VM_ISEQ_BH_P(block_handler));
+    VM_ASSERT(VM_BH_ISEQ_BLOCK_P(block_handler));
     return captured;
 }
 
 static inline int
-VM_IFUNC_BH_P(VALUE block_handler)
+VM_BH_IFUNC_P(VALUE block_handler)
 {
     if ((block_handler & 0x03) == 0x03) {
 #if VM_CHECK_MODE > 0
@@ -1183,10 +1183,10 @@ VM_IFUNC_BH_P(VALUE block_handler)
 }
 
 static inline VALUE
-VM_IFUNC_BLOCK_TO_BH(const struct rb_captured_block *captured)
+VM_BH_FROM_IFUNC_BLOCK(const struct rb_captured_block *captured)
 {
     VALUE block_handler = VM_TAGGED_PTR_SET(captured, 0x03);
-    VM_ASSERT(VM_IFUNC_BH_P(block_handler));
+    VM_ASSERT(VM_BH_IFUNC_P(block_handler));
     return block_handler;
 }
 
@@ -1194,7 +1194,7 @@ static inline const struct rb_captured_block *
 VM_BH_TO_IFUNC_BLOCK(VALUE block_handler)
 {
     struct rb_captured_block *captured = VM_TAGGED_PTR_REF(block_handler, 0x03);
-    VM_ASSERT(VM_IFUNC_BH_P(block_handler));
+    VM_ASSERT(VM_BH_IFUNC_P(block_handler));
     return captured;
 }
 
@@ -1202,17 +1202,17 @@ static inline const struct rb_captured_block *
 VM_BH_TO_CAPT_BLOCK(VALUE block_handler)
 {
     struct rb_captured_block *captured = VM_TAGGED_PTR_REF(block_handler, 0x03);
-    VM_ASSERT(VM_IFUNC_BH_P(block_handler) || VM_ISEQ_BH_P(block_handler));
+    VM_ASSERT(VM_BH_IFUNC_P(block_handler) || VM_BH_ISEQ_BLOCK_P(block_handler));
     return captured;
 }
 
 static inline rb_block_handler_type_t
 vm_block_handler_type(VALUE block_handler)
 {
-    if (VM_ISEQ_BH_P(block_handler)) {
+    if (VM_BH_ISEQ_BLOCK_P(block_handler)) {
 	return block_handler_type_iseq;
     }
-    else if (VM_IFUNC_BH_P(block_handler)) {
+    else if (VM_BH_IFUNC_P(block_handler)) {
 	return block_handler_type_ifunc;
     }
     else if (SYMBOL_P(block_handler)) {
