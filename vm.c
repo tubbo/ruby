@@ -448,7 +448,7 @@ vm_set_top_stack(rb_thread_t *th, const rb_iseq_t *iseq)
 }
 
 static void
-vm_set_eval_stack(rb_thread_t * th, const rb_iseq_t *iseq, const rb_cref_t *cref, const rb_block_t *base_block)
+vm_set_eval_stack(rb_thread_t * th, const rb_iseq_t *iseq, const rb_cref_t *cref, const struct rb_block *base_block)
 {
     vm_push_frame(th, iseq, VM_FRAME_MAGIC_EVAL | VM_FRAME_FLAG_FINISH,
 		  vm_block_self(base_block), VM_GUARDED_PREV_EP(vm_block_ep(base_block)),
@@ -918,7 +918,7 @@ rb_proc_create_from_captured(VALUE klass,
 }
 
 VALUE
-rb_proc_create(VALUE klass, const rb_block_t *block,
+rb_proc_create(VALUE klass, const struct rb_block *block,
 	       int8_t safe_level, int8_t is_from_method, int8_t is_lambda)
 {
     VALUE procval = rb_proc_alloc(klass);
@@ -1012,7 +1012,7 @@ rb_binding_add_dynavars(rb_binding_t *bind, int dyncount, const ID *dynvars)
 {
     VALUE envval;
     VALUE path = bind->path;
-    const rb_block_t *base_block;
+    const struct rb_block *base_block;
     rb_env_t *env;
     rb_thread_t *th = GET_THREAD();
     const rb_iseq_t *base_iseq, *iseq;
@@ -1172,7 +1172,7 @@ vm_yield_with_block(rb_thread_t *th, int argc, const VALUE *argv, VALUE block_ha
 }
 
 static VALUE
-invoke_block_from_c_unsplattable(rb_thread_t *th, const rb_block_t *block,
+invoke_block_from_c_unsplattable(rb_thread_t *th, const struct rb_block *block,
 				 VALUE self, int argc, const VALUE *argv,
 				 VALUE passed_block_handler, int is_lambda)
 {

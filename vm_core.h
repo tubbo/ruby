@@ -618,14 +618,14 @@ typedef enum {
     block_type_proc
 } rb_block_type_t;
 
-typedef struct rb_block_struct {
+struct rb_block {
     union {
 	struct rb_captured_block captured;
 	VALUE symbol;
 	VALUE proc;
     } as;
     rb_block_type_t type;
-} rb_block_t;
+};
 
 typedef struct rb_control_frame_struct {
     const VALUE *pc;		/* cfp[0] */
@@ -847,8 +847,8 @@ rb_iseq_t *rb_iseq_new_with_opt(NODE*, VALUE, VALUE, VALUE, VALUE, const rb_iseq
 
 /* src -> iseq */
 rb_iseq_t *rb_iseq_compile(VALUE src, VALUE file, VALUE line);
-rb_iseq_t *rb_iseq_compile_on_base(VALUE src, VALUE file, VALUE line, const rb_block_t *base_block);
-rb_iseq_t *rb_iseq_compile_with_option(VALUE src, VALUE file, VALUE absolute_path, VALUE line, const rb_block_t *base_block, VALUE opt);
+rb_iseq_t *rb_iseq_compile_on_base(VALUE src, VALUE file, VALUE line, const struct rb_block *base_block);
+rb_iseq_t *rb_iseq_compile_with_option(VALUE src, VALUE file, VALUE absolute_path, VALUE line, const struct rb_block *base_block, VALUE opt);
 
 VALUE rb_iseq_disasm(const rb_iseq_t *iseq);
 int rb_iseq_disasm_insn(VALUE str, const VALUE *iseqval, size_t pos, const rb_iseq_t *iseq, VALUE child);
@@ -866,7 +866,7 @@ RUBY_SYMBOL_EXPORT_END
   GetCoreDataFromValue((obj), rb_proc_t, (ptr))
 
 typedef struct {
-    const rb_block_t block;
+    const struct rb_block block;
     int8_t safe_level;		/* 0..1 */
     int8_t is_from_method;	/* bool */
     int8_t is_lambda;		/* bool */
@@ -888,7 +888,7 @@ extern const rb_data_type_t ruby_binding_data_type;
   GetCoreDataFromValue((obj), rb_binding_t, (ptr))
 
 typedef struct {
-    rb_block_t block;
+    struct rb_block block;
     VALUE path;
     unsigned short first_lineno;
 } rb_binding_t;
@@ -1233,7 +1233,7 @@ vm_block_handler_verify(VALUE block_handler)
 }
 
 static inline rb_block_type_t
-vm_block_type(const rb_block_t *block)
+vm_block_type(const struct rb_block *block)
 {
 #if VM_CHECK_MODE > 0
     switch (block->type) {
@@ -1256,7 +1256,7 @@ vm_block_type(const rb_block_t *block)
     return block->type;
 }
 
-static inline const rb_block_t *
+static inline const struct rb_block *
 vm_proc_block(VALUE procval)
 {
     rb_proc_t *proc = RTYPEDDATA_DATA(procval);
@@ -1264,8 +1264,8 @@ vm_proc_block(VALUE procval)
     return &proc->block;
 }
 
-static inline const rb_iseq_t *vm_block_iseq(const rb_block_t *block);
-static inline const VALUE *vm_block_ep(const rb_block_t *block);
+static inline const rb_iseq_t *vm_block_iseq(const struct rb_block *block);
+static inline const VALUE *vm_block_ep(const struct rb_block *block);
 
 static inline const rb_iseq_t *
 vm_proc_iseq(VALUE procval)
@@ -1281,7 +1281,7 @@ vm_proc_ep(VALUE procval)
 }
 
 static inline const rb_iseq_t *
-vm_block_iseq(const rb_block_t *block)
+vm_block_iseq(const struct rb_block *block)
 {
     switch (vm_block_type(block)) {
       case block_type_iseq: return block->as.captured.code.iseq;
@@ -1294,7 +1294,7 @@ vm_block_iseq(const rb_block_t *block)
 }
 
 static inline const VALUE *
-vm_block_ep(const rb_block_t *block)
+vm_block_ep(const struct rb_block *block)
 {
     switch (vm_block_type(block)) {
       case block_type_iseq: 
@@ -1307,7 +1307,7 @@ vm_block_ep(const rb_block_t *block)
 }
 
 static inline VALUE
-vm_block_self(const rb_block_t *block)
+vm_block_self(const struct rb_block *block)
 {
     switch (vm_block_type(block)) {
       case block_type_iseq:

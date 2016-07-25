@@ -6868,7 +6868,7 @@ rb_iseq_build_from_ary(rb_iseq_t *iseq, VALUE misc, VALUE locals, VALUE params,
 /* for parser */
 
 int
-rb_dvar_defined(ID id, const rb_block_t *base_block)
+rb_dvar_defined(ID id, const struct rb_block *base_block)
 {
     const rb_iseq_t *iseq;
 
@@ -6893,7 +6893,7 @@ rb_dvar_defined(ID id, const rb_block_t *base_block)
 }
 
 int
-rb_local_defined(ID id, const rb_block_t *base_block)
+rb_local_defined(ID id, const struct rb_block *base_block)
 {
     const rb_iseq_t *iseq;
 

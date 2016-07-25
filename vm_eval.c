@@ -20,7 +20,7 @@ static inline VALUE vm_yield_with_cref(rb_thread_t *th, int argc, const VALUE *a
 static inline VALUE vm_yield(rb_thread_t *th, int argc, const VALUE *argv);
 static inline VALUE vm_yield_with_block(rb_thread_t *th, int argc, const VALUE *argv, VALUE block_handler);
 static VALUE vm_exec(rb_thread_t *th);
-static void vm_set_eval_stack(rb_thread_t * th, const rb_iseq_t *iseq, const rb_cref_t *cref, const rb_block_t *base_block);
+static void vm_set_eval_stack(rb_thread_t * th, const rb_iseq_t *iseq, const rb_cref_t *cref, const struct rb_block *base_block);
 static int vm_collect_local_variables_in_heap(rb_thread_t *th, const VALUE *dfp, const struct local_var_list *vars);
 
 static VALUE rb_eUncaughtThrow;
@@ -1278,8 +1278,8 @@ eval_string_with_cref(VALUE self, VALUE src, VALUE scope, rb_cref_t *const cref_
     int state;
     VALUE result = Qundef;
     rb_thread_t *th = GET_THREAD();
-    rb_block_t block;
-    const rb_block_t *base_block;
+    struct rb_block block;
+    const struct rb_block *base_block;
     volatile VALUE file;
     volatile int line;
 

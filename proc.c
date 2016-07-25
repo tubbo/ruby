@@ -51,7 +51,7 @@ static int method_min_max_arity(VALUE, int *max);
 static VALUE proc_to_s_(VALUE self, const rb_proc_t *proc);
 
 static void
-block_mark(const rb_block_t *block)
+block_mark(const struct rb_block *block)
 {
     switch (vm_block_type(block)) {
       case block_type_iseq:
@@ -124,7 +124,7 @@ rb_obj_is_proc(VALUE proc)
     }
 }
 
-VALUE rb_proc_create(VALUE klass, const rb_block_t *block,
+VALUE rb_proc_create(VALUE klass, const struct rb_block *block,
 		     int8_t safe_level, int8_t is_from_method, int8_t is_lambda);
 
 /* :nodoc: */
@@ -934,7 +934,7 @@ rb_iseq_min_max_arity(const rb_iseq_t *iseq, int *max)
 }
 
 static int
-rb_block_min_max_arity(const rb_block_t *block, int *max)
+rb_block_min_max_arity(const struct rb_block *block, int *max)
 {
     switch (vm_block_type(block)) {
       case block_type_iseq:
@@ -967,7 +967,7 @@ static int
 rb_proc_min_max_arity(VALUE self, int *max)
 {
     rb_proc_t *proc;
-    const rb_block_t *block;
+    const struct rb_block *block;
     GetProcPtr(self, proc);
     block = &proc->block;
     return rb_block_min_max_arity(block, max);
@@ -983,7 +983,7 @@ rb_proc_arity(VALUE self)
 }
 
 static void
-block_setup(rb_block_t *block, VALUE block_handler)
+block_setup(struct rb_block *block, VALUE block_handler)
 {
     switch (vm_block_handler_type(block_handler)) {
       case block_handler_type_iseq:
@@ -1011,7 +1011,7 @@ rb_block_arity(void)
     rb_thread_t *th = GET_THREAD();
     rb_control_frame_t *cfp = th->cfp;
     VALUE block_handler = rb_vm_frame_block_handler(cfp);
-    rb_block_t block;
+    struct rb_block block;
 
     if (block_handler == VM_BLOCK_HANDLER_NONE) {
 	rb_raise(rb_eArgError, "no block given");
@@ -1042,7 +1042,7 @@ const rb_iseq_t *
 rb_proc_get_iseq(VALUE self, int *is_proc)
 {
     const rb_proc_t *proc;
-    const rb_block_t *block;
+    const struct rb_block *block;
 
     GetProcPtr(self, proc);
     block = &proc->block;
@@ -1217,7 +1217,7 @@ proc_to_s_(VALUE self, const rb_proc_t *proc)
 {
     VALUE str = 0;
     const char *cname = rb_obj_classname(self);
-    const rb_block_t *block;
+    const struct rb_block *block;
     const char *is_lambda;
 
     block = &proc->block;
@@ -2759,7 +2759,7 @@ proc_binding(VALUE self)
     rb_binding_t *bind;
     const rb_proc_t *proc;
     const rb_iseq_t *iseq = NULL;
-    const rb_block_t *block;
+    const struct rb_block *block;
     const rb_env_t *env;
 
     GetProcPtr(self, proc);

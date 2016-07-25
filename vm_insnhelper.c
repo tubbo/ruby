@@ -2585,7 +2585,7 @@ vm_invoke_ifunc_block(rb_thread_t *th, rb_control_frame_t *reg_cfp,
 static VALUE
 vm_proc_to_block_handler(VALUE procval)
 {
-    const rb_block_t *block = vm_proc_block(procval);
+    const struct rb_block *block = vm_proc_block(procval);
 
     switch (vm_block_type(block)) {
       case block_type_iseq:
