@@ -604,19 +604,19 @@ struct rb_captured_block {
     } code;
 };
 
-typedef enum {
+enum rb_block_handler_type {
     block_handler_type_iseq,
     block_handler_type_ifunc,
     block_handler_type_symbol,
     block_handler_type_proc
 } rb_block_handler_type_t;
 
-typedef enum {
+enum rb_block_type {
     block_type_iseq,
     block_type_ifunc,
     block_type_symbol,
     block_type_proc
-} rb_block_type_t;
+};
 
 struct rb_block {
     union {
@@ -624,7 +624,7 @@ struct rb_block {
 	VALUE symbol;
 	VALUE proc;
     } as;
-    rb_block_type_t type;
+    enum rb_block_type type;
 };
 
 typedef struct rb_control_frame_struct {
@@ -1206,7 +1206,7 @@ VM_BH_TO_CAPT_BLOCK(VALUE block_handler)
     return captured;
 }
 
-static inline rb_block_handler_type_t
+static inline enum rb_block_handler_type
 vm_block_handler_type(VALUE block_handler)
 {
     if (VM_BH_ISEQ_BLOCK_P(block_handler)) {
@@ -1232,7 +1232,7 @@ vm_block_handler_verify(VALUE block_handler)
     return 1;
 }
 
-static inline rb_block_type_t
+static inline enum rb_block_type
 vm_block_type(const struct rb_block *block)
 {
 #if VM_CHECK_MODE > 0
@@ -1254,6 +1254,13 @@ vm_block_type(const struct rb_block *block)
     }
 #endif
     return block->type;
+}
+
+static inline void
+vm_block_type_set(const struct rb_block *block, enum rb_block_type type)
+{
+    struct rb_block *mb = (struct rb_block *)block;
+    mb->type = type;
 }
 
 static inline const struct rb_block *

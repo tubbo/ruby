@@ -895,7 +895,7 @@ rb_iseq_local_variables(const rb_iseq_t *iseq)
 VALUE
 rb_proc_create_from_captured(VALUE klass,
 			     const struct rb_captured_block *captured,
-			     rb_block_type_t block_type,
+			     enum rb_block_type block_type,
 			     int8_t safe_level, int8_t is_from_method, int8_t is_lambda)
 {
     VALUE procval = rb_proc_alloc(klass);
@@ -909,7 +909,7 @@ rb_proc_create_from_captured(VALUE klass,
     *((const VALUE **)&proc->block.as.captured.ep) = captured->ep;
     RB_OBJ_WRITTEN(procval, Qundef, VM_ENV_ENVVAL(captured->ep));
 
-    *(rb_block_type_t *)&proc->block.type = block_type;
+    vm_block_type_set(&proc->block, block_type);
     proc->safe_level = safe_level;
     proc->is_from_method = is_from_method;
     proc->is_lambda = is_lambda;
@@ -942,7 +942,7 @@ rb_proc_create(VALUE klass, const struct rb_block *block,
 	RB_OBJ_WRITE(procval, &proc->block.as.proc, block->as.proc);
 	break;
     }
-    *(rb_block_type_t *)&proc->block.type = block->type;
+    vm_block_type_set(&proc->block, block->type);
     proc->safe_level = safe_level;
     proc->is_from_method = is_from_method;
     proc->is_lambda = is_lambda;

@@ -612,7 +612,7 @@ cfunc_proc_new(VALUE klass, VALUE ifunc, int8_t is_lambda)
     VALUE *ep;
 
     proc = &sproc->basic;
-    *(rb_block_type_t *)&proc->block.type = block_type_ifunc;
+    vm_block_type_set(&proc->block, block_type_ifunc);
 
     *(VALUE **)&proc->block.as.captured.ep = ep = sproc->env + VM_ENV_DATA_SIZE-1;
     ep[VM_ENV_DATA_INDEX_FLAGS]   = VM_FRAME_MAGIC_IFUNC | VM_ENV_FLAG_LOCAL | VM_ENV_FLAG_ESCAPED;
@@ -633,7 +633,7 @@ sym_proc_new(VALUE klass, VALUE sym)
     rb_proc_t *proc;
     GetProcPtr(procval, proc);
 
-    *(rb_block_type_t *)&proc->block.type = block_type_symbol;
+    vm_block_type_set(&proc->block, block_type_symbol);
     RB_OBJ_WRITE(procval, &proc->block.as.symbol, sym);
     return procval;
 }
