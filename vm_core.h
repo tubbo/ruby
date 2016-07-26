@@ -953,6 +953,15 @@ typedef rb_control_frame_t *
 #define GC_GUARDED_PTR_P(p)   (((VALUE)(p)) & 0x01)
 
 enum {
+    /* Frame/Environment flag bits:
+     *   MMMM MMMM MMMM MMMM ____ ____ FFFF EEEX (LSB)
+     *
+     * X   : tag for GC marking (It seems as Fixnum)
+     * EEE : 3 bits Env flags
+     * FFFF: 4 bits Frame flags
+     * MMMM: 16 bits frame magic (to check frame corruption)
+     */
+
     /* frame types */
     VM_FRAME_MAGIC_METHOD = 0x11110001,
     VM_FRAME_MAGIC_BLOCK  = 0x22220001,
