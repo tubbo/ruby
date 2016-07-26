@@ -609,7 +609,7 @@ enum rb_block_handler_type {
     block_handler_type_ifunc,
     block_handler_type_symbol,
     block_handler_type_proc
-} rb_block_handler_type_t;
+};
 
 enum rb_block_type {
     block_type_iseq,
