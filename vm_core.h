@@ -1039,24 +1039,24 @@ VM_FRAME_TYPE(const rb_control_frame_t *cfp)
 #define VM_GUARDED_PREV_EP(ep)         GC_GUARDED_PTR(ep)
 #define VM_BLOCK_HANDLER_NONE 0
 
+static inline int
+VM_ENV_LOCAL_P(const VALUE *ep)
+{
+    return VM_ENV_FLAGS(ep, VM_ENV_FLAG_LOCAL) ? 1 : 0;
+}
+
 static inline const VALUE *
 VM_ENV_PREV_EP(const VALUE *ep)
 {
-    VM_ASSERT(VM_ENV_FLAGS(ep, VM_ENV_FLAG_LOCAL) == 0);
+    VM_ASSERT(VM_ENV_LOCAL_P(ep) == 0);
     return GC_GUARDED_PTR_REF(ep[VM_ENV_DATA_INDEX_SPECVAL]);
 }
 
 static inline VALUE
 VM_ENV_BLOCK_HANDLER(const VALUE *ep)
 {
-    VM_ASSERT(VM_ENV_FLAGS(ep, VM_ENV_FLAG_LOCAL) != 0);
+    VM_ASSERT(VM_ENV_LOCAL_P(ep));
     return ep[VM_ENV_DATA_INDEX_SPECVAL];
-}
-
-static inline int
-VM_ENV_LOCAL_P(const VALUE *ep)
-{
-    return VM_ENV_FLAGS(ep, VM_ENV_FLAG_LOCAL) ? 1 : 0;
 }
 
 #if VM_CHECK_MODE > 0
