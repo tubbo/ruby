@@ -1565,7 +1565,7 @@ yield_under(VALUE under, VALUE self, int argc, const VALUE *argv)
     rb_thread_t *th = GET_THREAD();
     rb_control_frame_t *cfp = th->cfp;
     VALUE block_handler = VM_CF_BLOCK_HANDLER(cfp);
-    VALUE new_block_handler;
+    VALUE new_block_handler = 0;
     const struct rb_captured_block *captured = NULL;
     struct rb_captured_block new_captured;
     const VALUE *ep = NULL;
@@ -1605,36 +1605,22 @@ VALUE
 rb_yield_refine_block(VALUE refinement, VALUE refinements)
 {
     rb_thread_t *th = GET_THREAD();
-    rb_cref_t *cref;
     VALUE block_handler = VM_CF_BLOCK_HANDLER(th->cfp);
-    VALUE new_block_handler;
-    const struct rb_captured_block *captured;
-    struct rb_captured_block new_captured;
-    const VALUE *ep = NULL;
 
-    if (block_handler != VM_BLOCK_HANDLER_NONE) {
-	switch (vm_block_handler_type(block_handler)) {
-	  case block_handler_type_iseq:
-	    captured = VM_BH_TO_ISEQ_BLOCK(block_handler);
-	    new_captured = *captured;
-	    new_block_handler = VM_BH_FROM_ISEQ_BLOCK(&new_captured);
-	    break;
-	  case block_handler_type_ifunc:
-	    captured = VM_BH_TO_IFUNC_BLOCK(block_handler);
-	    new_captured = *captured;
-	    new_block_handler = VM_BH_FROM_IFUNC_BLOCK(&new_captured);
-	    break;
-	  default:
-	    rb_bug("TODO: unsupported");
-	}
-	new_captured.self = refinement;
-	ep = captured->ep;
-	VM_FORCE_WRITE_SPECIAL_CONST(&VM_CF_LEP(th->cfp)[VM_ENV_DATA_INDEX_SPECVAL], new_block_handler);
+    if (vm_block_handler_type(block_handler) != block_handler_type_iseq) {
+	rb_bug("rb_yield_refine_block: an iseq block is required");
     }
-    cref = vm_cref_push(th, refinement, ep, TRUE);
-    CREF_REFINEMENTS_SET(cref, refinements);
-
-    return vm_yield_with_cref(th, 0, NULL, cref);
+    else {
+	const struct rb_captured_block *captured = VM_BH_TO_ISEQ_BLOCK(block_handler);
+	struct rb_captured_block new_captured = *captured;
+	VALUE new_block_handler = VM_BH_FROM_ISEQ_BLOCK(&new_captured);
+	const VALUE *ep = captured->ep;
+	rb_cref_t *cref = vm_cref_push(th, refinement, ep, TRUE);
+	CREF_REFINEMENTS_SET(cref, refinements);
+	VM_FORCE_WRITE_SPECIAL_CONST(&VM_CF_LEP(th->cfp)[VM_ENV_DATA_INDEX_SPECVAL], new_block_handler);
+	new_captured.self = refinement;
+	return vm_yield_with_cref(th, 0, NULL, cref);
+    }
 }
 
 /* string eval under the class/module context */
