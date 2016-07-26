@@ -2593,9 +2593,9 @@ vm_proc_to_block_handler(VALUE procval)
       case block_type_ifunc:
 	return VM_BH_FROM_IFUNC_BLOCK(&block->as.captured);
       case block_type_symbol:
-	return VM_SYMBOL_TO_BH(block->as.symbol);
+	return VM_BH_FROM_SYMBOL(block->as.symbol);
       case block_type_proc:
-	return VM_PROC_TO_BH(block->as.proc);
+	return VM_BH_FROM_PROC(block->as.proc);
     }
     VM_UNREACHABLE(vm_yield_with_proc);
     return Qundef;

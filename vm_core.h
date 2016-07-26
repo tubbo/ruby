@@ -1337,7 +1337,7 @@ VM_BH_TO_SYMBOL(VALUE block_handler)
 }
 
 static inline VALUE
-VM_SYMBOL_TO_BH(VALUE symbol)
+VM_BH_FROM_SYMBOL(VALUE symbol)
 {
     VM_ASSERT(SYMBOL_P(symbol));
     return symbol;
@@ -1351,7 +1351,7 @@ VM_BH_TO_PROC(VALUE block_handler)
 }
 
 static inline VALUE
-VM_PROC_TO_BH(VALUE procval)
+VM_BH_FROM_PROC(VALUE procval)
 {
     VM_ASSERT(rb_obj_is_proc(procval));
     return procval;
