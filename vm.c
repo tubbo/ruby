@@ -1728,85 +1728,67 @@ hook_before_rewind(rb_thread_t *th, rb_control_frame_t *cfp, int will_finish_vm_
   struct CONTROL_FRAME {
     VALUE *pc;                  // cfp[0], program counter
     VALUE *sp;                  // cfp[1], stack pointer
-    VALUE *bp;                  // cfp[2], base pointer
-    rb_iseq_t *iseq;            // cfp[3], iseq
-    VALUE flag;                 // cfp[4], magic
-    VALUE self;                 // cfp[5], self
-    VALUE *ep;                  // cfp[6], env pointer
-    rb_iseq_t * block_iseq;     // cfp[7], block iseq
-    VALUE proc;                 // cfp[8], always 0
+    rb_iseq_t *iseq;            // cfp[2], iseq
+    VALUE self;                 // cfp[3], self
+    const VALUE *ep;            // cfp[4], env pointer
+    const void *block_code;     // cfp[5], blcok code
   };
 
-  struct BLOCK {
+  struct rb_captured_blcok {
     VALUE self;
     VALUE *ep;
-    rb_iseq_t *block_iseq;
-    VALUE proc;
+    union code;
   };
 
-  struct METHOD_CONTROL_FRAME {
-    rb_control_frame_t frame;
-  };
-
-  struct METHOD_FRAME {
-    VALUE arg0;
-    ...
-    VALUE argM;
+  struct METHOD_ENV {
     VALUE param0;
     ...
     VALUE paramN;
-    VALUE cref;
-    VALUE special;                         // lep [1]
-    struct block_object *block_ptr | 0x01; // lep [0]
-  };
-
-  struct BLOCK_CONTROL_FRAME {
-    rb_control_frame_t frame;
-  };
-
-  struct BLOCK_FRAME {
-    VALUE arg0;
+    VALUE lvar1;
     ...
-    VALUE argM;
-    VALUE param0;
-    ...
-    VALUE paramN;
-    VALUE cref;
-    VALUE *(prev_ptr | 0x01); // ep[0]
+    VALUE lvarM;
+    VALUE cref;    // ep[-2]
+    VALUE special; // ep[-1]
+    VALUE flags;   // ep[ 0] == lep[0]
   };
 
-  struct CLASS_CONTROL_FRAME {
-    rb_control_frame_t frame;
+  struct BLOCK_ENV {
+    VALUE block_param0;
+    ...
+    VALUE block_paramN;
+    VALUE block_lvar1;
+    ...
+    VALUE block_lvarM;
+    VALUE cref;    // ep[-2]
+    VALUE special; // ep[-1]
+    VALUE flags;   // ep[ 0]
   };
 
-  struct CLASS_FRAME {
-    VALUE param0;
+  struct CLASS_ENV {
+    VALUE class_lvar0;
     ...
-    VALUE paramN;
+    VALUE class_lvarN;
     VALUE cref;
     VALUE prev_ep; // for frame jump
+    VALUE flags;
   };
 
   struct C_METHOD_CONTROL_FRAME {
     VALUE *pc;                       // 0
     VALUE *sp;                       // stack pointer
-    VALUE *bp;                       // base pointer (used in exception)
     rb_iseq_t *iseq;                 // cmi
-    VALUE magic;                     // C_METHOD_FRAME
     VALUE self;                      // ?
     VALUE *ep;                       // ep == lep
-    rb_iseq_t * block_iseq;          //
-    VALUE proc;                      // always 0
+    void *code;                      //
   };
 
   struct C_BLOCK_CONTROL_FRAME {
     VALUE *pc;                       // point only "finish" insn
     VALUE *sp;                       // sp
     rb_iseq_t *iseq;                 // ?
-    VALUE magic;                     // C_METHOD_FRAME
-    VALUE self;                      // needed?
+    VALUE self;                      //
     VALUE *ep;                       // ep
-    rb_iseq_t * block_iseq; // 0
+    void *code;                      // 
   };
  */
 
