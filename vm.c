@@ -1052,7 +1052,7 @@ rb_binding_add_dynavars(rb_binding_t *bind, int dyncount, const ID *dynvars)
 /* C -> Ruby: block */
 
 static inline VALUE
-invoke_block(rb_thread_t *th, const rb_iseq_t *iseq, VALUE self, const struct rb_captured_block *captured, const rb_cref_t *cref, int type, int opt_pc)
+invoke_block(rb_thread_t *th, const rb_iseq_t *iseq, VALUE self, const struct rb_captured_block *captured, const rb_cref_t *cref, VALUE type, int opt_pc)
 {
     int arg_size = iseq->body->param.size;
 
@@ -1066,7 +1066,7 @@ invoke_block(rb_thread_t *th, const rb_iseq_t *iseq, VALUE self, const struct rb
 }
 
 static VALUE
-invoke_bmethod(rb_thread_t *th, const rb_iseq_t *iseq, VALUE self, const struct rb_captured_block *captured, const rb_callable_method_entry_t *me, int type, int opt_pc)
+invoke_bmethod(rb_thread_t *th, const rb_iseq_t *iseq, VALUE self, const struct rb_captured_block *captured, const rb_callable_method_entry_t *me, VALUE type, int opt_pc)
 {
     /* bmethod */
     int arg_size = iseq->body->param.size;
@@ -1074,7 +1074,7 @@ invoke_bmethod(rb_thread_t *th, const rb_iseq_t *iseq, VALUE self, const struct 
 
     vm_push_frame(th, iseq, type | VM_FRAME_FLAG_FINISH | VM_FRAME_FLAG_BMETHOD, self,
 		  VM_GUARDED_PREV_EP(captured->ep),
-		  (VALUE)me, /* cref or method (TODO: can we ignore cref?) */
+		  (VALUE)me,
 		  iseq->body->iseq_encoded + opt_pc,
 		  th->cfp->sp + arg_size, iseq->body->local_table_size - arg_size,
 		  iseq->body->stack_max);
