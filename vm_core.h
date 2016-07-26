@@ -1027,18 +1027,6 @@ VM_FRAME_TYPE(const rb_control_frame_t *cfp)
 #define RUBYVM_CFUNC_FRAME_P(cfp) \
   (VM_FRAME_TYPE(cfp) == VM_FRAME_MAGIC_CFUNC)
 
-/*
- * block frame:
- *  ep[ 0]: prev frame
- *  ep[-1]: CREF (for *_eval)
- *  ep[-2]: type
- *
- * method frame:
- *  ep[ 0]: block
- *  ep[-1]: me/svar
- *  ep[-2]: type
- */
-
 #define VM_GUARDED_PREV_EP(ep)         GC_GUARDED_PTR(ep)
 #define VM_BLOCK_HANDLER_NONE 0
 
