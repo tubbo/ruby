@@ -25,6 +25,7 @@
 #include "probes_helper.h"
 
 VALUE rb_str_concat_literals(size_t, const VALUE*);
+VALUE rb_guild_channel_create(void);
 
 PUREFUNC(static inline const VALUE *VM_EP_LEP(const VALUE *));
 static inline const VALUE *
@@ -333,7 +334,7 @@ VALUE rb_mRubyVMFrozenCore;
 #define ruby_vm_redefined_flag GET_VM()->redefined_flag
 VALUE ruby_vm_const_missing_count = 0;
 rb_vm_t *ruby_current_vm_ptr = NULL;
-rb_execution_context_t *ruby_current_execution_context_ptr = NULL;
+pthread_key_t ruby_current_execution_context_key;
 rb_event_flag_t ruby_vm_event_flags;
 rb_event_flag_t ruby_vm_event_enabled_flags;
 rb_serial_t ruby_vm_global_method_state = 1;
@@ -2122,8 +2123,6 @@ rb_vm_call_cfunc(VALUE recv, VALUE (*func)(VALUE), VALUE arg,
 
 /* vm */
 
-void rb_vm_trace_mark_event_hooks(rb_hook_list_t *hooks);
-
 void
 rb_vm_mark(void *ptr)
 {
@@ -2131,12 +2130,12 @@ rb_vm_mark(void *ptr)
     RUBY_GC_INFO("-------------------------------------------------\n");
     if (ptr) {
 	rb_vm_t *vm = ptr;
-	rb_thread_t *th = 0;
+        rb_guild_t *g;
 
-	list_for_each(&vm->living_threads, th, vmlt_node) {
-	    rb_gc_mark(th->self);
-	}
-	rb_gc_mark(vm->thgroup_default);
+        list_for_each(&vm->guilds, g, guild_node) {
+            rb_gc_mark(g->self);
+        }
+
 	rb_gc_mark(vm->mark_object_ary);
 	rb_gc_mark(vm->load_path);
 	rb_gc_mark(vm->load_path_snapshot);
@@ -2151,8 +2150,6 @@ rb_vm_mark(void *ptr)
 	if (vm->loading_table) {
 	    rb_mark_tbl(vm->loading_table);
 	}
-
-	rb_vm_trace_mark_event_hooks(&vm->event_hooks);
 
 	rb_gc_mark_values(RUBY_NSIG, vm->trap_list.cmd);
 
@@ -2204,8 +2201,10 @@ ruby_vm_destruct(rb_vm_t *vm)
 	    rb_fiber_reset_root_local_storage(th->self);
 	    thread_free(th);
 	}
-	rb_vm_living_threads_init(vm);
-	ruby_vm_run_at_exit_hooks(vm);
+
+        /* TODO: rb_guild_living_threads_init(vm); */
+
+        ruby_vm_run_at_exit_hooks(vm);
 	if (vm->loading_table) {
 	    st_foreach(vm->loading_table, free_loading_table_entry, 0);
 	    st_free_table(vm->loading_table);
@@ -2215,9 +2214,11 @@ ruby_vm_destruct(rb_vm_t *vm)
 	    st_free_table(vm->frozen_strings);
 	    vm->frozen_strings = 0;
 	}
-	rb_vm_gvl_destroy(vm);
-	RB_ALTSTACK_FREE(vm->main_altstack);
-	if (objspace) {
+
+        /* TODO: Guild destroy: rb_guild_gvl_destroy(vm); */
+	/* TODO: RB_ALTSTACK_FREE(vm->main_altstack); */
+
+        if (objspace) {
 	    rb_objspace_free(objspace);
 	}
 	/* after freeing objspace, you *can't* use ruby_xfree() */
@@ -2234,7 +2235,10 @@ vm_memsize(const void *ptr)
     const rb_vm_t *vmobj = ptr;
     size_t size = sizeof(rb_vm_t);
 
+    /* TODO: Guild */
+#if 0
     size += vmobj->living_thread_num * sizeof(rb_thread_t);
+#endif
 
     if (vmobj->defined_strings) {
 	size += DEFINED_EXPR * sizeof(VALUE);
@@ -2324,14 +2328,12 @@ vm_default_params_setup(rb_vm_t *vm)
 }
 
 static void
-vm_init2(rb_vm_t *vm)
+vm_init2(rb_vm_t *vm, rb_guild_t *g)
 {
     MEMZERO(vm, rb_vm_t, 1);
-    rb_vm_living_threads_init(vm);
-    vm->thread_report_on_exception = 1;
     vm->src_encoding_index = -1;
-
     vm_default_params_setup(vm);
+    rb_vm_guilds_init(vm);
 }
 
 /* Thread */
@@ -2436,6 +2438,8 @@ thread_mark(void *ptr)
     RUBY_MARK_ENTER("thread");
     rb_fiber_mark_self(th->ec->fiber_ptr);
 
+    if (GUILD_DEBUG) fprintf(stderr, "  * thread_mark: %p (g:%d)\n", th, th->g->id);
+
     /* mark ruby objects */
     RUBY_MARK_UNLESS_NULL(th->first_proc);
     if (th->first_proc) RUBY_MARK_UNLESS_NULL(th->first_args);
@@ -2461,6 +2465,11 @@ thread_free(void *ptr)
     rb_thread_t *th = ptr;
     RUBY_FREE_ENTER("thread");
 
+    if (th->status == THREAD_RUNNABLE) {
+        fprintf(stderr, "!!!!!!!!!!!!!!!!!!!!!!!!!!! %d (%p): thread_free: %p (%p)\n", th->g->id, th->g, th, (void *)th->thread_id);
+        bp();
+    }
+
     if (th->locking_mutex != Qfalse) {
 	rb_bug("thread_free: locking_mutex must be NULL (%p:%p)", (void *)th, (void *)th->locking_mutex);
     }
@@ -2470,8 +2479,8 @@ thread_free(void *ptr)
 
     rb_threadptr_root_fiber_release(th);
 
-    if (th->vm && th->vm->main_thread == th) {
-	RUBY_GC_INFO("main thread\n");
+    if (th->g->vm && th->g->vm->main_thread == th) {
+        RUBY_GC_INFO("main thread\n");
     }
     else {
 	ruby_xfree(ptr);
@@ -2536,8 +2545,8 @@ th_init(rb_thread_t *th, VALUE self)
     {
 	/* vm_stack_size is word number.
 	 * th->vm->default_params.thread_vm_stack_size is byte size. */
-	size_t size = th->vm->default_params.thread_vm_stack_size / sizeof(VALUE);
-	ec_set_vm_stack(th->ec, thread_recycle_stack(size), size);
+	size_t size = th->g->vm->default_params.thread_vm_stack_size / sizeof(VALUE);
+        ec_set_vm_stack(th->ec, thread_recycle_stack(size), size);
     }
 
     th->ec->cfp = (void *)(th->ec->vm_stack + th->ec->vm_stack_size);
@@ -2561,16 +2570,14 @@ th_init(rb_thread_t *th, VALUE self)
     th->retval = Qundef;
 #endif
     th->name = Qnil;
-    th->report_on_exception = th->vm->thread_report_on_exception;
+    th->report_on_exception = th->g->thread_report_on_exception;
 }
 
 static VALUE
-ruby_thread_init(VALUE self)
+thread_init(VALUE self, rb_guild_t *g)
 {
     rb_thread_t *th = rb_thread_ptr(self);
-    rb_vm_t *vm = GET_THREAD()->vm;
-
-    th->vm = vm;
+    th->g = g;
     th_init(th, self);
     rb_ivar_set(self, rb_intern("locals"), rb_hash_new());
 
@@ -2581,10 +2588,10 @@ ruby_thread_init(VALUE self)
 }
 
 VALUE
-rb_thread_alloc(VALUE klass)
+rb_thread_alloc(VALUE klass, rb_guild_t *g)
 {
     VALUE self = thread_alloc(klass);
-    ruby_thread_init(self);
+    thread_init(self, g);
     return self;
 }
 
@@ -2831,6 +2838,9 @@ static VALUE usage_analysis_insn_stop(VALUE self);
 static VALUE usage_analysis_operand_stop(VALUE self);
 static VALUE usage_analysis_register_stop(VALUE self);
 #endif
+
+VALUE rb_guild_alloc_wrap(rb_guild_t *g);
+void rb_guild_init(rb_guild_t *g, rb_vm_t *vm);
 
 void
 Init_VM(void)
@@ -3088,24 +3098,26 @@ Init_VM(void)
     {
 	rb_vm_t *vm = ruby_current_vm_ptr;
 	rb_thread_t *th = GET_THREAD();
+        rb_guild_t *g = th->g;
 	VALUE filename = rb_fstring_cstr("<main>");
 	const rb_iseq_t *iseq = rb_iseq_new(0, filename, filename, Qnil, 0, ISEQ_TYPE_TOP);
         volatile VALUE th_self;
 
 	/* create vm object */
 	vm->self = TypedData_Wrap_Struct(rb_cRubyVM, &vm_data_type, vm);
+        g->self = rb_guild_alloc_wrap(g);
+        RB_OBJ_WRITE(g->self, &g->default_channel, rb_guild_channel_create());
 
 	/* create main thread */
 	th_self = th->self = TypedData_Wrap_Struct(rb_cThread, &thread_data_type, th);
 	rb_iv_set(th_self, "locals", rb_hash_new());
 	vm->main_thread = th;
-	vm->running_thread = th;
-	th->vm = vm;
+        g->running_thread = th;
 	th->top_wrapper = 0;
 	th->top_self = rb_vm_top_self();
 	rb_thread_set_current(th);
 
-	rb_vm_living_threads_insert(vm, th);
+	rb_guild_living_threads_insert(g, th);
 
 	rb_gc_register_mark_object((VALUE)iseq);
 	th->ec->cfp->iseq = iseq;
@@ -3119,6 +3131,11 @@ Init_VM(void)
 	 * The Binding of the top level scope
 	 */
 	rb_define_global_const("TOPLEVEL_BINDING", rb_binding_new());
+
+        /* for Guild */
+        {
+            /* TODO: init mutex */
+        }
     }
     vm_init_redefined_flag();
 
@@ -3150,21 +3167,30 @@ Init_BareVM(void)
 {
     /* VM bootstrap: phase 1 */
     rb_vm_t * vm = ruby_mimmalloc(sizeof(*vm));
+    rb_guild_t *g = ruby_mimmalloc(sizeof(*g));
     rb_thread_t * th = ruby_mimmalloc(sizeof(*th));
-    if (!vm || !th) {
+
+    if (pthread_key_create(&ruby_current_execution_context_key, NULL) != 0) {
+        rb_bug("Init_BareVM - pthread_key_create() returns non-zero.");
+    }
+
+    if (!vm || !g || !th) {
 	fprintf(stderr, "[FATAL] failed to allocate memory\n");
 	exit(EXIT_FAILURE);
     }
     MEMZERO(th, rb_thread_t, 1);
-    vm_init2(vm);
+    MEMZERO(g, rb_guild_t, 1);
+
+    vm_init2(vm, g);
+    rb_guild_init(g, vm);
 
     vm->objspace = rb_objspace_alloc();
     ruby_current_vm_ptr = vm;
 
     Init_native_thread(th);
-    th->vm = vm;
+    th->g = g;
     th_init(th, 0);
-    rb_thread_set_current_raw(th);
+    rb_current_execution_context_set(th->ec);
     ruby_thread_init_stack(th);
 }
 

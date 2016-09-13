@@ -1072,12 +1072,11 @@ const char *ruby_fill_thread_id_string(rb_nativethread_id_t thid, rb_thread_id_s
 #endif
 
 void
-rb_vmdebug_stack_dump_all_threads(void)
+rb_vmdebug_stack_dump_all_threads_of_guild(rb_guild_t *g)
 {
-    rb_vm_t *vm = GET_VM();
     rb_thread_t *th = NULL;
 
-    list_for_each(&vm->living_threads, th, vmlt_node) {
+    list_for_each(&g->living_threads, th, lt_node) {
 #ifdef NON_SCALAR_THREAD_ID
 	rb_thread_id_string_t buf;
 	ruby_fill_thread_id_string(th->thread_id, buf);
@@ -1087,4 +1086,10 @@ rb_vmdebug_stack_dump_all_threads(void)
 #endif
 	rb_vmdebug_stack_dump_raw(th->ec, th->ec->cfp);
     }
+}
+
+void
+rb_vmdebug_stack_dump_all_threads(void)
+{
+    rb_vmdebug_stack_dump_all_threads_of_guild(GET_GUILD()); /* TODO: Guild: iterate all Guilds */
 }

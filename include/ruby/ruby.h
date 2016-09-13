@@ -764,7 +764,7 @@ VALUE rb_obj_setup(VALUE obj, VALUE klass, VALUE type);
 #ifndef USE_RGENGC
 #define USE_RGENGC 1
 #ifndef USE_RINCGC
-#define USE_RINCGC 1
+#define USE_RINCGC 0
 #endif
 #endif
 

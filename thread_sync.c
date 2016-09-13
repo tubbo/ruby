@@ -257,13 +257,13 @@ rb_mutex_lock(VALUE self)
 
 	    th->status = THREAD_STOPPED_FOREVER;
 	    th->locking_mutex = self;
-	    th->vm->sleeper++;
+	    th->g->sleeper++;
 	    /*
 	     * Carefully! while some contended threads are in native_sleep(),
-	     * vm->sleeper is unstable value. we have to avoid both deadlock
+	     * g->sleeper is unstable value. we have to avoid both deadlock
 	     * and busy loop.
 	     */
-	    if ((vm_living_thread_num(th->vm) == th->vm->sleeper) &&
+            if ((guild_living_thread_num(th->g) == th->g->sleeper) &&
 		!patrol_thread) {
 		timeout = &ts;
 		patrol_thread = th;
@@ -281,12 +281,12 @@ rb_mutex_lock(VALUE self)
 
 	    th->locking_mutex = Qfalse;
 	    if (mutex->th && timeout && !RUBY_VM_INTERRUPTED(th->ec)) {
-		rb_check_deadlock(th->vm);
+		rb_check_deadlock(th->g);
 	    }
 	    if (th->status == THREAD_STOPPED_FOREVER) {
 		th->status = prev_status;
 	    }
-	    th->vm->sleeper--;
+	    th->g->sleeper--;
 
 	    if (mutex->th == th) mutex_locked(th, self);
 

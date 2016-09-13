@@ -68,14 +68,31 @@ static const void *const condattr_monotonic = NULL;
 # define USE_SLEEPY_TIMER_THREAD 0
 #endif
 
-static void
-gvl_acquire_common(rb_vm_t *vm)
+int
+RB_VM_RESOURCE_LOCK_ACQUIRED_P(const rb_guild_t *g)
 {
-    if (vm->gvl.acquired) {
+    rb_vm_t *vm = g->vm;
+    int r = pthread_mutex_trylock(&vm->global_resource_lock);
 
-	vm->gvl.waiting++;
-	if (vm->gvl.waiting == 1) {
-	    /*
+    switch (r) {
+      case EBUSY:
+        return vm->global_resource_lock_guild == g;
+      case 0:
+        pthread_mutex_unlock(&vm->global_resource_lock);
+        return FALSE;
+      default:
+        rb_bug("RB_VM_RESOURCE_LOCK_ACQUIRED_P: pthread_mutex_trylock() returns %d\n", r);
+        return FALSE;
+    }
+}
+
+static void
+gvl_acquire_common(rb_guild_t *g)
+{
+    if (g->gvl.acquired) {
+        g->gvl.waiting++;
+        if (g->gvl.waiting == 1) {
+            /*
 	     * Wake up timer thread iff timer thread is slept.
 	     * When timer thread is polling mode, we don't want to
 	     * make confusing timer thread interval time.
@@ -83,109 +100,137 @@ gvl_acquire_common(rb_vm_t *vm)
 	    rb_thread_wakeup_timer_thread_low();
 	}
 
-	while (vm->gvl.acquired) {
-            rb_native_cond_wait(&vm->gvl.cond, &vm->gvl.lock);
+	while (g->gvl.acquired) {
+            rb_native_cond_wait(&g->gvl.cond, &g->gvl.lock);
 	}
 
-	vm->gvl.waiting--;
+	g->gvl.waiting--;
 
-	if (vm->gvl.need_yield) {
-	    vm->gvl.need_yield = 0;
-            rb_native_cond_signal(&vm->gvl.switch_cond);
+	if (g->gvl.need_yield) {
+	    g->gvl.need_yield = 0;
+            rb_native_cond_signal(&g->gvl.switch_cond);
 	}
     }
 
-    vm->gvl.acquired = 1;
+    /* for GC sync */
+    RB_VM_RESOURCE_LOCK(g);
+    {
+        while (g->gc_rendezvous.pause_request) {
+            RB_VM_RESOURCE_UNLOCK(g);
+            { /* unlock */
+                if (GUILD_DEBUG) fprintf(stderr, "%d: gvl_acquire_common: rb_gc_pause_for_gc()\n", g->id);
+                rb_gc_pause_for_gc(g);
+            }
+            RB_VM_RESOURCE_LOCK(g);
+        }
+
+        g->gc_rendezvous.waiting = FALSE;
+        if (GUILD_DEBUG) fprintf(stderr, "%d: gvl_acquire_common: waiting = FALSE\n", g->id);
+
+        VM_ASSERT(g->gc_rendezvous.pause_request == FALSE);
+    }
+    RB_VM_RESOURCE_UNLOCK(g);
+
+    g->gvl.acquired = 1;
 }
 
 static void
-gvl_acquire(rb_vm_t *vm, rb_thread_t *th)
+gvl_acquire(rb_guild_t *g, rb_thread_t *th)
 {
-    rb_native_mutex_lock(&vm->gvl.lock);
-    gvl_acquire_common(vm);
-    rb_native_mutex_unlock(&vm->gvl.lock);
+    rb_native_mutex_lock(&g->gvl.lock);
+    gvl_acquire_common(g);
+    rb_native_mutex_unlock(&g->gvl.lock);
 }
 
 static void
-gvl_release_common(rb_vm_t *vm)
+gvl_release_common(rb_guild_t *g)
 {
-    vm->gvl.acquired = 0;
-    if (vm->gvl.waiting > 0)
-        rb_native_cond_signal(&vm->gvl.cond);
+    g->gvl.acquired = 0;
+    if (g->gvl.waiting > 0)
+        rb_native_cond_signal(&g->gvl.cond);
+
+    /* for GC sync */
+    RB_VM_RESOURCE_LOCK(g);
+    {
+        if (GUILD_DEBUG) fprintf(stderr, "%d: gvl_release_common: waiting = 2\n", g->id);
+        g->gc_rendezvous.waiting = 2;
+        pthread_cond_signal(&g->vm->gc_rendezvous_cond);
+    }
+    RB_VM_RESOURCE_UNLOCK(g);
 }
 
 static void
-gvl_release(rb_vm_t *vm)
+gvl_release(rb_guild_t *g)
 {
-    rb_native_mutex_lock(&vm->gvl.lock);
-    gvl_release_common(vm);
-    rb_native_mutex_unlock(&vm->gvl.lock);
+    rb_native_mutex_lock(&g->gvl.lock);
+    gvl_release_common(g);
+    rb_native_mutex_unlock(&g->gvl.lock);
 }
 
 static void
-gvl_yield(rb_vm_t *vm, rb_thread_t *th)
+gvl_yield(rb_guild_t *g, rb_thread_t *th)
 {
-    rb_native_mutex_lock(&vm->gvl.lock);
+    rb_native_mutex_lock(&g->gvl.lock);
 
-    gvl_release_common(vm);
+    gvl_release_common(g);
 
     /* An another thread is processing GVL yield. */
-    if (UNLIKELY(vm->gvl.wait_yield)) {
-	while (vm->gvl.wait_yield)
-            rb_native_cond_wait(&vm->gvl.switch_wait_cond, &vm->gvl.lock);
+    if (UNLIKELY(g->gvl.wait_yield)) {
+	while (g->gvl.wait_yield)
+            rb_native_cond_wait(&g->gvl.switch_wait_cond, &g->gvl.lock);
 	goto acquire;
     }
 
-    if (vm->gvl.waiting > 0) {
+    if (g->gvl.waiting > 0) {
 	/* Wait until another thread task take GVL. */
-	vm->gvl.need_yield = 1;
-	vm->gvl.wait_yield = 1;
-	while (vm->gvl.need_yield)
-            rb_native_cond_wait(&vm->gvl.switch_cond, &vm->gvl.lock);
-	vm->gvl.wait_yield = 0;
+	g->gvl.need_yield = 1;
+	g->gvl.wait_yield = 1;
+	while (g->gvl.need_yield)
+            rb_native_cond_wait(&g->gvl.switch_cond, &g->gvl.lock);
+	g->gvl.wait_yield = 0;
     }
     else {
-	rb_native_mutex_unlock(&vm->gvl.lock);
+	rb_native_mutex_unlock(&g->gvl.lock);
 	sched_yield();
-        rb_native_mutex_lock(&vm->gvl.lock);
+        rb_native_mutex_lock(&g->gvl.lock);
     }
 
-    rb_native_cond_broadcast(&vm->gvl.switch_wait_cond);
+    rb_native_cond_broadcast(&g->gvl.switch_wait_cond);
   acquire:
-    gvl_acquire_common(vm);
-    rb_native_mutex_unlock(&vm->gvl.lock);
+    gvl_acquire_common(g);
+    rb_native_mutex_unlock(&g->gvl.lock);
+}
+
+void
+rb_gvl_init(rb_guild_t *g)
+{
+    rb_native_mutex_initialize(&g->gvl.lock);
+    rb_native_cond_initialize(&g->gvl.cond);
+    rb_native_cond_initialize(&g->gvl.switch_cond);
+    rb_native_cond_initialize(&g->gvl.switch_wait_cond);
+    g->gvl.acquired = 0;
+    g->gvl.waiting = 0;
+    g->gvl.need_yield = 0;
+    g->gvl.wait_yield = 0;
 }
 
 static void
-gvl_init(rb_vm_t *vm)
+gvl_destroy(rb_guild_t *g)
 {
-    rb_native_mutex_initialize(&vm->gvl.lock);
-    rb_native_cond_initialize(&vm->gvl.cond);
-    rb_native_cond_initialize(&vm->gvl.switch_cond);
-    rb_native_cond_initialize(&vm->gvl.switch_wait_cond);
-    vm->gvl.acquired = 0;
-    vm->gvl.waiting = 0;
-    vm->gvl.need_yield = 0;
-    vm->gvl.wait_yield = 0;
-}
-
-static void
-gvl_destroy(rb_vm_t *vm)
-{
-    rb_native_cond_destroy(&vm->gvl.switch_wait_cond);
-    rb_native_cond_destroy(&vm->gvl.switch_cond);
-    rb_native_cond_destroy(&vm->gvl.cond);
-    rb_native_mutex_destroy(&vm->gvl.lock);
+    rb_native_cond_destroy(&g->gvl.switch_wait_cond);
+    rb_native_cond_destroy(&g->gvl.switch_cond);
+    rb_native_cond_destroy(&g->gvl.cond);
+    rb_native_mutex_destroy(&g->gvl.lock);
 }
 
 #if defined(HAVE_WORKING_FORK)
 static void thread_cache_reset(void);
 static void
-gvl_atfork(rb_vm_t *vm)
+gvl_atfork(rb_guild_t *g)
 {
     thread_cache_reset();
-    gvl_init(vm);
-    gvl_acquire(vm, GET_THREAD());
+    rb_gvl_init(g);
+    gvl_acquire(g, GET_THREAD());
 }
 #endif
 
@@ -934,7 +979,7 @@ native_thread_create(rb_thread_t *th)
     }
     else {
 	pthread_attr_t attr;
-	const size_t stack_size = th->vm->default_params.thread_machine_stack_size;
+	const size_t stack_size = th->g->vm->default_params.thread_machine_stack_size;
 	const size_t space = space_size(stack_size);
 
         th->ec->machine.stack_maxsize = stack_size - space;
@@ -1515,7 +1560,7 @@ rb_thread_create_timer_thread(void)
 	size_t stack_size = 0;
 	int err;
 	pthread_attr_t attr;
-	rb_vm_t *vm = GET_VM();
+        rb_guild_t *g = GET_GUILD();
 
 	err = pthread_attr_init(&attr);
 	if (err != 0) {
@@ -1565,7 +1610,7 @@ rb_thread_create_timer_thread(void)
 	if (timer_thread.created) {
 	    rb_bug("rb_thread_create_timer_thread: Timer thread was already created\n");
 	}
-	err = pthread_create(&timer_thread.id, &attr, thread_timer, &vm->gvl);
+	err = pthread_create(&timer_thread.id, &attr, thread_timer, &g->gvl);
 	pthread_attr_destroy(&attr);
 
 	if (err == EINVAL) {
@@ -1576,7 +1621,7 @@ rb_thread_create_timer_thread(void)
 	     * default stack size is enough for them:
 	     */
 	    stack_size = 0;
-	    err = pthread_create(&timer_thread.id, NULL, thread_timer, &vm->gvl);
+	    err = pthread_create(&timer_thread.id, NULL, thread_timer, &g->gvl);
 	}
 	if (err != 0) {
 	    rb_warn("pthread_create failed for timer: %s, scheduling broken",

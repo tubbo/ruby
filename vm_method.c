@@ -56,7 +56,7 @@ static struct {
 };
 #endif
 
-#define ruby_running (GET_VM()->running)
+#define ruby_running (GET_VM()->system_running)
 /* int ruby_running = 0; */
 
 static void

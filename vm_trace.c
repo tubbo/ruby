@@ -103,7 +103,7 @@ alloc_event_hook(rb_event_hook_func_t func, rb_event_flag_t events, VALUE data, 
 static void
 connect_event_hook(const rb_execution_context_t *ec, rb_event_hook_t *hook)
 {
-    rb_hook_list_t *list = &rb_ec_vm_ptr(ec)->event_hooks;
+    rb_hook_list_t *list = &rb_ec_guild_ptr(ec)->event_hooks;
 
     hook->next = list->hooks;
     list->hooks = hook;
@@ -170,10 +170,10 @@ clean_hooks(rb_hook_list_t *list)
 }
 
 static void
-clean_hooks_check(rb_vm_t *vm, rb_hook_list_t *list)
+clean_hooks_check(rb_guild_t *g, rb_hook_list_t *list)
 {
     if (UNLIKELY(list->need_clean != FALSE)) {
-	if (vm->trace_running == 0) {
+	if (g->trace_running == 0) {
 	    clean_hooks(list);
 	}
     }
@@ -185,8 +185,8 @@ clean_hooks_check(rb_vm_t *vm, rb_hook_list_t *list)
 static int
 remove_event_hook(const rb_execution_context_t *ec, const rb_thread_t *filter_th, rb_event_hook_func_t func, VALUE data)
 {
-    rb_vm_t *vm = rb_ec_vm_ptr(ec);
-    rb_hook_list_t *list = &vm->event_hooks;
+    rb_guild_t *g = rb_ec_guild_ptr(ec);
+    rb_hook_list_t *list = &g->event_hooks;
     int ret = 0;
     rb_event_hook_t *hook = list->hooks;
 
@@ -203,7 +203,7 @@ remove_event_hook(const rb_execution_context_t *ec, const rb_thread_t *filter_th
 	hook = hook->next;
     }
 
-    clean_hooks_check(vm, list);
+    clean_hooks_check(g, list);
     return ret;
 }
 
@@ -272,10 +272,10 @@ exec_hooks_body(const rb_execution_context_t *ec, rb_hook_list_t *list, const rb
 }
 
 static int
-exec_hooks_precheck(const rb_execution_context_t *ec, rb_vm_t *vm, rb_hook_list_t *list, const rb_trace_arg_t *trace_arg)
+exec_hooks_precheck(const rb_execution_context_t *ec, rb_guild_t *g, rb_hook_list_t *list, const rb_trace_arg_t *trace_arg)
 {
     if (list->events & trace_arg->event) {
-	vm->trace_running++;
+        g->trace_running++;
 	return TRUE;
     }
     else {
@@ -284,27 +284,27 @@ exec_hooks_precheck(const rb_execution_context_t *ec, rb_vm_t *vm, rb_hook_list_
 }
 
 static void
-exec_hooks_postcheck(const rb_execution_context_t *ec, rb_vm_t *vm, rb_hook_list_t *list)
+exec_hooks_postcheck(const rb_execution_context_t *ec, rb_guild_t *g, rb_hook_list_t *list)
 {
-    vm->trace_running--;
-    clean_hooks_check(vm, list);
+    g->trace_running--;
+    clean_hooks_check(g, list);
 }
 
 static void
-exec_hooks_unprotected(const rb_execution_context_t *ec, rb_vm_t *vm, rb_hook_list_t *list, const rb_trace_arg_t *trace_arg)
+exec_hooks_unprotected(const rb_execution_context_t *ec, rb_guild_t *g, rb_hook_list_t *list, const rb_trace_arg_t *trace_arg)
 {
-    if (exec_hooks_precheck(ec, vm, list, trace_arg) == 0) return;
+    if (exec_hooks_precheck(ec, g, list, trace_arg) == 0) return;
     exec_hooks_body(ec, list, trace_arg);
-    exec_hooks_postcheck(ec, vm, list);
+    exec_hooks_postcheck(ec, g, list);
 }
 
 static int
-exec_hooks_protected(rb_execution_context_t *ec, rb_vm_t *vm, rb_hook_list_t *list, const rb_trace_arg_t *trace_arg)
+exec_hooks_protected(rb_execution_context_t *ec, rb_guild_t *g, rb_hook_list_t *list, const rb_trace_arg_t *trace_arg)
 {
     enum ruby_tag_type state;
     volatile int raised;
 
-    if (exec_hooks_precheck(ec, vm, list, trace_arg) == 0) return 0;
+    if (exec_hooks_precheck(ec, g, list, trace_arg) == 0) return 0;
 
     raised = rb_ec_reset_raised(ec);
 
@@ -316,7 +316,7 @@ exec_hooks_protected(rb_execution_context_t *ec, rb_vm_t *vm, rb_hook_list_t *li
     }
     EC_POP_TAG();
 
-    exec_hooks_postcheck(ec, vm, list);
+    exec_hooks_postcheck(ec, g, list);
 
     if (raised) {
 	rb_ec_set_raised(ec);
@@ -329,7 +329,7 @@ MJIT_FUNC_EXPORTED void
 rb_exec_event_hooks(rb_trace_arg_t *trace_arg, int pop_p)
 {
     rb_execution_context_t *ec = trace_arg->ec;
-    rb_vm_t *vm = rb_ec_vm_ptr(ec);
+    rb_guild_t *g = rb_ec_guild_ptr(ec);
 
     if (trace_arg->event & RUBY_INTERNAL_EVENT_MASK) {
 	if (ec->trace_arg && (ec->trace_arg->event & RUBY_INTERNAL_EVENT_MASK)) {
@@ -338,7 +338,7 @@ rb_exec_event_hooks(rb_trace_arg_t *trace_arg, int pop_p)
 	else {
 	    rb_trace_arg_t *prev_trace_arg = ec->trace_arg;
 	    ec->trace_arg = trace_arg;
-	    exec_hooks_unprotected(ec, vm, &vm->event_hooks, trace_arg);
+	    exec_hooks_unprotected(ec, g, &g->event_hooks, trace_arg);
 	    ec->trace_arg = prev_trace_arg;
 	}
     }
@@ -352,7 +352,7 @@ rb_exec_event_hooks(rb_trace_arg_t *trace_arg, int pop_p)
 	    ec->local_storage_recursive_hash = ec->local_storage_recursive_hash_for_trace;
 	    ec->errinfo = Qnil;
 	    ec->trace_arg = trace_arg;
-	    state = exec_hooks_protected(ec, vm, &vm->event_hooks, trace_arg);
+	    state = exec_hooks_protected(ec, g, &g->event_hooks, trace_arg);
 	    if (!state) {
 		ec->errinfo = errinfo;
 	    }
@@ -379,14 +379,14 @@ rb_suppress_tracing(VALUE (*func)(VALUE), VALUE arg)
 {
     volatile int raised;
     VALUE result = Qnil;
-    rb_execution_context_t *const ec = GET_EC();
-    rb_vm_t *const vm = rb_ec_vm_ptr(ec);
+    volatile rb_execution_context_t *const ec = GET_EC();
+    volatile rb_guild_t *const g = rb_ec_guild_ptr(ec);
     enum ruby_tag_type state;
     rb_trace_arg_t dummy_trace_arg;
     dummy_trace_arg.event = 0;
 
     if (!ec->trace_arg) {
-	vm->trace_running++;
+	g->trace_running++;
 	ec->trace_arg = &dummy_trace_arg;
     }
 
@@ -397,7 +397,7 @@ rb_suppress_tracing(VALUE (*func)(VALUE), VALUE arg)
 	result = (*func)(arg);
     }
     else {
-	(void)*&vm; /* suppress "clobbered" warning */
+	(void)*&g; /* suppress "clobbered" warning */
     }
     EC_POP_TAG();
 
@@ -407,7 +407,7 @@ rb_suppress_tracing(VALUE (*func)(VALUE), VALUE arg)
 
     if (ec->trace_arg == &dummy_trace_arg) {
 	ec->trace_arg = NULL;
-	vm->trace_running--;
+	g->trace_running--;
     }
 
     if (state) {
@@ -1407,10 +1407,10 @@ tracepoint_stat_event_hooks(VALUE hash, VALUE key, rb_event_hook_t *hook)
 static VALUE
 tracepoint_stat_s(VALUE self)
 {
-    rb_vm_t *vm = GET_VM();
+    rb_guild_t *g = GET_GUILD();
     VALUE stat = rb_hash_new();
 
-    tracepoint_stat_event_hooks(stat, vm->self, vm->event_hooks.hooks);
+    tracepoint_stat_event_hooks(stat, g->self, g->event_hooks.hooks);
     /* TODO: thread local hooks */
 
     return stat;
@@ -1529,9 +1529,9 @@ typedef struct rb_postponed_job_struct {
 static void
 Init_postponed_job(void)
 {
-    rb_vm_t *vm = GET_VM();
-    vm->postponed_job_buffer = ALLOC_N(rb_postponed_job_t, MAX_POSTPONED_JOB);
-    vm->postponed_job_index = 0;
+    rb_guild_t *g = GET_GUILD();
+    g->postponed_job_buffer = ALLOC_N(rb_postponed_job_t, MAX_POSTPONED_JOB);
+    g->postponed_job_index = 0;
 }
 
 enum postponed_job_register_result {
@@ -1541,15 +1541,15 @@ enum postponed_job_register_result {
 };
 
 static enum postponed_job_register_result
-postponed_job_register(rb_execution_context_t *ec, rb_vm_t *vm,
+postponed_job_register(rb_execution_context_t *ec, rb_guild_t *g,
 		       unsigned int flags, rb_postponed_job_func_t func, void *data, int max, int expected_index)
 {
     rb_postponed_job_t *pjob;
 
     if (expected_index >= max) return PJRR_FULL; /* failed */
 
-    if (ATOMIC_CAS(vm->postponed_job_index, expected_index, expected_index+1) == expected_index) {
-	pjob = &vm->postponed_job_buffer[expected_index];
+    if (ATOMIC_CAS(g->postponed_job_index, expected_index, expected_index+1) == expected_index) {
+	pjob = &g->postponed_job_buffer[expected_index];
     }
     else {
 	return PJRR_INTERRUPTED;
@@ -1570,10 +1570,10 @@ int
 rb_postponed_job_register(unsigned int flags, rb_postponed_job_func_t func, void *data)
 {
     rb_execution_context_t *ec = GET_EC();
-    rb_vm_t *vm = rb_ec_vm_ptr(ec);
+    rb_guild_t *g = rb_ec_guild_ptr(ec);
 
   begin:
-    switch (postponed_job_register(ec, vm, flags, func, data, MAX_POSTPONED_JOB, vm->postponed_job_index)) {
+    switch (postponed_job_register(ec, g, flags, func, data, MAX_POSTPONED_JOB, g->postponed_job_index)) {
       case PJRR_SUCESS     : return 1;
       case PJRR_FULL       : return 0;
       case PJRR_INTERRUPTED: goto begin;
@@ -1586,20 +1586,20 @@ int
 rb_postponed_job_register_one(unsigned int flags, rb_postponed_job_func_t func, void *data)
 {
     rb_execution_context_t *ec = GET_EC();
-    rb_vm_t *vm = rb_ec_vm_ptr(ec);
+    rb_guild_t *g = rb_ec_guild_ptr(ec);
     rb_postponed_job_t *pjob;
     int i, index;
 
   begin:
-    index = vm->postponed_job_index;
+    index = g->postponed_job_index;
     for (i=0; i<index; i++) {
-	pjob = &vm->postponed_job_buffer[i];
+	pjob = &g->postponed_job_buffer[i];
 	if (pjob->func == func) {
 	    RUBY_VM_SET_POSTPONED_JOB_INTERRUPT(ec);
 	    return 2;
 	}
     }
-    switch (postponed_job_register(ec, vm, flags, func, data, MAX_POSTPONED_JOB + MAX_POSTPONED_JOB_SPECIAL_ADDITION, index)) {
+    switch (postponed_job_register(ec, g, flags, func, data, MAX_POSTPONED_JOB + MAX_POSTPONED_JOB_SPECIAL_ADDITION, index)) {
       case PJRR_SUCESS     : return 1;
       case PJRR_FULL       : return 0;
       case PJRR_INTERRUPTED: goto begin;
@@ -1608,7 +1608,7 @@ rb_postponed_job_register_one(unsigned int flags, rb_postponed_job_func_t func, 
 }
 
 void
-rb_postponed_job_flush(rb_vm_t *vm)
+rb_postponed_job_flush(rb_guild_t *g)
 {
     rb_execution_context_t *ec = GET_EC();
     const unsigned long block_mask = POSTPONED_JOB_INTERRUPT_MASK|TRAP_INTERRUPT_MASK;
@@ -1622,9 +1622,9 @@ rb_postponed_job_flush(rb_vm_t *vm)
 	EC_PUSH_TAG(ec);
 	if (EC_EXEC_TAG() == TAG_NONE) {
 	    int index;
-	    while ((index = vm->postponed_job_index) > 0) {
-		if (ATOMIC_CAS(vm->postponed_job_index, index, index-1) == index) {
-		    rb_postponed_job_t *pjob = &vm->postponed_job_buffer[index-1];
+	    while ((index = g->postponed_job_index) > 0) {
+		if (ATOMIC_CAS(g->postponed_job_index, index, index-1) == index) {
+		    rb_postponed_job_t *pjob = &g->postponed_job_buffer[index-1];
 		    (*pjob->func)(pjob->data);
 		}
 	    }

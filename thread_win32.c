@@ -100,24 +100,24 @@ gvl_acquire(rb_vm_t *vm, rb_thread_t *th)
 }
 
 static void
-gvl_release(rb_vm_t *vm)
+gvl_release(rb_guild_t *g)
 {
-    ReleaseMutex(vm->gvl.lock);
+    ReleaseMutex(g->gvl.lock);
 }
 
 static void
-gvl_yield(rb_vm_t *vm, rb_thread_t *th)
+gvl_yield(rb_guild_t *g, rb_thread_t *th)
 {
-  gvl_release(th->vm);
+  gvl_release(g);
   native_thread_yield();
-  gvl_acquire(vm, th);
+  gvl_acquire(g, th);
 }
 
-static void
-gvl_init(rb_vm_t *vm)
+void
+rb_gvl_init(rb_guild_t *g)
 {
     if (GVL_DEBUG) fprintf(stderr, "gvl init\n");
-    vm->gvl.lock = w32_mutex_create();
+    g->gvl.lock = w32_mutex_create();
 }
 
 static void

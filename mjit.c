@@ -1067,7 +1067,7 @@ mark_ec_units(rb_execution_context_t *ec)
 static void
 unload_units(void)
 {
-    rb_vm_t *vm = GET_THREAD()->vm;
+    rb_guild_t *g = GET_THREAD()->g;
     rb_thread_t *th = NULL;
     struct rb_mjit_unit_node *node, *next, *worst_node;
     struct rb_mjit_unit *unit;
@@ -1089,7 +1089,7 @@ unload_units(void)
         assert(node->unit != NULL && node->unit->iseq != NULL && node->unit->handle != NULL);
         node->unit->used_code_p = FALSE;
     }
-    list_for_each(&vm->living_threads, th, vmlt_node) {
+    list_for_each(&g->living_threads, th, lt_node) {
         mark_ec_units(th->ec);
     }
     for (cont = first_cont; cont != NULL; cont = cont->next) {

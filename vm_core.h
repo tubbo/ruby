@@ -12,6 +12,8 @@
 #ifndef RUBY_VM_CORE_H
 #define RUBY_VM_CORE_H
 
+#define GUILD_DEBUG 0
+
 /*
  * Enable check mode.
  *   1: enable local assertions.
@@ -536,32 +538,72 @@ typedef struct rb_hook_list_struct {
     int need_clean;
 } rb_hook_list_t;
 
+typedef struct rb_guild_struct {
+    struct list_node guild_node;
+
+    VALUE self;
+    struct rb_vm_struct *vm;
+
+    /* Thread management */
+    rb_global_vm_lock_t gvl;
+
+    volatile int sleeper;
+    struct list_head waiting_fds; /* <=> struct waiting_fd */
+    struct list_head living_threads;
+    int living_thread_num;
+    struct rb_thread_struct *running_thread;
+
+    VALUE thgroup_default;
+
+    /* Thread default parameters */
+    unsigned int thread_abort_on_exception: 1;
+    unsigned int thread_report_on_exception: 1;
+    unsigned int safe_level_: 1;
+    int trace_running;
+
+    /* hook */
+    rb_hook_list_t event_hooks;
+
+    /* postponed_job */
+    struct rb_postponed_job_struct *postponed_job_buffer;
+    int postponed_job_index;
+
+    /* guild */
+    VALUE default_channel;
+    pthread_t pth;
+    void *(*start_func)(VALUE ch, void *ptr);
+    void *start_data;
+
+    VALUE parent_guild_obj;
+
+    struct {
+        int pause_request;
+        int waiting;
+    } gc_rendezvous;
+
+    int id; // for debug
+} rb_guild_t;
+
 typedef struct rb_vm_struct {
     VALUE self;
 
-    rb_global_vm_lock_t gvl;
-    rb_nativethread_lock_t    thread_destruct_lock;
-
-    struct rb_thread_struct *main_thread;
-    struct rb_thread_struct *running_thread;
 #ifdef USE_SIGALTSTACK
     void *main_altstack;
 #endif
 
+    rb_nativethread_lock_t    thread_destruct_lock;
+
+    struct rb_thread_struct *main_thread;
     rb_serial_t fork_gen;
-    struct list_head waiting_fds; /* <=> struct waiting_fd */
-    struct list_head living_threads;
-    VALUE thgroup_default;
-    int living_thread_num;
 
-    unsigned int running: 1;
-    unsigned int thread_abort_on_exception: 1;
-    unsigned int thread_report_on_exception: 1;
+    unsigned int system_running: 1;
 
-    unsigned int safe_level_: 1;
-
-    int trace_running;
-    volatile int sleeper;
+    /* guild */
+    struct list_head guilds;
+    pthread_mutex_t global_resource_lock;
+    const rb_guild_t *global_resource_lock_guild;
+    pthread_cond_t gc_rendezvous_cond;
+    pthread_cond_t gc_restart_cond;
 
     /* object management */
     VALUE mark_object_ary;
@@ -584,15 +626,8 @@ typedef struct rb_vm_struct {
 	unsigned char safe[RUBY_NSIG];
     } trap_list;
 
-    /* hook */
-    rb_hook_list_t event_hooks;
-
     /* relation table of ensure - rollback for callcc */
     struct st_table *ensure_rollback_table;
-
-    /* postponed_job */
-    struct rb_postponed_job_struct *postponed_job_buffer;
-    int postponed_job_index;
 
     int src_encoding_index;
 
@@ -619,6 +654,28 @@ typedef struct rb_vm_struct {
 
     short redefined_flag[BOP_LAST_];
 } rb_vm_t;
+
+#if VM_CHECK_MODE
+int ruby_vm_debug_resouce_lock_acquired;
+#endif
+
+static inline void
+RB_VM_RESOURCE_LOCK(const rb_guild_t *g)
+{
+    rb_vm_t *vm = g->vm;
+    if (pthread_mutex_lock(&vm->global_resource_lock) != 0) rb_bug("RB_GLOBL_RESOURCE_LOCK: fails.");
+    vm->global_resource_lock_guild = g;
+}
+
+static inline void
+RB_VM_RESOURCE_UNLOCK(const rb_guild_t *g)
+{
+    rb_vm_t *vm = g->vm;
+    vm->global_resource_lock_guild = NULL;
+    if (pthread_mutex_unlock(&vm->global_resource_lock) != 0) rb_bug("RB_GLOBL_RESOURCE_UNLOCK: fails.");
+}
+
+int RB_VM_RESOURCE_LOCK_ACQUIRED_P(const rb_guild_t *g);
 
 /* default values */
 
@@ -830,9 +887,9 @@ typedef struct rb_execution_context_struct {
 void ec_set_vm_stack(rb_execution_context_t *ec, VALUE *stack, size_t size);
 
 typedef struct rb_thread_struct {
-    struct list_node vmlt_node;
+    struct list_node lt_node;
     VALUE self;
-    rb_vm_t *vm;
+    rb_guild_t *g;
 
     rb_execution_context_t *ec;
 
@@ -1506,7 +1563,7 @@ VM_BH_FROM_PROC(VALUE procval)
 }
 
 /* VM related object allocate functions */
-VALUE rb_thread_alloc(VALUE klass);
+VALUE rb_thread_alloc(VALUE klass, rb_guild_t *g);
 VALUE rb_binding_alloc(VALUE klass);
 VALUE rb_proc_alloc(VALUE klass);
 VALUE rb_proc_dup(VALUE self);
@@ -1555,7 +1612,7 @@ VALUE rb_vm_env_local_variables(const rb_env_t *env);
 const rb_env_t *rb_vm_env_prev_env(const rb_env_t *env);
 const VALUE *rb_binding_add_dynavars(VALUE bindval, rb_binding_t *bind, int dyncount, const ID *dynvars);
 void rb_vm_inc_const_missing_count(void);
-void rb_vm_gvl_destroy(rb_vm_t *vm);
+void rb_guild_gvl_destroy(rb_guild_t *g);
 VALUE rb_vm_call(rb_execution_context_t *ec, VALUE recv, VALUE id, int argc,
 		 const VALUE *argv, const rb_callable_method_entry_t *me);
 void rb_vm_pop_frame(rb_execution_context_t *ec);
@@ -1566,25 +1623,43 @@ void rb_thread_reset_timer_thread(void);
 void rb_thread_wakeup_timer_thread(void);
 
 static inline void
-rb_vm_living_threads_init(rb_vm_t *vm)
+rb_guild_living_threads_init(rb_guild_t *g)
 {
-    list_head_init(&vm->waiting_fds);
-    list_head_init(&vm->living_threads);
-    vm->living_thread_num = 0;
+    list_head_init(&g->waiting_fds);
+    list_head_init(&g->living_threads);
+    g->living_thread_num = 0;
 }
 
 static inline void
-rb_vm_living_threads_insert(rb_vm_t *vm, rb_thread_t *th)
+rb_guild_living_threads_insert(rb_guild_t *g, rb_thread_t *th)
 {
-    list_add_tail(&vm->living_threads, &th->vmlt_node);
-    vm->living_thread_num++;
+    list_add_tail(&g->living_threads, &th->lt_node);
+    g->living_thread_num++;
 }
 
 static inline void
-rb_vm_living_threads_remove(rb_vm_t *vm, rb_thread_t *th)
+rb_guild_living_threads_remove(rb_guild_t *g, rb_thread_t *th)
 {
-    list_del(&th->vmlt_node);
-    vm->living_thread_num--;
+    list_del(&th->lt_node);
+    g->living_thread_num--;
+}
+
+static inline void
+rb_vm_guilds_init(rb_vm_t *vm)
+{
+    list_head_init(&vm->guilds);
+}
+
+static inline void
+rb_vm_guilds_inserts(rb_vm_t *vm, rb_guild_t *g)
+{
+    list_add_tail(&vm->guilds, &g->guild_node);
+}
+
+static inline void
+rb_vm_guilds_remvoe(rb_vm_t *vm, rb_guild_t *g)
+{
+    list_del(&g->guild_node);
 }
 
 typedef int rb_backtrace_iter_func(void *, VALUE, int, VALUE);
@@ -1631,15 +1706,23 @@ VALUE rb_catch_protect(VALUE t, rb_block_call_func *func, VALUE data, enum ruby_
 RUBY_SYMBOL_EXPORT_BEGIN
 
 extern rb_vm_t *ruby_current_vm_ptr;
-extern rb_execution_context_t *ruby_current_execution_context_ptr;
+extern pthread_key_t ruby_current_execution_context_key;
 extern rb_event_flag_t ruby_vm_event_flags;
 extern rb_event_flag_t ruby_vm_event_enabled_flags;
 
 RUBY_SYMBOL_EXPORT_END
 
 #define GET_VM()     rb_current_vm()
+#if 1
+#define GET_GUILD()  rb_current_guild()
 #define GET_THREAD() rb_current_thread()
 #define GET_EC()     rb_current_execution_context()
+#else
+/* search GET_EC() locations */
+#define GET_GUILD()  (GET_THREAD()->g)
+#define GET_THREAD() (GET_EC()->thread_ptr)
+#define GET_EC()     (fprintf(stderr, "rb_current_execution_context() at %s:%d\n", __FILE__, __LINE__), rb_current_execution_context())
+#endif
 
 static inline rb_thread_t *
 rb_ec_thread_ptr(const rb_execution_context_t *ec)
@@ -1647,12 +1730,18 @@ rb_ec_thread_ptr(const rb_execution_context_t *ec)
     return ec->thread_ptr;
 }
 
+static inline rb_guild_t *
+rb_ec_guild_ptr(const rb_execution_context_t *ec)
+{
+    return rb_ec_thread_ptr(ec)->g;
+}
+
 static inline rb_vm_t *
 rb_ec_vm_ptr(const rb_execution_context_t *ec)
 {
     const rb_thread_t *th = rb_ec_thread_ptr(ec);
     if (th) {
-	return th->vm;
+	return th->g->vm;
     }
     else {
 	return NULL;
@@ -1662,8 +1751,26 @@ rb_ec_vm_ptr(const rb_execution_context_t *ec)
 static inline rb_execution_context_t *
 rb_current_execution_context(void)
 {
-    return ruby_current_execution_context_ptr;
+    rb_execution_context_t *ec;
+    ec = pthread_getspecific(ruby_current_execution_context_key);
+
+    if (ec == NULL) {
+        void ruby_debug_breakpoint(void);
+        ruby_debug_breakpoint();
+        rb_bug("rb_current_execution_context - pthread_getspecific() return NULL.");
+    }
+    return ec;
 }
+
+static inline void
+rb_current_execution_context_set(rb_execution_context_t *ec)
+{
+    int err;
+    if ((err = pthread_setspecific(ruby_current_execution_context_key, ec)) != 0) {
+        rb_bug("rb_current_execution_context_set - pthread_setspecific: return %d\n", err);
+    }
+}
+
 
 static inline rb_thread_t *
 rb_current_thread(void)
@@ -1672,24 +1779,30 @@ rb_current_thread(void)
     return rb_ec_thread_ptr(ec);
 }
 
+static inline rb_guild_t *
+rb_current_guild(void)
+{
+    return rb_current_thread()->g;
+}
+
 static inline rb_vm_t *
 rb_current_vm(void)
 {
     VM_ASSERT(ruby_current_vm_ptr == NULL ||
-	      ruby_current_execution_context_ptr == NULL ||
-	      rb_ec_thread_ptr(GET_EC()) == NULL ||
+	      ruby_current_execution_context_key == 0 ||
+              rb_ec_thread_ptr(GET_EC()) == NULL ||
 	      rb_ec_vm_ptr(GET_EC()) == ruby_current_vm_ptr);
     return ruby_current_vm_ptr;
 }
 
-#define rb_thread_set_current_raw(th) (void)(ruby_current_execution_context_ptr = (th)->ec)
-#define rb_thread_set_current(th) do { \
-    if ((th)->vm->running_thread != (th)) { \
-	(th)->running_time_us = 0; \
-    } \
-    rb_thread_set_current_raw(th); \
-    (th)->vm->running_thread = (th); \
-} while (0)
+static inline void
+rb_thread_set_current(rb_thread_t *th) {
+    if (th->g->running_thread != th) {
+        th->running_time_us = 0;
+    }
+    rb_current_execution_context_set(th->ec);
+    th->g->running_thread = th;
+}
 
 #else
 #error "unsupported thread model"
@@ -1726,13 +1839,19 @@ void rb_execution_context_mark(const rb_execution_context_t *ec);
 void rb_fiber_close(rb_fiber_t *fib);
 void Init_native_thread(rb_thread_t *th);
 
+void rb_gc_pause_for_gc(rb_guild_t *g);
+
 #define RUBY_VM_CHECK_INTS(ec) rb_vm_check_ints(ec)
 static inline void
 rb_vm_check_ints(rb_execution_context_t *ec)
 {
+    rb_guild_t *g;
     VM_ASSERT(ec == GET_EC());
     if (UNLIKELY(RUBY_VM_INTERRUPTED_ANY(ec))) {
 	rb_threadptr_execute_interrupts(rb_ec_thread_ptr(ec), 0);
+    }
+    if (UNLIKELY((g = ec->thread_ptr->g)->gc_rendezvous.pause_request)) {
+        rb_gc_pause_for_gc(g);
     }
 }
 
@@ -1770,8 +1889,8 @@ rb_exec_event_hook_orig(rb_execution_context_t *ec, const rb_event_flag_t flag,
 {
     struct rb_trace_arg_struct trace_arg;
 
-    VM_ASSERT(rb_ec_vm_ptr(ec)->event_hooks.events == ruby_vm_event_flags);
-    VM_ASSERT(rb_ec_vm_ptr(ec)->event_hooks.events & flag);
+    VM_ASSERT(rb_ec_guild_ptr(ec)->event_hooks.events == ruby_vm_event_flags);
+    VM_ASSERT(rb_ec_guild_ptr(ec)->event_hooks.events & flag);
 
     trace_arg.event = flag;
     trace_arg.ec = ec;
@@ -1804,7 +1923,7 @@ extern VALUE rb_get_coverages(void);
 extern void rb_set_coverages(VALUE, int, VALUE);
 extern void rb_reset_coverages(void);
 
-void rb_postponed_job_flush(rb_vm_t *vm);
+void rb_postponed_job_flush(rb_guild_t *g);
 
 RUBY_SYMBOL_EXPORT_END
 

@@ -255,7 +255,7 @@ static inline void
 ec_switch(rb_thread_t *th, rb_fiber_t *fib)
 {
     rb_execution_context_t *ec = &fib->cont.saved_ec;
-    ruby_current_execution_context_ptr = th->ec = ec;
+    rb_current_execution_context_set(th->ec = ec);
     VM_ASSERT(ec->fiber_ptr->cont.self == 0 || ec->vm_stack != NULL);
 }
 
@@ -734,11 +734,11 @@ cont_restore_thread(rb_context_t *cont)
 
 	/* trace on -> trace off */
 	if (th->ec->trace_arg != NULL && sec->trace_arg == NULL) {
-	    GET_VM()->trace_running--;
+            th->g->trace_running--;
 	}
 	/* trace off -> trace on */
 	else if (th->ec->trace_arg == NULL && sec->trace_arg != NULL) {
-	    GET_VM()->trace_running++;
+            th->g->trace_running++;
 	}
 	th->ec->trace_arg = sec->trace_arg;
 
@@ -1383,7 +1383,7 @@ fiber_init(VALUE fibval, VALUE proc)
     rb_context_t *cont = &fib->cont;
     rb_execution_context_t *sec = &cont->saved_ec;
     rb_thread_t *cth = GET_THREAD();
-    size_t fib_stack_size = cth->vm->default_params.fiber_vm_stack_size / sizeof(VALUE);
+    size_t fib_stack_size = cth->g->vm->default_params.fiber_vm_stack_size / sizeof(VALUE);
 
     /* initialize cont */
     cont->saved_vm_stack.ptr = NULL;
@@ -1441,7 +1441,7 @@ rb_fiber_start(void)
     enum ruby_tag_type state;
     int need_interrupt = TRUE;
 
-    VM_ASSERT(th->ec == ruby_current_execution_context_ptr);
+    VM_ASSERT(th->ec == GET_EC());
     VM_ASSERT(FIBER_RESUMED_P(fib));
 
     EC_PUSH_TAG(th->ec);
@@ -1537,8 +1537,8 @@ rb_threadptr_root_fiber_release(rb_thread_t *th)
 	VM_ASSERT(th->ec->fiber_ptr->cont.self == 0);
 	fiber_free(th->ec->fiber_ptr);
 
-	if (th->ec == ruby_current_execution_context_ptr) {
-	    ruby_current_execution_context_ptr = NULL;
+	if (th->ec == GET_EC()) {
+            rb_current_execution_context_set(NULL);
 	}
 	th->ec = NULL;
     }
@@ -1601,7 +1601,7 @@ fiber_store(rb_fiber_t *next_fib, rb_thread_t *th)
 
 #if FIBER_USE_NATIVE
     if (FIBER_CREATED_P(next_fib)) {
-	fiber_initialize_machine_stack_context(next_fib, th->vm->default_params.fiber_machine_stack_size);
+	fiber_initialize_machine_stack_context(next_fib, th->g->vm->default_params.fiber_machine_stack_size);
     }
 #endif
 

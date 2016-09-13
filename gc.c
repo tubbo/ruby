@@ -1836,7 +1836,7 @@ gc_event_hook_body(rb_execution_context_t *ec, rb_objspace_t *objspace, const rb
 } while (0)
 
 static inline VALUE
-newobj_init(VALUE klass, VALUE flags, VALUE v1, VALUE v2, VALUE v3, int wb_protected, rb_objspace_t *objspace, VALUE obj)
+newobj_init(VALUE klass, VALUE flags, VALUE v1, VALUE v2, VALUE v3, int wb_protected, rb_objspace_t *objspace, VALUE obj, rb_execution_context_t *ec)
 {
     GC_ASSERT(BUILTIN_TYPE(obj) == T_NONE);
     GC_ASSERT((flags & FL_WB_PROTECTED) == 0);
@@ -1912,11 +1912,15 @@ newobj_init(VALUE klass, VALUE flags, VALUE v1, VALUE v2, VALUE v3, int wb_prote
     }
 #endif
     check_rvalue_consistency(obj);
+
+    // TODO
+    RB_VM_RESOURCE_UNLOCK(ec->thread_ptr->g);
+
     return obj;
 }
 
 static inline VALUE
-newobj_slowpath(VALUE klass, VALUE flags, VALUE v1, VALUE v2, VALUE v3, rb_objspace_t *objspace, int wb_protected)
+newobj_slowpath(VALUE klass, VALUE flags, VALUE v1, VALUE v2, VALUE v3, rb_objspace_t *objspace, rb_execution_context_t *ec, int wb_protected)
 {
     VALUE obj;
 
@@ -1935,24 +1939,24 @@ newobj_slowpath(VALUE klass, VALUE flags, VALUE v1, VALUE v2, VALUE v3, rb_objsp
     }
 
     obj = heap_get_freeobj(objspace, heap_eden);
-    newobj_init(klass, flags, v1, v2, v3, wb_protected, objspace, obj);
+    newobj_init(klass, flags, v1, v2, v3, wb_protected, objspace, obj, ec);
     gc_event_hook(objspace, RUBY_INTERNAL_EVENT_NEWOBJ, obj);
     return obj;
 }
 
-NOINLINE(static VALUE newobj_slowpath_wb_protected(VALUE klass, VALUE flags, VALUE v1, VALUE v2, VALUE v3, rb_objspace_t *objspace));
-NOINLINE(static VALUE newobj_slowpath_wb_unprotected(VALUE klass, VALUE flags, VALUE v1, VALUE v2, VALUE v3, rb_objspace_t *objspace));
+NOINLINE(static VALUE newobj_slowpath_wb_protected(VALUE klass, VALUE flags, VALUE v1, VALUE v2, VALUE v3, rb_objspace_t *objspace, rb_execution_context_t *ec));
+NOINLINE(static VALUE newobj_slowpath_wb_unprotected(VALUE klass, VALUE flags, VALUE v1, VALUE v2, VALUE v3, rb_objspace_t *objspace, rb_execution_context_t *ec));
 
 static VALUE
-newobj_slowpath_wb_protected(VALUE klass, VALUE flags, VALUE v1, VALUE v2, VALUE v3, rb_objspace_t *objspace)
+newobj_slowpath_wb_protected(VALUE klass, VALUE flags, VALUE v1, VALUE v2, VALUE v3, rb_objspace_t *objspace, rb_execution_context_t *ec)
 {
-    return newobj_slowpath(klass, flags, v1, v2, v3, objspace, TRUE);
+    return newobj_slowpath(klass, flags, v1, v2, v3, objspace, ec, TRUE);
 }
 
 static VALUE
-newobj_slowpath_wb_unprotected(VALUE klass, VALUE flags, VALUE v1, VALUE v2, VALUE v3, rb_objspace_t *objspace)
+newobj_slowpath_wb_unprotected(VALUE klass, VALUE flags, VALUE v1, VALUE v2, VALUE v3, rb_objspace_t *objspace, rb_execution_context_t *ec)
 {
-    return newobj_slowpath(klass, flags, v1, v2, v3, objspace, FALSE);
+    return newobj_slowpath(klass, flags, v1, v2, v3, objspace, ec, FALSE);
 }
 
 static inline VALUE
@@ -1960,6 +1964,19 @@ newobj_of(VALUE klass, VALUE flags, VALUE v1, VALUE v2, VALUE v3, int wb_protect
 {
     rb_objspace_t *objspace = &rb_objspace;
     VALUE obj;
+    rb_execution_context_t *ec = GET_EC();
+    rb_guild_t *g = ec->thread_ptr->g;
+
+    RB_VM_RESOURCE_LOCK(g);
+
+    while (g->gc_rendezvous.pause_request) {
+        if (GUILD_DEBUG) fprintf(stderr, "%d: newobj_of: pause_request\n", GET_GUILD()->id);
+        RB_VM_RESOURCE_UNLOCK(g);
+        {
+            RUBY_VM_CHECK_INTS(ec);
+        }
+        RB_VM_RESOURCE_LOCK(g);
+    }
 
 #if GC_DEBUG_STRESS_TO_CLASS
     if (UNLIKELY(stress_to_class)) {
@@ -1974,12 +1991,12 @@ newobj_of(VALUE klass, VALUE flags, VALUE v1, VALUE v2, VALUE v3, int wb_protect
 	  ruby_gc_stressful ||
 	  gc_event_hook_available_p(objspace)) &&
 	(obj = heap_get_freeobj_head(objspace, heap_eden)) != Qfalse) {
-	return newobj_init(klass, flags, v1, v2, v3, wb_protected, objspace, obj);
+	return newobj_init(klass, flags, v1, v2, v3, wb_protected, objspace, obj, ec);
     }
     else {
 	return wb_protected ?
-	  newobj_slowpath_wb_protected(klass, flags, v1, v2, v3, objspace) :
-	  newobj_slowpath_wb_unprotected(klass, flags, v1, v2, v3, objspace);
+	  newobj_slowpath_wb_protected(klass, flags, v1, v2, v3, objspace, ec) :
+	  newobj_slowpath_wb_unprotected(klass, flags, v1, v2, v3, objspace, ec);
     }
 }
 
@@ -3762,6 +3779,7 @@ gc_sweep_continue(rb_objspace_t *objspace, rb_heap_t *heap)
     GC_ASSERT(dont_gc == FALSE);
 
     gc_enter(objspace, "sweep_continue");
+
 #if USE_RGENGC
     if (objspace->rgengc.need_major_gc == GPR_FLAG_NONE && heap_increment(objspace, heap)) {
 	gc_report(3, objspace, "gc_sweep_continue: success heap_increment().\n");
@@ -5664,6 +5682,8 @@ gc_marks_continue(rb_objspace_t *objspace, rb_heap_t *heap)
 
     GC_ASSERT(dont_gc == FALSE);
 
+    GC_ASSERT(FALSE); /* TODO: incremental GC is not work on Guilds */
+
     gc_enter(objspace, "marks_continue");
 
     PUSH_MARK_FUNC_DATA(NULL);
@@ -6410,6 +6430,104 @@ garbage_collect(rb_objspace_t *objspace, int full_mark, int immediate_mark, int 
     return gc_start(objspace, full_mark, immediate_mark, immediate_sweep, reason);
 }
 
+static void
+gc_pause_all_guilds(rb_objspace_t *objspace)
+{
+    rb_execution_context_t *ec = GET_EC();
+    rb_guild_t *current_guild = rb_ec_guild_ptr(ec);
+    rb_vm_t *vm = current_guild->vm;
+    rb_guild_t *g;
+
+    VM_ASSERT(RB_VM_RESOURCE_LOCK_ACQUIRED_P(current_guild));
+
+    if (GUILD_DEBUG) fprintf(stderr, "%d: gc_pause_all_guilds start\n", current_guild->id);
+
+    list_for_each(&vm->guilds, g, guild_node) {
+        if (g != current_guild) {
+            /* TODO: send trap to all threads? running threads? */
+            g->gc_rendezvous.pause_request = TRUE;
+        }
+    }
+
+    while (1) {
+        // TODO: more sophisticated check
+        int guilds = 0;
+        int waiting_guilds = 0;
+        list_for_each(&vm->guilds, g, guild_node) {
+            guilds++;
+
+            if (g == current_guild) {
+                /* skip */
+            }
+            else {
+                if (GUILD_DEBUG) fprintf(stderr, "%d: gc_pause_all_guilds: check for %d (%d)\n", current_guild->id, g->id, g->gc_rendezvous.waiting);
+
+                if (g->gc_rendezvous.waiting == FALSE) {
+                    
+                }
+                else {
+                    waiting_guilds++;
+                }
+            }
+        }
+
+        if (guilds > waiting_guilds + 1) {
+            if (GUILD_DEBUG) fprintf(stderr, "%d: gc_pause_all_guilds: wait_more (guilds:%d, waiting_guilds:%d)\n", current_guild->id, guilds, waiting_guilds);
+            pthread_cond_wait(&vm->gc_rendezvous_cond, &vm->global_resource_lock);
+        }
+        else {
+            if (GUILD_DEBUG) fprintf(stderr, "%d: gc_pause_all_guilds success!!!!\n", current_guild->id);
+            break;
+        }
+    }
+}
+
+void rb_gc_save_machine_context(rb_thread_t *th);
+
+void
+rb_gc_pause_for_gc(rb_guild_t *g)
+{
+    rb_vm_t *vm = g->vm;
+
+    VM_ASSERT(!RB_VM_RESOURCE_LOCK_ACQUIRED_P(g));
+
+    RB_VM_RESOURCE_LOCK(g);
+    {
+        g->gc_rendezvous.waiting = TRUE;
+        pthread_cond_signal(&vm->gc_rendezvous_cond);
+
+        while (1) {
+            if (g->gc_rendezvous.pause_request == FALSE) {
+                g->gc_rendezvous.waiting = FALSE;
+                if (GUILD_DEBUG) fprintf(stderr, "%d: gc pause -> wakeup\n", g->id);
+                break;
+            }
+            if (GUILD_DEBUG) fprintf(stderr, "%d: gc wakeup cond_wait\n", g->id);
+            /* update thread's machine stack information */
+            if (g->running_thread) rb_gc_save_machine_context(g->running_thread);
+            pthread_cond_wait(&vm->gc_restart_cond, &vm->global_resource_lock); /* unlock and wait */
+        }
+    }
+    RB_VM_RESOURCE_UNLOCK(g);
+}
+
+static void
+gc_restart_all_guilds(rb_objspace_t *objspace)
+{
+    rb_execution_context_t *ec = GET_EC();
+    rb_guild_t *current_guild = rb_ec_guild_ptr(ec);
+    rb_vm_t *vm = current_guild->vm;
+    rb_guild_t *g;
+
+    list_for_each(&vm->guilds, g, guild_node) {
+        if (g != current_guild) {
+            g->gc_rendezvous.pause_request = FALSE;
+        }
+    }
+    if (GUILD_DEBUG) fprintf(stderr, "%d: gc wakeup all\n", current_guild->id);
+    pthread_cond_broadcast(&vm->gc_restart_cond);
+}
+
 static int
 gc_start(rb_objspace_t *objspace, const int full_mark, const int immediate_mark, const unsigned int immediate_sweep, int reason)
 {
@@ -6425,6 +6543,15 @@ gc_start(rb_objspace_t *objspace, const int full_mark, const int immediate_mark,
 #if RGENGC_CHECK_MODE >= 2
     gc_verify_internal_consistency(Qnil);
 #endif
+
+#if VM_CHECK_MODE > 0
+    /* should be locked */
+    {
+        rb_guild_t *g = GET_GUILD();
+        VM_ASSERT(RB_VM_RESOURCE_LOCK_ACQUIRED_P(g));
+    }
+#endif
+    gc_pause_all_guilds(objspace);
 
     gc_enter(objspace, "gc_start");
 
@@ -6492,6 +6619,9 @@ gc_start(rb_objspace_t *objspace, const int full_mark, const int immediate_mark,
     gc_prof_timer_stop(objspace);
 
     gc_exit(objspace, "gc_start");
+
+    gc_restart_all_guilds(objspace);
+
     return TRUE;
 }
 
@@ -6502,7 +6632,7 @@ gc_rest(rb_objspace_t *objspace)
     int sweeping = is_lazy_sweeping(heap_eden);
 
     if (marking || sweeping) {
-	gc_enter(objspace, "gc_rest");
+        gc_enter(objspace, "gc_rest");
 
 	if (RGENGC_CHECK_MODE >= 2) gc_verify_internal_consistency(Qnil);
 

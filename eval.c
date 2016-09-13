@@ -71,7 +71,7 @@ ruby_setup(void)
     if ((state = EC_EXEC_TAG()) == TAG_NONE) {
 	rb_call_inits();
 	ruby_prog_init();
-	GET_VM()->running = 1;
+	GET_VM()->system_running = 1;
     }
     EC_POP_TAG();
 

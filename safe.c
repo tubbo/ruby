@@ -34,19 +34,19 @@ ruby_safe_level_2_warning(void)
 int
 rb_safe_level(void)
 {
-    return GET_VM()->safe_level_;
+    return GET_GUILD()->safe_level_;
 }
 
 void
 rb_set_safe_level_force(int safe)
 {
-    GET_VM()->safe_level_ = safe;
+    GET_GUILD()->safe_level_ = safe;
 }
 
 void
 rb_set_safe_level(int level)
 {
-    rb_vm_t *vm = GET_VM();
+    rb_guild_t *g = GET_GUILD();
 
     if (level > SAFE_LEVEL_MAX) {
 	rb_raise(rb_eArgError, "$SAFE=2 to 4 are obsolete");
@@ -59,9 +59,9 @@ rb_set_safe_level(int level)
 	const char *path = rb_source_location_cstr(&line);
 
 	if (0) fprintf(stderr, "%s:%d $SAFE %d -> %d\n",
-		       path ? path : "-", line, vm->safe_level_, level);
+		       path ? path : "-", line, g->safe_level_, level);
 
-	vm->safe_level_ = level;
+	g->safe_level_ = level;
     }
 }
 
