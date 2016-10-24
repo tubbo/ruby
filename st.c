@@ -75,6 +75,124 @@ static const struct st_hash_type type_strcasehash = {
 
 static void rehash(st_table *);
 
+#if 1
+#define st_profile_operation(type, table) st_profile_operation_body(profile_operation_type_##type, table)
+
+enum profile_operation_type {
+#define PROFILE_OPERATION_TYPE(t) profile_operation_type_##t
+    PROFILE_OPERATION_TYPE(init),
+    PROFILE_OPERATION_TYPE(clear),
+    PROFILE_OPERATION_TYPE(free),
+    PROFILE_OPERATION_TYPE(lookup),
+    PROFILE_OPERATION_TYPE(get_key),
+    PROFILE_OPERATION_TYPE(insert),
+    PROFILE_OPERATION_TYPE(update),
+    PROFILE_OPERATION_TYPE(add_direct),
+    PROFILE_OPERATION_TYPE(add),
+    PROFILE_OPERATION_TYPE(rehash),
+    PROFILE_OPERATION_TYPE(delete),
+    PROFILE_OPERATION_TYPE(shift),
+    PROFILE_OPERATION_TYPE(foreach),
+    PROFILE_OPERATION_TYPE(keys),
+    PROFILE_OPERATION_TYPE(values),
+    PROFILE_OPERATION_TYPE(cleanup),
+#undef PROFILE_OPERATION_TYPE
+
+    profile_operation_type_max
+};
+
+const char *profile_operation_names[] = {
+#define PROFILE_OPERATION_TYPE(t) #t
+    PROFILE_OPERATION_TYPE(init),
+    PROFILE_OPERATION_TYPE(clear),
+    PROFILE_OPERATION_TYPE(free),
+    PROFILE_OPERATION_TYPE(lookup),
+    PROFILE_OPERATION_TYPE(get_key),
+    PROFILE_OPERATION_TYPE(insert),
+    PROFILE_OPERATION_TYPE(update),
+    PROFILE_OPERATION_TYPE(add_direct),
+    PROFILE_OPERATION_TYPE(add),
+    PROFILE_OPERATION_TYPE(rehash),
+    PROFILE_OPERATION_TYPE(delete),
+    PROFILE_OPERATION_TYPE(shift),
+    PROFILE_OPERATION_TYPE(foreach),
+    PROFILE_OPERATION_TYPE(keys),
+    PROFILE_OPERATION_TYPE(values),
+    PROFILE_OPERATION_TYPE(cleanup),
+#undef PROFILE_OPERATION_TYPE
+};
+
+size_t *profile_operation_tables[profile_operation_type_max];
+size_t record_table_sizes[profile_operation_type_max];
+
+static void
+st_profile_operation_body(enum profile_operation_type type, st_table *table)
+{
+    size_t *record_table = profile_operation_tables[type];
+    size_t record_table_size = record_table_sizes[type];
+    size_t size = table->num_entries;
+
+    if (record_table_size <= size) {
+	size_t i;
+
+	record_table = realloc(record_table, sizeof(size_t) * (size + 1));
+
+	for (i=record_table_size; i < size + 1; i++) {
+	    record_table[i] = 0;
+	}
+
+	profile_operation_tables[type] = record_table;
+	record_table_sizes[type] = size + 1;
+    }
+
+    record_table[size]++;
+}
+
+__attribute__((destructor))
+static void print_record(void)
+{
+    const char *name;
+    if ((name = getenv("ST_PROFILE_OPERATION")) != NULL) {
+	FILE *fp = stderr;
+	int type;
+	char filename[256];
+
+#if 1
+	snprintf(filename, 256, "%s.%d", name, getpid());
+	if ((fp = fopen(filename, "w")) == NULL) {
+	    perror("st.c:profile_operation");
+	    exit(1);
+	}
+#endif
+
+	fprintf(fp, "$st_profile_operation = {\n");
+
+	for (type=0; type<profile_operation_type_max; type++) {
+	    size_t total = 0;
+	    size_t i;
+	    for (i=0; i<record_table_sizes[type]; i++) {
+		total += profile_operation_tables[type][i];
+	    }
+	    fprintf(fp, "%s: {count: %"PRIuSIZE", max: %"PRIuSIZE", details: [",
+		    profile_operation_names[type], total, i == 0 ? i : i - 1);
+
+	    for (i=0; i<record_table_sizes[type]; i++) {
+		size_t n = profile_operation_tables[type][i];
+		if (n > 0) {
+		    fprintf(fp, "[%"PRIuSIZE", %"PRIuSIZE"], ", i, n);
+		}
+	    }
+
+	    fprintf(fp, "]},\n");
+	}
+	fprintf(fp, "}\n");
+    }
+}
+
+#else
+#define st_profile_operation(type, table)
+#endif
+
 #ifdef RUBY
 #undef malloc
 #undef realloc
@@ -236,6 +354,7 @@ st_init_table_with_size(const struct st_hash_type *type, st_index_t size)
     tbl->num_bins = size;
     tbl->bins = st_alloc_bins(size);
 
+    st_profile_operation(init, tbl);
     return tbl;
 }
 
@@ -286,6 +405,8 @@ st_clear(st_table *table)
 {
     register st_table_entry *ptr = 0, *next;
 
+    st_profile_operation(clear, table);
+
     if (table->entries_packed) {
         table->num_entries = 0;
         table->real_entries = 0;
@@ -304,6 +425,8 @@ st_clear(st_table *table)
 void
 st_free_table(st_table *table)
 {
+    st_profile_operation(free, table);
+
     st_clear(table);
     st_free_bins(table->bins, table->num_bins);
     st_dealloc_table(table);
@@ -388,6 +511,8 @@ st_lookup(st_table *table, register st_data_t key, st_data_t *value)
     st_index_t hash_val;
     register st_table_entry *ptr;
 
+    st_profile_operation(lookup, table);
+
     hash_val = do_hash(key, table);
 
     if (table->entries_packed) {
@@ -415,6 +540,8 @@ st_get_key(st_table *table, register st_data_t key, st_data_t *result)
 {
     st_index_t hash_val;
     register st_table_entry *ptr;
+
+    st_profile_operation(get_key, table);
 
     hash_val = do_hash(key, table);
 
@@ -458,6 +585,9 @@ add_direct(st_table *table, st_data_t key, st_data_t value,
 	   st_index_t hash_val, register st_index_t bin_pos)
 {
     register st_table_entry *entry;
+
+    st_profile_operation(add, table);
+
     if (table->num_entries > ST_DEFAULT_MAX_DENSITY * table->num_bins) {
 	rehash(table);
         bin_pos = hash_pos(hash_val, table->num_bins);
@@ -529,6 +659,8 @@ st_insert(register st_table *table, register st_data_t key, st_data_t value)
     register st_index_t bin_pos;
     register st_table_entry *ptr;
 
+    st_profile_operation(insert, table);
+
     hash_val = do_hash(key, table);
 
     if (table->entries_packed) {
@@ -561,6 +693,8 @@ st_insert2(register st_table *table, register st_data_t key, st_data_t value,
     register st_index_t bin_pos;
     register st_table_entry *ptr;
 
+    st_profile_operation(insert, table);
+
     hash_val = do_hash(key, table);
 
     if (table->entries_packed) {
@@ -592,6 +726,8 @@ st_add_direct(st_table *table, st_data_t key, st_data_t value)
 {
     st_index_t hash_val;
 
+    st_profile_operation(add_direct, table);
+
     hash_val = do_hash(key, table);
     if (table->entries_packed) {
 	add_packed_direct(table, key, value, hash_val);
@@ -606,6 +742,8 @@ rehash(register st_table *table)
 {
     register st_table_entry *ptr = 0, **new_bins;
     st_index_t new_num_bins, hash_val;
+
+    st_profile_operation(rehash, table);
 
     new_num_bins = new_size(table->num_bins+1);
     new_bins = st_realloc_bins(table->bins, new_num_bins, table->num_bins);
@@ -669,6 +807,8 @@ st_delete(register st_table *table, register st_data_t *key, st_data_t *value)
     st_table_entry **prev;
     register st_table_entry *ptr;
 
+    st_profile_operation(delete, table);
+
     hash_val = do_hash(*key, table);
 
     if (table->entries_packed) {
@@ -704,6 +844,8 @@ st_delete_safe(register st_table *table, register st_data_t *key, st_data_t *val
 {
     st_index_t hash_val;
     register st_table_entry *ptr;
+
+    st_profile_operation(delete, table);
 
     hash_val = do_hash(*key, table);
 
@@ -742,6 +884,8 @@ st_shift(register st_table *table, register st_data_t *key, st_data_t *value)
     st_table_entry **prev;
     register st_table_entry *ptr;
 
+    st_profile_operation(shift, table);
+
     if (table->num_entries == 0) {
         if (value != 0) *value = 0;
         return 0;
@@ -770,6 +914,8 @@ st_cleanup_safe(st_table *table, st_data_t never)
 {
     st_table_entry *ptr, **last, *tmp;
     st_index_t i;
+
+    st_profile_operation(cleanup, table);
 
     if (table->entries_packed) {
 	st_index_t i = 0, j = 0;
@@ -809,6 +955,8 @@ st_update(st_table *table, st_data_t key, st_update_callback_func *func, st_data
     register st_table_entry *ptr, **last, *tmp;
     st_data_t value = 0, old_key;
     int retval, existing = 0;
+
+    st_profile_operation(update, table);
 
     hash_val = do_hash(key, table);
 
@@ -891,6 +1039,8 @@ st_foreach_check(st_table *table, int (*func)(ANYARGS), st_data_t arg, st_data_t
     struct list_head *head;
     enum st_retval retval;
     st_index_t i;
+
+    st_profile_operation(foreach, table);
 
     if (table->entries_packed) {
 	for (i = 0; i < table->real_entries; i++) {
@@ -979,6 +1129,8 @@ st_foreach(st_table *table, int (*func)(ANYARGS), st_data_t arg)
     enum st_retval retval;
     struct list_head *head;
     st_index_t i;
+
+    st_profile_operation(foreach, table);
 
     if (table->entries_packed) {
 	for (i = 0; i < table->real_entries; i++) {
@@ -1072,12 +1224,14 @@ get_keys(const st_table *table, st_data_t *keys, st_index_t size,
 st_index_t
 st_keys(st_table *table, st_data_t *keys, st_index_t size)
 {
+    st_profile_operation(keys, table);
     return get_keys(table, keys, size, 0, 0);
 }
 
 st_index_t
 st_keys_check(st_table *table, st_data_t *keys, st_index_t size, st_data_t never)
 {
+    st_profile_operation(keys, table);
     return get_keys(table, keys, size, 1, never);
 }
 
@@ -1116,12 +1270,14 @@ get_values(const st_table *table, st_data_t *values, st_index_t size,
 st_index_t
 st_values(st_table *table, st_data_t *values, st_index_t size)
 {
+    st_profile_operation(values, table);
     return get_values(table, values, size, 0, 0);
 }
 
 st_index_t
 st_values_check(st_table *table, st_data_t *values, st_index_t size, st_data_t never)
 {
+    st_profile_operation(values, table);
     return get_values(table, values, size, 1, never);
 }
 
@@ -1222,6 +1378,8 @@ st_reverse_foreach(st_table *table, int (*func)(ANYARGS), st_data_t arg)
     enum st_retval retval;
     struct list_head *head;
     st_index_t i;
+
+    st_profile_operation(reverse_foreach, table);
 
     if (table->entries_packed) {
 	for (i = table->real_entries; 0 < i;) {
