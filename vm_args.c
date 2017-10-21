@@ -484,7 +484,7 @@ args_setup_block_parameter(rb_thread_t *th, struct rb_calling_info *calling, VAL
 	switch (vm_block_handler_type(block_handler)) {
 	  case block_handler_type_iseq:
 	  case block_handler_type_ifunc:
-	    blockval = rb_vm_make_proc(th, VM_BH_TO_CAPT_BLOCK(block_handler), rb_cProc);
+	    blockval = rb_vm_make_proc(th->ec, VM_BH_TO_CAPT_BLOCK(block_handler), rb_cProc);
 	    break;
 	  case block_handler_type_symbol:
 	    blockval = rb_sym_to_proc(VM_BH_TO_SYMBOL(block_handler));
