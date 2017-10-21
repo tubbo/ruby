@@ -2802,8 +2802,8 @@ run_finalizer(rb_objspace_t *objspace, VALUE obj, VALUE table)
     saved.cfp = th->ec->cfp;
     saved.finished = 0;
 
-    TH_PUSH_TAG(th);
-    state = TH_EXEC_TAG();
+    EC_PUSH_TAG(th->ec);
+    state = EC_EXEC_TAG();
     if (state != TAG_NONE) {
 	++saved.finished;	/* skip failed finalizer */
     }
@@ -2812,7 +2812,7 @@ run_finalizer(rb_objspace_t *objspace, VALUE obj, VALUE table)
 	 saved.finished = ++i) {
 	run_single_final(RARRAY_AREF(table, i), saved.objid);
     }
-    TH_POP_TAG();
+    EC_POP_TAG();
 #undef RESTORE_FINALIZER
 }
 
@@ -7719,7 +7719,7 @@ rb_memerror(void)
 	exc = ruby_vm_special_exception_copy(exc);
     }
     th->ec->errinfo = exc;
-    TH_JUMP_TAG(th, TAG_RAISE);
+    EC_JUMP_TAG(th->ec, TAG_RAISE);
 }
 
 static void *

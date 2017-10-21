@@ -1107,8 +1107,8 @@ rb_iterate0(VALUE (* it_proc) (VALUE), VALUE data1,
     volatile VALUE retval = Qnil;
     rb_control_frame_t *const cfp = th->ec->cfp;
 
-    TH_PUSH_TAG(th);
-    state = TH_EXEC_TAG();
+    EC_PUSH_TAG(th->ec);
+    state = EC_EXEC_TAG();
     if (state == 0) {
       iter_retry:
 	{
@@ -1144,10 +1144,10 @@ rb_iterate0(VALUE (* it_proc) (VALUE), VALUE data1,
 	    SDR(); fprintf(stderr, "%p, %p\n", cfp, escape_cfp);
 	}
     }
-    TH_POP_TAG();
+    EC_POP_TAG();
 
     if (state) {
-	TH_JUMP_TAG(th, state);
+	EC_JUMP_TAG(th->ec, state);
     }
     return retval;
 }
@@ -1342,17 +1342,17 @@ eval_string_with_cref(VALUE self, VALUE src, VALUE scope, rb_cref_t *const cref_
 	return vm_exec(th);
     }
 
-    TH_PUSH_TAG(th);
-    if ((state = TH_EXEC_TAG()) == TAG_NONE) {
+    EC_PUSH_TAG(th->ec);
+    if ((state = EC_EXEC_TAG()) == TAG_NONE) {
 	result = vm_exec(th);
     }
-    TH_POP_TAG();
+    EC_POP_TAG();
 
     if (state) {
 	if (state == TAG_RAISE) {
 	    adjust_backtrace_in_eval(th, th->ec->errinfo);
 	}
-	TH_JUMP_TAG(th, state);
+	EC_JUMP_TAG(th->ec, state);
     }
     return result;
 }
@@ -1498,7 +1498,7 @@ rb_eval_string_wrap(const char *str, int *pstate)
 	*pstate = state;
     }
     else if (state != TAG_NONE) {
-	TH_JUMP_TAG(th, state);
+	EC_JUMP_TAG(th->ec, state);
     }
     return val;
 }
@@ -1515,9 +1515,9 @@ rb_eval_cmd(VALUE cmd, VALUE arg, int level)
 	level = RUBY_SAFE_LEVEL_MAX;
     }
 
-    TH_PUSH_TAG(th);
+    EC_PUSH_TAG(th->ec);
     rb_set_safe_level_force(level);
-    if ((state = TH_EXEC_TAG()) == TAG_NONE) {
+    if ((state = EC_EXEC_TAG()) == TAG_NONE) {
 	if (!RB_TYPE_P(cmd, T_STRING)) {
 	    val = rb_funcallv(cmd, idCall, RARRAY_LENINT(arg),
 			      RARRAY_CONST_PTR(arg));
@@ -1526,10 +1526,10 @@ rb_eval_cmd(VALUE cmd, VALUE arg, int level)
 	    val = eval_string(rb_vm_top_self(), cmd, Qnil, 0, 0);
 	}
     }
-    TH_POP_TAG();
+    EC_POP_TAG();
 
     rb_set_safe_level_force(safe);
-    if (state) TH_JUMP_TAG(th, state);
+    if (state) EC_JUMP_TAG(th->ec, state);
     return val;
 }
 
@@ -1886,7 +1886,7 @@ rb_throw_obj(VALUE tag, VALUE value)
     }
 
     th->ec->errinfo = (VALUE)THROW_DATA_NEW(tag, NULL, TAG_THROW);
-    TH_JUMP_TAG(th, TAG_THROW);
+    EC_JUMP_TAG(th->ec, TAG_THROW);
 }
 
 void
@@ -1981,11 +1981,11 @@ vm_catch_protect(VALUE tag, rb_block_call_func *func, VALUE data,
     VALUE val = Qnil;		/* OK */
     rb_control_frame_t *volatile saved_cfp = th->ec->cfp;
 
-    TH_PUSH_TAG(th);
+    EC_PUSH_TAG(th->ec);
 
     _tag.tag = tag;
 
-    if ((state = TH_EXEC_TAG()) == TAG_NONE) {
+    if ((state = EC_EXEC_TAG()) == TAG_NONE) {
 	/* call with argc=1, argv = [tag], block = Qnil to insure compatibility */
 	val = (*func)(tag, data, 1, (const VALUE *)&tag, Qnil);
     }
@@ -1995,7 +1995,7 @@ vm_catch_protect(VALUE tag, rb_block_call_func *func, VALUE data,
 	th->ec->errinfo = Qnil;
 	state = 0;
     }
-    TH_POP_TAG();
+    EC_POP_TAG();
     if (stateptr)
 	*stateptr = state;
 
@@ -2014,7 +2014,7 @@ rb_catch_obj(VALUE t, VALUE (*func)(), VALUE data)
     enum ruby_tag_type state;
     rb_thread_t *th = GET_THREAD();
     VALUE val = vm_catch_protect(t, (rb_block_call_func *)func, data, &state, th);
-    if (state) TH_JUMP_TAG(th, state);
+    if (state) EC_JUMP_TAG(th->ec, state);
     return val;
 }
 
