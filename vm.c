@@ -3117,6 +3117,7 @@ Init_VM(void)
 	th->top_self = rb_vm_top_self();
 	rb_thread_set_current(th);
 
+        rb_guild_init(g, vm);
 	rb_guild_living_threads_insert(g, th);
 
 	rb_gc_register_mark_object((VALUE)iseq);
@@ -3131,11 +3132,6 @@ Init_VM(void)
 	 * The Binding of the top level scope
 	 */
 	rb_define_global_const("TOPLEVEL_BINDING", rb_binding_new());
-
-        /* for Guild */
-        {
-            /* TODO: init mutex */
-        }
     }
     vm_init_redefined_flag();
 
@@ -3182,7 +3178,7 @@ Init_BareVM(void)
     MEMZERO(g, rb_guild_t, 1);
 
     vm_init2(vm, g);
-    rb_guild_init(g, vm);
+    g->vm = vm;
 
     vm->objspace = rb_objspace_alloc();
     ruby_current_vm_ptr = vm;

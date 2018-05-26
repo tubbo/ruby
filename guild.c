@@ -102,6 +102,8 @@ rb_guild_alloc_wrap(rb_guild_t *g)
     return gval;
 }
 
+void rb_guild_init_postponed_job(rb_guild_t *g);
+
 void
 rb_guild_init(rb_guild_t *g, rb_vm_t *vm)
 {
@@ -112,6 +114,7 @@ rb_guild_init(rb_guild_t *g, rb_vm_t *vm)
     g->thread_report_on_exception = 1;
     rb_vm_guilds_inserts(vm, g);
     g->id = id_cnt++;
+    rb_guild_init_postponed_job(g);
     if (GUILD_DEBUG) fprintf(stderr, "%d: rb_guild_init (%p)\n", g->id, (void *)pthread_self());
 }
 
@@ -284,11 +287,12 @@ guild_channel_copy(VALUE obj)
 	switch (TYPE(obj)) {
 	  case T_ARRAY:
 	    {
-		VALUE dst = rb_ary_new_capa(RARRAY_LEN(obj));
-		long i, len = RARRAY_LEN(obj);
-		for (i=0; i<len; i++) {
+                long i, len = RARRAY_LEN(obj);
+		VALUE dst = rb_ary_new_capa(len);
+
+                for (i=0; i<len; i++) {
 		    VALUE e = RARRAY_AREF(obj, i);
-		    RARRAY_ASET(dst, i, guild_channel_copy(e));
+                    rb_ary_push(dst, guild_channel_copy(e));
 		}
 		return dst;
 	    }
