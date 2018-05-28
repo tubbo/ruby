@@ -2466,7 +2466,7 @@ thread_free(void *ptr)
     RUBY_FREE_ENTER("thread");
 
     if (th->status == THREAD_RUNNABLE) {
-        fprintf(stderr, "!!!!!!!!!!!!!!!!!!!!!!!!!!! %d (%p): thread_free: %p (%p)\n", th->g->id, th->g, th, (void *)th->thread_id);
+        fprintf(stderr, "%d: !!!!!!!!!!!!!!!!!!!!!!!!!!! %d (%p): thread_free: %p (%p)\n", GET_GUILD()->id, th->g->id, th->g, th, (void *)th->thread_id);
         bp();
     }
 

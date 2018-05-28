@@ -765,7 +765,7 @@ rb_thread_create_core(VALUE thval, VALUE args, VALUE (*fn)(ANYARGS))
     rb_thread_t *th = rb_thread_ptr(thval), *current_th = GET_THREAD();
     int err;
 
-    if (GUILD_DEBUG) fprintf(stderr, "%d: rb_thread_create_core: g:%d\n", current_th->g->id, th->g->id);
+    if (GUILD_DEBUG) fprintf(stderr, "%d: rb_thread_create_core: g:%d, th:%p\n", current_th->g->id, th->g->id, th);
 
     if (OBJ_FROZEN(current_th->thgroup)) {
 	rb_raise(rb_eThreadError,

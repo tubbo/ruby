@@ -3,6 +3,7 @@
 #include "vm_debug.h"
 #include "ruby/thread.h"
 #include <pthread.h>
+#include "thread_native.h"
 
 /* vm_trace.c */
 void rb_vm_trace_mark_event_hooks(rb_hook_list_t *hooks);
@@ -113,7 +114,7 @@ rb_guild_init(rb_guild_t *g, rb_vm_t *vm)
     rb_guild_living_threads_init(g);
     g->thread_report_on_exception = 1;
     rb_vm_guilds_inserts(vm, g);
-    g->id = id_cnt++;
+    g->id = ++id_cnt;
     rb_guild_init_postponed_job(g);
     if (GUILD_DEBUG) fprintf(stderr, "%d: rb_guild_init (%p)\n", g->id, (void *)pthread_self());
 }
@@ -220,7 +221,7 @@ guild_channel_pop(struct guild_channel *ch)
     q_stat(ch, "b/pop");
   retry:
     if (ch->q_size == 0) {
-	pthread_cond_wait(&ch->cond, &ch->lock);
+	rb_native_cond_wait(&ch->cond, &ch->lock);
 	goto retry;
     }
     else {

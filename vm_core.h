@@ -19,7 +19,7 @@
  *   1: enable local assertions.
  */
 #ifndef VM_CHECK_MODE
-#define VM_CHECK_MODE 0
+#define VM_CHECK_MODE GUILD_DEBUG
 #endif
 
 /**
@@ -659,23 +659,39 @@ typedef struct rb_vm_struct {
 int ruby_vm_debug_resouce_lock_acquired;
 #endif
 
+#if !GUILD_DEBUG
+#define RB_VM_RESOURCE_LOCK(g)   RB_VM_RESOURCE_LOCK_(g)
+#define RB_VM_RESOURCE_UNLOCK(g) RB_VM_RESOURCE_UNLOCK_(g)
+#else
+#define RB_VM_RESOURCE_LOCK(g)   (fprintf(stderr, "RB_VM_RESOURCE_LOCK(g:%d) at %s:%d\n", g->id,  __FILE__, __LINE__), RB_VM_RESOURCE_LOCK_(g))
+#define RB_VM_RESOURCE_UNLOCK(g) (fprintf(stderr, "RB_VM_RESOURCE_UNLOCK(g:%d) at %s:%d\n", g->id,  __FILE__, __LINE__), RB_VM_RESOURCE_UNLOCK_(g))
+#endif
+
+int RB_VM_RESOURCE_LOCK_ACQUIRED_P(const rb_guild_t *g);
+
 static inline void
-RB_VM_RESOURCE_LOCK(const rb_guild_t *g)
+RB_VM_RESOURCE_LOCKED(const rb_guild_t *g)
 {
     rb_vm_t *vm = g->vm;
-    if (pthread_mutex_lock(&vm->global_resource_lock) != 0) rb_bug("RB_GLOBL_RESOURCE_LOCK: fails.");
     vm->global_resource_lock_guild = g;
 }
 
 static inline void
-RB_VM_RESOURCE_UNLOCK(const rb_guild_t *g)
+RB_VM_RESOURCE_LOCK_(const rb_guild_t *g)
+{
+    rb_vm_t *vm = g->vm;
+    VM_ASSERT(!RB_VM_RESOURCE_LOCK_ACQUIRED_P(g));
+    if (pthread_mutex_lock(&vm->global_resource_lock) != 0) rb_bug("RB_GLOBL_RESOURCE_LOCK: fails.");
+    RB_VM_RESOURCE_LOCKED(g);
+}
+
+static inline void
+RB_VM_RESOURCE_UNLOCK_(const rb_guild_t *g)
 {
     rb_vm_t *vm = g->vm;
     vm->global_resource_lock_guild = NULL;
     if (pthread_mutex_unlock(&vm->global_resource_lock) != 0) rb_bug("RB_GLOBL_RESOURCE_UNLOCK: fails.");
 }
-
-int RB_VM_RESOURCE_LOCK_ACQUIRED_P(const rb_guild_t *g);
 
 /* default values */
 
