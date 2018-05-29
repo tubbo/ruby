@@ -898,18 +898,19 @@ rb_proc_dup(VALUE self)
 VALUE
 rb_proc_isolate_bang(VALUE self)
 {
+#if 0
     rb_proc_t *proc;
     GetProcPtr(self, proc);
 
     /* TODO */
-
+#endif
     return self;
 }
 
 VALUE
 rb_proc_isolate(VALUE self)
 {
-    VALUE dst = rb_proc_dup(dst);
+    VALUE dst = rb_proc_dup(self);
     rb_proc_isolate_bang(dst);
     return dst;
 }
