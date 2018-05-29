@@ -895,6 +895,24 @@ rb_proc_dup(VALUE self)
     return procval;
 }
 
+VALUE
+rb_proc_isolate_bang(VALUE self)
+{
+    rb_proc_t *proc;
+    GetProcPtr(self, proc);
+
+    /* TODO */
+
+    return self;
+}
+
+VALUE
+rb_proc_isolate(VALUE self)
+{
+    VALUE dst = rb_proc_dup(dst);
+    rb_proc_isolate_bang(dst);
+    return dst;
+}
 
 MJIT_FUNC_EXPORTED VALUE
 rb_vm_make_proc_lambda(const rb_execution_context_t *ec, const struct rb_captured_block *captured, VALUE klass, int8_t is_lambda)

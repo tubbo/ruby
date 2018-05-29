@@ -11,7 +11,9 @@ void rb_vm_trace_mark_event_hooks(rb_hook_list_t *hooks);
 VALUE rb_cGuild;
 VALUE rb_cGuildChannel;
 
+VALUE rb_proc_isolate(VALUE self);
 VALUE rb_guild_channel_create(void);
+static VALUE guild_channel_copy(VALUE obj);
 
 /* Guild internals */
 
@@ -122,10 +124,10 @@ rb_guild_init(rb_guild_t *g, rb_vm_t *vm)
 VALUE rb_thread_create_core(VALUE thval, VALUE args, VALUE (*fn)(ANYARGS));
 
 static void
-guild_start(rb_guild_t *g)
+guild_start(rb_guild_t *g, VALUE args)
 {
     VALUE thval = rb_thread_alloc(rb_cThread, g);
-    rb_thread_create_core(thval, rb_ary_new(), NULL);
+    rb_thread_create_core(thval, args, NULL);
     RB_GC_GUARD(thval);
 }
 
@@ -135,23 +137,24 @@ static VALUE
 guild_new(int argc, VALUE *argv, VALUE self)
 {
     VALUE gval;
+    rb_guild_t *g = ALLOC_N(rb_guild_t, 1);
+    VALUE args = rb_ary_new();
+    int i;
 
-    if (argc != 0) {
-        rb_raise(rb_eTypeError, "arguments are not supported yet.");
+    MEMZERO(g, rb_guild_t, 1);
+
+    gval = rb_guild_alloc_wrap(g);
+    g->gc_rendezvous.waiting = 3; /* not running */
+    g->parent_guild_obj = GET_GUILD()->self;
+    rb_guild_init(g, GET_VM());
+    RB_OBJ_WRITE(g->self, &g->default_channel, rb_guild_channel_create());
+    rb_gvl_init(g);
+
+    for (i=0; i<argc; i++) {
+        rb_ary_push(args, guild_channel_copy(argv[i]));
     }
-    else {
-        rb_guild_t *g = ALLOC_N(rb_guild_t, 1);
-        MEMZERO(g, rb_guild_t, 1);
-        gval = rb_guild_alloc_wrap(g);
-        g->gc_rendezvous.waiting = 3; /* not running */
-        g->parent_guild_obj = GET_GUILD()->self;
-        rb_guild_init(g, GET_VM());
-        RB_OBJ_WRITE(g->self, &g->default_channel, rb_guild_channel_create());
+    guild_start(g, args);
 
-        rb_gvl_init(g);
-
-        guild_start(g);
-    }
     return gval;
 }
 
@@ -302,9 +305,14 @@ guild_channel_copy(VALUE obj)
                 VALUE dst = rb_str_dup(obj);
                 return dst;
             }
+          case T_DATA:
+            if (rb_obj_is_proc(obj)) {
+                VALUE dst = rb_proc_isolate(obj);
+                return dst;
+            }
+            /* fall through */
 	  default:
-            rb_p(obj);
-	    rb_raise(rb_eRuntimeError, "can't copy");
+	    rb_raise(rb_eRuntimeError, "can't copy: %"PRIsVALUE, obj);
 	}
     }
 }
