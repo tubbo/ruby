@@ -760,7 +760,7 @@ thread_start_func_2(rb_thread_t *th, VALUE *stack_start, VALUE *register_stack_s
 }
 
 VALUE
-rb_thread_create_core(VALUE thval, VALUE args, VALUE (*fn)(ANYARGS))
+rb_thread_create_core(VALUE thval, VALUE args, VALUE procval, VALUE (*fn)(ANYARGS))
 {
     rb_thread_t *th = rb_thread_ptr(thval), *current_th = GET_THREAD();
     int err;
@@ -774,7 +774,7 @@ rb_thread_create_core(VALUE thval, VALUE args, VALUE (*fn)(ANYARGS))
 
     /* setup thread environment */
     th->first_func = fn;
-    th->first_proc = fn ? Qfalse : rb_block_proc();
+    th->first_proc = procval;
     th->first_args = args; /* GC: shouldn't put before above line */
 
     th->priority = current_th->priority;
@@ -851,7 +851,7 @@ thread_s_new(int argc, VALUE *argv, VALUE klass)
 static VALUE
 thread_start(VALUE klass, VALUE args)
 {
-    return rb_thread_create_core(rb_thread_alloc(klass, GET_GUILD()), args, 0);
+    return rb_thread_create_core(rb_thread_alloc(klass, GET_GUILD()), args, rb_block_proc(), NULL);
 }
 
 /* :nodoc: */
@@ -873,14 +873,14 @@ thread_initialize(VALUE thread, VALUE args)
 		 RARRAY_AREF(loc, 0), RARRAY_AREF(loc, 1));
     }
     else {
-	return rb_thread_create_core(thread, args, 0);
+	return rb_thread_create_core(thread, args, rb_block_proc(), NULL);
     }
 }
 
 VALUE
 rb_thread_create(VALUE (*fn)(ANYARGS), void *arg)
 {
-    return rb_thread_create_core(rb_thread_alloc(rb_cThread, GET_GUILD()), (VALUE)arg, fn);
+    return rb_thread_create_core(rb_thread_alloc(rb_cThread, GET_GUILD()), (VALUE)arg, Qnil, fn);
 }
 
 
@@ -3081,7 +3081,7 @@ rb_thread_to_s(VALUE thread)
     if (!NIL_P(target_th->name)) {
 	rb_str_catf(str, "@%"PRIsVALUE, target_th->name);
     }
-    if (!target_th->first_func && target_th->first_proc) {
+    if (!target_th->first_func && !NIL_P(target_th->first_proc)) {
 	VALUE loc = rb_proc_location(target_th->first_proc);
 	if (!NIL_P(loc)) {
 	    const VALUE *ptr = RARRAY_CONST_PTR(loc);

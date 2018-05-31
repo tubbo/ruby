@@ -1471,7 +1471,7 @@ static void
 native_set_thread_name(rb_thread_t *th)
 {
 #ifdef SET_CURRENT_THREAD_NAME
-    if (!th->first_func && th->first_proc) {
+    if (!th->first_func && !NIL_P(th->first_proc)) {
 	VALUE loc;
 	if (!NIL_P(loc = th->name)) {
 	    SET_CURRENT_THREAD_NAME(RSTRING_PTR(loc));

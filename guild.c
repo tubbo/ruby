@@ -11,7 +11,6 @@ void rb_vm_trace_mark_event_hooks(rb_hook_list_t *hooks);
 VALUE rb_cGuild;
 VALUE rb_cGuildChannel;
 
-VALUE rb_proc_isolate(VALUE self);
 VALUE rb_guild_channel_create(void);
 static VALUE guild_channel_copy(VALUE obj);
 
@@ -121,13 +120,13 @@ rb_guild_init(rb_guild_t *g, rb_vm_t *vm)
     if (GUILD_DEBUG) fprintf(stderr, "%d: rb_guild_init (%p)\n", g->id, (void *)pthread_self());
 }
 
-VALUE rb_thread_create_core(VALUE thval, VALUE args, VALUE (*fn)(ANYARGS));
+VALUE rb_thread_create_core(VALUE thval, VALUE args, VALUE procval, VALUE (*fn)(ANYARGS));
 
 static void
 guild_start(rb_guild_t *g, VALUE args)
 {
     VALUE thval = rb_thread_alloc(rb_cThread, g);
-    rb_thread_create_core(thval, args, NULL);
+    rb_thread_create_core(thval, args, rb_proc_isolate(rb_block_proc()), NULL);
     RB_GC_GUARD(thval);
 }
 

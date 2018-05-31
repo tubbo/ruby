@@ -2943,6 +2943,9 @@ vm_get_ep(const VALUE *const reg_ep, rb_num_t lv)
     const VALUE *ep = reg_ep;
     for (i = 0; i < lv; i++) {
 	ep = GET_PREV_EP(ep);
+        if (VM_ENV_FLAGS(ep, VM_ENV_FLAG_ISOLATED)) {
+            rb_raise(rb_eRuntimeError, "Proc is isolated.");
+        }
     }
     return ep;
 }

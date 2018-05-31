@@ -895,16 +895,39 @@ rb_proc_dup(VALUE self)
     return procval;
 }
 
+static void
+isolate_i(const VALUE *ep)
+{
+    while (1) {
+        VM_ENV_FLAGS_SET(ep, VM_ENV_FLAG_ISOLATED);
+        if (VM_ENV_LOCAL_P(ep)) break;
+        ep = VM_ENV_PREV_EP(ep);
+    }
+}
+
 VALUE
 rb_proc_isolate_bang(VALUE self)
 {
-#if 0
     rb_proc_t *proc;
-    GetProcPtr(self, proc);
+    const struct rb_block *block;
 
-    /* TODO */
-#endif
-    return self;
+    GetProcPtr(self, proc);
+    block = &proc->block;
+
+    switch (vm_block_type(block)) {
+      case block_type_iseq:
+      case block_type_ifunc:
+        {
+            const struct rb_captured_block *captured = &block->as.captured;
+            if (captured->ep && captured->ep[VM_ENV_DATA_INDEX_ENV] != Qundef /* cfunc_proc_t */) {
+                isolate_i(captured->ep);
+            }
+        }
+        return self;
+      default:
+        rb_bug("unsupported");
+        return self;
+    }
 }
 
 VALUE
@@ -2460,8 +2483,10 @@ thread_mark(void *ptr)
     if (GUILD_DEBUG) fprintf(stderr, "  * thread_mark: %p (g:%d)\n", th, th->g->id);
 
     /* mark ruby objects */
-    RUBY_MARK_UNLESS_NULL(th->first_proc);
-    if (th->first_proc) RUBY_MARK_UNLESS_NULL(th->first_args);
+    if (!NIL_P(th->first_proc)) {
+        rb_gc_mark(th->first_proc);
+        RUBY_MARK_UNLESS_NULL(th->first_args);
+    }
 
     RUBY_MARK_UNLESS_NULL(th->thgroup);
     RUBY_MARK_UNLESS_NULL(th->value);

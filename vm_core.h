@@ -1019,6 +1019,7 @@ typedef struct {
     const struct rb_block block;
     unsigned int is_from_method: 1;	/* bool */
     unsigned int is_lambda: 1;		/* bool */
+    unsigned int is_isolated: 1;        /* bool */
 } rb_proc_t;
 
 typedef struct {
@@ -1118,10 +1119,10 @@ typedef rb_control_frame_t *
 
 enum {
     /* Frame/Environment flag bits:
-     *   MMMM MMMM MMMM MMMM ____ __FF FFFF EEEX (LSB)
+     *   MMMM MMMM MMMM MMMM ____ FFFF FFEE EEEX (LSB)
      *
-     * X   : tag for GC marking (It seems as Fixnum)
-     * EEE : 3 bits Env flags
+     * X   : 1 bit tag for GC marking (It seems as Fixnum)
+     * EEE : 5 bits Env flags
      * FF..: 6 bits Frame flags
      * MM..: 15 bits frame magic (to check frame corruption)
      */
@@ -1140,17 +1141,19 @@ enum {
     VM_FRAME_MAGIC_MASK   = 0x7fff0001,
 
     /* frame flag */
-    VM_FRAME_FLAG_PASSED    = 0x0010,
-    VM_FRAME_FLAG_FINISH    = 0x0020,
-    VM_FRAME_FLAG_BMETHOD   = 0x0040,
-    VM_FRAME_FLAG_CFRAME    = 0x0080,
-    VM_FRAME_FLAG_LAMBDA    = 0x0100,
-    VM_FRAME_FLAG_MODIFIED_BLOCK_PARAM = 0x0200,
+    VM_FRAME_FLAG_PASSED    = 0x0040,
+    VM_FRAME_FLAG_FINISH    = 0x0080,
+    VM_FRAME_FLAG_BMETHOD   = 0x0100,
+    VM_FRAME_FLAG_CFRAME    = 0x0200,
+    VM_FRAME_FLAG_LAMBDA    = 0x0400,
+    VM_FRAME_FLAG_MODIFIED_BLOCK_PARAM = 0x0800,
 
     /* env flag */
     VM_ENV_FLAG_LOCAL       = 0x0002,
     VM_ENV_FLAG_ESCAPED     = 0x0004,
-    VM_ENV_FLAG_WB_REQUIRED = 0x0008
+    VM_ENV_FLAG_WB_REQUIRED = 0x0008,
+    VM_ENV_FLAG_ISOLATED    = 0x0010
+    /* 0x0020 */
 };
 
 #define VM_ENV_DATA_SIZE             ( 3)
@@ -1583,6 +1586,7 @@ VALUE rb_thread_alloc(VALUE klass, rb_guild_t *g);
 VALUE rb_binding_alloc(VALUE klass);
 VALUE rb_proc_alloc(VALUE klass);
 VALUE rb_proc_dup(VALUE self);
+VALUE rb_proc_isolate(VALUE self);
 
 /* for debug */
 extern void rb_vmdebug_stack_dump_raw(const rb_execution_context_t *ec, const rb_control_frame_t *cfp);
