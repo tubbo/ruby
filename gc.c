@@ -1935,6 +1935,7 @@ newobj_slowpath(VALUE klass, VALUE flags, VALUE v1, VALUE v2, VALUE v3, rb_objsp
 	}
 
 	if (ruby_gc_stressful) {
+            RB_VM_RESOURCE_UNLOCK(rb_ec_guild_ptr(ec));
 	    if (!garbage_collect(objspace, FALSE, FALSE, FALSE, GPR_FLAG_NEWOBJ)) {
 		rb_memerror();
 	    }
