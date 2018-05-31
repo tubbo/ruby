@@ -3081,7 +3081,7 @@ rb_thread_to_s(VALUE thread)
     if (!NIL_P(target_th->name)) {
 	rb_str_catf(str, "@%"PRIsVALUE, target_th->name);
     }
-    if (!target_th->first_func && !NIL_P(target_th->first_proc)) {
+    if (!target_th->first_func && RTEST(target_th->first_proc)) {
 	VALUE loc = rb_proc_location(target_th->first_proc);
 	if (!NIL_P(loc)) {
 	    const VALUE *ptr = RARRAY_CONST_PTR(loc);
