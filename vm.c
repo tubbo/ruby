@@ -2509,7 +2509,7 @@ thread_free(void *ptr)
     rb_thread_t *th = ptr;
     RUBY_FREE_ENTER("thread");
 
-    if (th->status == THREAD_RUNNABLE) {
+    if (GUILD_DEBUG && th->status == THREAD_RUNNABLE) {
         fprintf(stderr, "%d: !!!!!!!!!!!!!!!!!!!!!!!!!!! %d (%p): thread_free: %p (%p)\n", GET_GUILD()->id, th->g->id, th->g, th, (void *)th->thread_id);
         bp();
     }
@@ -3159,6 +3159,7 @@ Init_VM(void)
         g->running_thread = th;
 	th->top_wrapper = 0;
 	th->top_self = rb_vm_top_self();
+        th->report_on_exception = TRUE; /* deafult */
 	rb_thread_set_current(th);
 
         rb_guild_init(g, vm);
