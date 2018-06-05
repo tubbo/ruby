@@ -895,39 +895,23 @@ rb_proc_dup(VALUE self)
     return procval;
 }
 
-static void
-isolate_i(const VALUE *ep)
-{
-    while (1) {
-        VM_ENV_FLAGS_SET(ep, VM_ENV_FLAG_ISOLATED);
-        if (VM_ENV_LOCAL_P(ep)) break;
-        ep = VM_ENV_PREV_EP(ep);
-    }
-}
-
 VALUE
 rb_proc_isolate_bang(VALUE self)
 {
-    rb_proc_t *proc;
-    const struct rb_block *block;
+    rb_proc_t *proc = (rb_proc_t *)RTYPEDDATA_DATA(self);
+    const struct rb_block *block = vm_proc_block(self);
 
-    GetProcPtr(self, proc);
-    block = &proc->block;
+    proc->is_isolated = TRUE;
 
     switch (vm_block_type(block)) {
       case block_type_iseq:
-      case block_type_ifunc:
-        {
-            const struct rb_captured_block *captured = &block->as.captured;
-            if (captured->ep && captured->ep[VM_ENV_DATA_INDEX_ENV] != Qundef /* cfunc_proc_t */) {
-                isolate_i(captured->ep);
-            }
-        }
-        return self;
+        *(VALUE **)&block->as.captured.ep = (VALUE *)((intptr_t)block->as.captured.ep | 0x01);
+	break;
       default:
-        rb_bug("unsupported");
-        return self;
+        rb_bug("unsupported yet");
     }
+
+    return self;
 }
 
 VALUE
@@ -1042,13 +1026,29 @@ invoke_block(rb_execution_context_t *ec, const rb_iseq_t *iseq, VALUE self, cons
 {
     int arg_size = iseq->body->param.size;
 
-    vm_push_frame(ec, iseq, type | VM_FRAME_FLAG_FINISH, self,
-		  VM_GUARDED_PREV_EP(captured->ep),
-		  (VALUE)cref, /* cref or method */
-		  iseq->body->iseq_encoded + opt_pc,
-		  ec->cfp->sp + arg_size,
-		  iseq->body->local_table_size - arg_size,
-		  iseq->body->stack_max);
+    if (UNLIKELY((intptr_t)captured->ep & 0x01)) {
+        const VALUE *ep = (VALUE *)((intptr_t)captured->ep & ~0x01);
+        const VALUE cref_or_me = vm_ep_cref_or_me(ep);
+        VM_ASSERT(RTEST(cref_or_me));
+
+        vm_push_frame(ec, iseq, type | VM_ENV_FLAG_LOCAL | VM_ENV_FLAG_ISOLATED | VM_FRAME_FLAG_FINISH, self,
+                      VM_BLOCK_HANDLER_NONE,
+                      cref_or_me,
+                      iseq->body->iseq_encoded + opt_pc,
+                      ec->cfp->sp + arg_size,
+                      iseq->body->local_table_size - arg_size,
+                      iseq->body->stack_max);
+    }
+    else {
+        vm_push_frame(ec, iseq, type | VM_FRAME_FLAG_FINISH, self,
+                      VM_GUARDED_PREV_EP(captured->ep),
+                      (VALUE)cref, /* cref or method */
+                      iseq->body->iseq_encoded + opt_pc,
+                      ec->cfp->sp + arg_size,
+                      iseq->body->local_table_size - arg_size,
+                      iseq->body->stack_max);
+    }
+
     return vm_exec(ec, TRUE);
 }
 
@@ -1661,7 +1661,7 @@ vm_init_redefined_flag(void)
 
 /* for vm development */
 
-#if VMDEBUG
+#if VMDEBUG || 1
 static const char *
 vm_frametype_name(const rb_control_frame_t *cfp)
 {
@@ -1675,7 +1675,9 @@ vm_frametype_name(const rb_control_frame_t *cfp)
       case VM_FRAME_MAGIC_EVAL:   return "eval";
       case VM_FRAME_MAGIC_RESCUE: return "rescue";
       default:
-	rb_bug("unknown frame");
+        // rb_bug("unknown frame");
+        fprintf(stderr, "unknown frame: %p\n", (void *)VM_FRAME_TYPE(cfp));
+        return "<unknown>";
     }
 }
 #endif

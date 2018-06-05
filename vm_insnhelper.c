@@ -108,7 +108,8 @@ callable_method_entry_p(const rb_callable_method_entry_t *me)
 }
 
 static void
-vm_check_frame_detail(VALUE type, int req_block, int req_me, int req_cref, VALUE specval, VALUE cref_or_me, int is_cframe, const rb_iseq_t *iseq)
+vm_check_frame_detail(VALUE type, int req_block, int req_me, int req_cref, VALUE specval, VALUE cref_or_me,
+                      int is_cframe, int can_be_isolated, const rb_iseq_t *iseq)
 {
     unsigned int magic = (unsigned int)(type & VM_FRAME_MAGIC_MASK);
     enum imemo_type cref_or_me_type = imemo_env; /* impossible value */
@@ -123,8 +124,10 @@ vm_check_frame_detail(VALUE type, int req_block, int req_me, int req_cref, VALUE
     if (req_block && (type & VM_ENV_FLAG_LOCAL) == 0) {
 	rb_bug("vm_push_frame: specval (%p) should be a block_ptr on %x frame", (void *)specval, magic);
     }
-    if (!req_block && (type & VM_ENV_FLAG_LOCAL) != 0) {
-	rb_bug("vm_push_frame: specval (%p) should not be a block_ptr on %x frame", (void *)specval, magic);
+    if (!req_block) {
+        if (!can_be_isolated && (type & VM_ENV_FLAG_LOCAL) != 0) {
+            rb_bug("vm_push_frame: specval (%p) should not be a block_ptr on %x frame", (void *)specval, magic);
+        }
     }
 
     if (req_me) {
@@ -163,6 +166,8 @@ vm_check_frame_detail(VALUE type, int req_block, int req_me, int req_cref, VALUE
     else {
 	VM_ASSERT(is_cframe == !RUBY_VM_NORMAL_ISEQ_P(iseq));
     }
+
+    // TODO: check can_be_isolated
 }
 
 static void
@@ -174,22 +179,22 @@ vm_check_frame(VALUE type,
     VALUE given_magic = type & VM_FRAME_MAGIC_MASK;
     VM_ASSERT(FIXNUM_P(type));
 
-#define CHECK(magic, req_block, req_me, req_cref, is_cframe) \
+#define CHECK(magic, req_block, req_me, req_cref, is_cframe, can_be_isolated) \
     case magic: \
       vm_check_frame_detail(type, req_block, req_me, req_cref, \
-			    specval, cref_or_me, is_cframe, iseq); \
+			    specval, cref_or_me, is_cframe, can_be_isolated, iseq); \
       break
     switch (given_magic) {
-	/*                           BLK    ME     CREF   CFRAME */
-	CHECK(VM_FRAME_MAGIC_METHOD, TRUE,  TRUE,  FALSE, FALSE);
-	CHECK(VM_FRAME_MAGIC_CLASS,  TRUE,  FALSE, TRUE,  FALSE);
-	CHECK(VM_FRAME_MAGIC_TOP,    TRUE,  FALSE, TRUE,  FALSE);
-	CHECK(VM_FRAME_MAGIC_CFUNC,  TRUE,  TRUE,  FALSE, TRUE);
-	CHECK(VM_FRAME_MAGIC_BLOCK,  FALSE, FALSE, FALSE, FALSE);
-	CHECK(VM_FRAME_MAGIC_IFUNC,  FALSE, FALSE, FALSE, TRUE);
-	CHECK(VM_FRAME_MAGIC_EVAL,   FALSE, FALSE, FALSE, FALSE);
-	CHECK(VM_FRAME_MAGIC_RESCUE, FALSE, FALSE, FALSE, FALSE);
-	CHECK(VM_FRAME_MAGIC_DUMMY,  TRUE,  FALSE, FALSE, FALSE);
+	/*                           BLK    ME     CREF   CFRAME  ISOLATED */
+	CHECK(VM_FRAME_MAGIC_METHOD, TRUE,  TRUE,  FALSE, FALSE,  FALSE);
+	CHECK(VM_FRAME_MAGIC_CLASS,  TRUE,  FALSE, TRUE,  FALSE,  FALSE);
+	CHECK(VM_FRAME_MAGIC_TOP,    TRUE,  FALSE, TRUE,  FALSE,  FALSE);
+	CHECK(VM_FRAME_MAGIC_CFUNC,  TRUE,  TRUE,  FALSE, TRUE,   FALSE);
+	CHECK(VM_FRAME_MAGIC_BLOCK,  FALSE, FALSE, FALSE, FALSE,  TRUE);
+	CHECK(VM_FRAME_MAGIC_IFUNC,  FALSE, FALSE, FALSE, TRUE,   TRUE);
+	CHECK(VM_FRAME_MAGIC_EVAL,   FALSE, FALSE, FALSE, FALSE,  FALSE);
+	CHECK(VM_FRAME_MAGIC_RESCUE, FALSE, FALSE, FALSE, FALSE,  FALSE);
+	CHECK(VM_FRAME_MAGIC_DUMMY,  TRUE,  FALSE, FALSE, FALSE,  FALSE);
       default:
 	rb_bug("vm_push_frame: unknown type (%x)", (unsigned int)given_magic);
     }
@@ -198,6 +203,8 @@ vm_check_frame(VALUE type,
 #else
 #define vm_check_frame(a, b, c, d)
 #endif /* VM_CHECK_MODE > 0 */
+
+static const char *vm_frametype_name(const rb_control_frame_t *cfp);
 
 static inline rb_control_frame_t *
 vm_push_frame(rb_execution_context_t *ec,
@@ -253,6 +260,16 @@ vm_push_frame(rb_execution_context_t *ec,
 
     if (VMDEBUG == 2) {
 	SDR();
+    }
+
+    VM_ASSERT((type & VM_ENV_FLAG_ISOLATED) ? RTEST(cref_or_me) : TRUE);
+
+    if (0) {
+        const VALUE *ep = cfp->ep;
+        fprintf(stderr, "cfp (%p): %s\n", cfp, vm_frametype_name(cfp));
+        fprintf(stderr, "ep[VM_ENV_DATA_INDEX_ME_CREF]: %p, cref_or_me: %p\n", (void *)ep[VM_ENV_DATA_INDEX_ME_CREF], (void *)cref_or_me);
+        fprintf(stderr, "ep[VM_ENV_DATA_INDEX_SPECVAL]: %p\n", (void *)ep[VM_ENV_DATA_INDEX_SPECVAL]);
+        fprintf(stderr, "ep[VM_ENV_DATA_INDEX_FLAGS]: %p\n",   (void *)ep[VM_ENV_DATA_INDEX_FLAGS]);
     }
 
     return cfp;
@@ -508,6 +525,44 @@ vm_getspecial(const rb_execution_context_t *ec, const VALUE *lep, rb_num_t key, 
     return val;
 }
 
+static VALUE
+check_cref_or_me(VALUE obj, int can_be_svar)
+{
+    if (obj == Qfalse) return Qfalse;
+
+#if VM_CHECK_MODE > 0
+    if (!RB_TYPE_P(obj, T_IMEMO)) rb_bug("check_method_entry: unknown type: %s", rb_obj_info(obj));
+#endif
+
+    switch (imemo_type(obj)) {
+      case imemo_ment:
+      case imemo_cref:
+	return obj;
+      case imemo_svar:
+	if (can_be_svar) {
+            return check_cref_or_me(((struct vm_svar *)obj)->cref_or_me, FALSE);
+	}
+      default:
+#if VM_CHECK_MODE > 0
+	rb_bug("check_method_entry: svar should not be there:");
+#endif
+	return Qfalse;
+    }
+}
+
+static VALUE
+vm_ep_cref_or_me(const VALUE *ep)
+{
+    VALUE cref_or_me = Qfalse;
+
+    while (!VM_ENV_LOCAL_P(ep)) {
+	if ((cref_or_me = check_cref_or_me(ep[VM_ENV_DATA_INDEX_ME_CREF], FALSE)) != Qfalse) return cref_or_me;
+	ep = VM_ENV_PREV_EP(ep);
+    }
+
+    return check_cref_or_me(ep[VM_ENV_DATA_INDEX_ME_CREF], TRUE);
+}
+
 PUREFUNC(static rb_callable_method_entry_t *check_method_entry(VALUE obj, int can_be_svar));
 static rb_callable_method_entry_t *
 check_method_entry(VALUE obj, int can_be_svar)
@@ -536,9 +591,8 @@ check_method_entry(VALUE obj, int can_be_svar)
 }
 
 const rb_callable_method_entry_t *
-rb_vm_frame_method_entry(const rb_control_frame_t *cfp)
+vm_ep_method_entry(const VALUE *ep)
 {
-    const VALUE *ep = cfp->ep;
     rb_callable_method_entry_t *me;
 
     while (!VM_ENV_LOCAL_P(ep)) {
@@ -547,6 +601,12 @@ rb_vm_frame_method_entry(const rb_control_frame_t *cfp)
     }
 
     return check_method_entry(ep[VM_ENV_DATA_INDEX_ME_CREF], TRUE);
+}
+
+const rb_callable_method_entry_t *
+rb_vm_frame_method_entry(const rb_control_frame_t *cfp)
+{
+    return vm_ep_method_entry(cfp->ep);
 }
 
 static rb_cref_t *
@@ -2665,22 +2725,41 @@ vm_yield_setup_args(rb_execution_context_t *ec, const rb_iseq_t *iseq, const int
 static VALUE
 vm_invoke_iseq_block(rb_execution_context_t *ec, rb_control_frame_t *reg_cfp,
 		     struct rb_calling_info *calling, const struct rb_call_info *ci,
-		     int is_lambda, const struct rb_captured_block *captured)
+                     int is_lambda, const struct rb_captured_block *captured)
 {
     const rb_iseq_t *iseq = rb_iseq_check(captured->code.iseq);
     const int arg_size = iseq->body->param.size;
     VALUE * const rsp = GET_SP() - calling->argc;
     int opt_pc = vm_callee_setup_block_arg(ec, calling, ci, iseq, rsp, is_lambda ? arg_setup_method : arg_setup_block);
+    int is_isolated_proc = (intptr_t)captured->ep & 0x01;
 
     SET_SP(rsp);
 
-    vm_push_frame(ec, iseq,
-		  VM_FRAME_MAGIC_BLOCK | (is_lambda ? VM_FRAME_FLAG_LAMBDA : 0),
-		  captured->self,
-		  VM_GUARDED_PREV_EP(captured->ep), 0,
-		  iseq->body->iseq_encoded + opt_pc,
-		  rsp + arg_size,
-		  iseq->body->local_table_size - arg_size, iseq->body->stack_max);
+    if (UNLIKELY(is_isolated_proc)) {
+        const VALUE *ep = (VALUE *)((intptr_t)captured->ep & ~0x01);
+        const VALUE cref_or_me = vm_ep_cref_or_me(ep);
+        VM_ASSERT(RTEST(cref_or_me));
+
+        vm_push_frame(ec, iseq,
+                      VM_FRAME_MAGIC_BLOCK | VM_ENV_FLAG_LOCAL | VM_ENV_FLAG_ISOLATED | (is_lambda ? VM_FRAME_FLAG_LAMBDA : 0),
+                      captured->self,
+                      0, /* specval: block handler is not given */
+                      cref_or_me,
+                      iseq->body->iseq_encoded + opt_pc,
+                      rsp + arg_size,
+                      iseq->body->local_table_size - arg_size,
+                      iseq->body->stack_max);
+    }
+    else {
+        vm_push_frame(ec, iseq,
+                      VM_FRAME_MAGIC_BLOCK | (is_lambda ? VM_FRAME_FLAG_LAMBDA : 0),
+                      captured->self,
+                      VM_GUARDED_PREV_EP(captured->ep), 0,
+                      iseq->body->iseq_encoded + opt_pc,
+                      rsp + arg_size,
+                      iseq->body->local_table_size - arg_size,
+                      iseq->body->stack_max);
+    }
 
     return Qundef;
 }
@@ -2942,10 +3021,9 @@ vm_get_ep(const VALUE *const reg_ep, rb_num_t lv)
     rb_num_t i;
     const VALUE *ep = reg_ep;
     for (i = 0; i < lv; i++) {
+        // TODO: remove inefficient check
+        if (VM_ENV_LOCAL_P(ep)) rb_raise(rb_eRuntimeError, "can't acccess outer variable");
 	ep = GET_PREV_EP(ep);
-        if (VM_ENV_FLAGS(ep, VM_ENV_FLAG_ISOLATED)) {
-            rb_raise(rb_eRuntimeError, "Proc is isolated.");
-        }
     }
     return ep;
 }
