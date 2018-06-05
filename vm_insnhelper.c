@@ -141,7 +141,9 @@ vm_check_frame_detail(VALUE type, int req_block, int req_me, int req_cref, VALUE
 	}
 	else { /* cref or Qfalse */
 	    if (cref_or_me != Qfalse && cref_or_me_type != imemo_cref) {
-		if (((type & VM_FRAME_FLAG_LAMBDA) || magic == VM_FRAME_MAGIC_IFUNC) && (cref_or_me_type == imemo_ment)) {
+		if (((type & VM_FRAME_FLAG_LAMBDA) ||
+                     (type & VM_ENV_FLAG_ISOLATED) ||
+                     magic == VM_FRAME_MAGIC_IFUNC) && (cref_or_me_type == imemo_ment)) {
 		    /* ignore */
 		}
 		else {
@@ -2731,13 +2733,11 @@ vm_invoke_iseq_block(rb_execution_context_t *ec, rb_control_frame_t *reg_cfp,
     const int arg_size = iseq->body->param.size;
     VALUE * const rsp = GET_SP() - calling->argc;
     int opt_pc = vm_callee_setup_block_arg(ec, calling, ci, iseq, rsp, is_lambda ? arg_setup_method : arg_setup_block);
-    int is_isolated_proc = (intptr_t)captured->ep & 0x01;
 
     SET_SP(rsp);
 
-    if (UNLIKELY(is_isolated_proc)) {
-        const VALUE *ep = (VALUE *)((intptr_t)captured->ep & ~0x01);
-        const VALUE cref_or_me = vm_ep_cref_or_me(ep);
+    if (UNLIKELY(vm_captured_block_isolated_p(captured))) {
+        const VALUE cref_or_me = vm_ep_cref_or_me(captured->ep);
         VM_ASSERT(RTEST(cref_or_me));
 
         vm_push_frame(ec, iseq,

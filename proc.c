@@ -110,7 +110,9 @@ VALUE
 rb_proc_alloc(VALUE klass)
 {
     rb_proc_t *proc;
-    return TypedData_Make_Struct(klass, rb_proc_t, &proc_data_type, proc);
+    VALUE procval = TypedData_Make_Struct(klass, rb_proc_t, &proc_data_type, proc);
+    *(VALUE *)&proc->proc_block_sig = Qundef;
+    return procval;
 }
 
 VALUE

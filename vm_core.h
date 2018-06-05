@@ -19,7 +19,7 @@
  *   1: enable local assertions.
  */
 #ifndef VM_CHECK_MODE
-#define VM_CHECK_MODE (GUILD_DEBUG || 1)
+#define VM_CHECK_MODE (GUILD_DEBUG || 0)
 #endif
 
 /**
@@ -1017,6 +1017,7 @@ RUBY_SYMBOL_EXPORT_END
 
 typedef struct {
     const struct rb_block block;
+    const VALUE proc_block_sig;
     unsigned int is_from_method: 1;	/* bool */
     unsigned int is_lambda: 1;		/* bool */
     unsigned int is_isolated: 1;        /* bool */

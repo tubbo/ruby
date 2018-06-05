@@ -291,6 +291,16 @@ vm_bind_update_env(VALUE bindval, rb_binding_t *bind, VALUE envval)
     rb_vm_block_ep_update(bindval, &bind->block, env->ep);
 }
 
+static int
+vm_captured_block_isolated_p(const struct rb_captured_block *captured)
+{
+    rb_proc_t *proc = (rb_proc_t *)captured;
+    if (proc->proc_block_sig == Qundef) {
+        return proc->is_isolated;
+    }
+    return 0;
+}
+
 #if VM_COLLECT_USAGE_DETAILS
 static void vm_collect_usage_operand(int insn, int n, VALUE op);
 static void vm_collect_usage_insn(int insn);
@@ -899,18 +909,7 @@ VALUE
 rb_proc_isolate_bang(VALUE self)
 {
     rb_proc_t *proc = (rb_proc_t *)RTYPEDDATA_DATA(self);
-    const struct rb_block *block = vm_proc_block(self);
-
     proc->is_isolated = TRUE;
-
-    switch (vm_block_type(block)) {
-      case block_type_iseq:
-        *(VALUE **)&block->as.captured.ep = (VALUE *)((intptr_t)block->as.captured.ep | 0x01);
-	break;
-      default:
-        rb_bug("unsupported yet");
-    }
-
     return self;
 }
 
@@ -1026,9 +1025,8 @@ invoke_block(rb_execution_context_t *ec, const rb_iseq_t *iseq, VALUE self, cons
 {
     int arg_size = iseq->body->param.size;
 
-    if (UNLIKELY((intptr_t)captured->ep & 0x01)) {
-        const VALUE *ep = (VALUE *)((intptr_t)captured->ep & ~0x01);
-        const VALUE cref_or_me = vm_ep_cref_or_me(ep);
+    if (UNLIKELY(vm_captured_block_isolated_p(captured))) {
+        const VALUE cref_or_me = vm_ep_cref_or_me(captured->ep);
         VM_ASSERT(RTEST(cref_or_me));
 
         vm_push_frame(ec, iseq, type | VM_ENV_FLAG_LOCAL | VM_ENV_FLAG_ISOLATED | VM_FRAME_FLAG_FINISH, self,

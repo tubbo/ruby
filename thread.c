@@ -618,7 +618,7 @@ rb_vm_proc_local_ep(VALUE proc)
 {
     const VALUE *ep = vm_proc_ep(proc);
 
-    if (ep && ((intptr_t)ep & 0x01) == 0) {
+    if (ep) {
 	return rb_vm_ep_local_ep(ep);
     }
     else {
