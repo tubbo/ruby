@@ -4,6 +4,12 @@ require 'test/unit'
 require "delegate"
 require "rbconfig/sizeof"
 
+class Array
+  def compact
+    self
+  end
+end
+
 class TestArray < Test::Unit::TestCase
   def setup
     @verbose = $VERBOSE
