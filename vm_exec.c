@@ -47,7 +47,6 @@ vm_stack_overflow_for_insn(void)
 static VALUE
 vm_exec_core(rb_execution_context_t *ec, VALUE initial)
 {
-
 #if OPT_STACK_CACHING
 #if 0
 #elif __GNUC__ && __x86_64__
@@ -109,6 +108,8 @@ vm_exec_core(rb_execution_context_t *ec, VALUE initial)
     reg_a = initial;
     reg_b = 0;
 #endif
+
+    ec = NULL;
 
   first:
     INSN_DISPATCH();
