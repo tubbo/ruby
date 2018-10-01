@@ -1904,6 +1904,128 @@ vm_method_cfunc_entry(const rb_callable_method_entry_t *me)
 }
 
 static VALUE
+vm_call_cfunc_m1(rb_execution_context_t *ec, rb_control_frame_t *reg_cfp, struct rb_calling_info *calling, const struct rb_call_info *ci, struct rb_call_cache *cc)
+{
+    VALUE val;
+    const rb_callable_method_entry_t *me = cc->me;
+    const rb_method_cfunc_t *cfunc = vm_method_cfunc_entry(me);
+    const int argc = calling->argc;
+    const VALUE recv = calling->recv;
+    const VALUE block_handler = VM_BLOCK_HANDLER_NONE;
+
+    RUBY_DTRACE_CMETHOD_ENTRY_HOOK(ec, me->owner, me->def->original_id);
+    EXEC_EVENT_HOOK(ec, RUBY_EVENT_C_CALL, recv, me->def->original_id, ci->mid, me->owner, Qundef);
+
+    vm_push_frame(ec, NULL, VM_FRAME_MAGIC_CFUNC | VM_FRAME_FLAG_CFRAME | VM_ENV_FLAG_LOCAL, recv,
+		  block_handler, (VALUE)me,
+		  0, ec->cfp->sp, 0, 0);
+
+    reg_cfp->sp -= argc + 1;
+
+    val = call_cfunc_m1(cfunc->func, recv, argc, reg_cfp->sp + 1);
+
+    CHECK_CFP_CONSISTENCY("vm_call_cfunc_s0");
+
+    rb_vm_pop_frame(ec);
+
+    EXEC_EVENT_HOOK(ec, RUBY_EVENT_C_RETURN, recv, me->def->original_id, ci->mid, me->owner, val);
+    RUBY_DTRACE_CMETHOD_RETURN_HOOK(ec, me->owner, me->def->original_id);
+
+    return val;
+}
+
+static VALUE
+vm_call_cfunc_s0(rb_execution_context_t *ec, rb_control_frame_t *reg_cfp, struct rb_calling_info *calling, const struct rb_call_info *ci, struct rb_call_cache *cc)
+{
+    VALUE val;
+    const rb_callable_method_entry_t *me = cc->me;
+    const rb_method_cfunc_t *cfunc = vm_method_cfunc_entry(me);
+    const int argc = 0;
+    const VALUE recv = calling->recv;
+    const VALUE block_handler = VM_BLOCK_HANDLER_NONE;
+
+    RUBY_DTRACE_CMETHOD_ENTRY_HOOK(ec, me->owner, me->def->original_id);
+    EXEC_EVENT_HOOK(ec, RUBY_EVENT_C_CALL, recv, me->def->original_id, ci->mid, me->owner, Qundef);
+
+    vm_push_frame(ec, NULL, VM_FRAME_MAGIC_CFUNC | VM_FRAME_FLAG_CFRAME | VM_ENV_FLAG_LOCAL, recv,
+		  block_handler, (VALUE)me,
+		  0, ec->cfp->sp, 0, 0);
+
+    reg_cfp->sp -= argc + 1;
+
+    val = call_cfunc_0(cfunc->func, recv, argc, reg_cfp->sp + 1);
+
+    CHECK_CFP_CONSISTENCY("vm_call_cfunc_s0");
+
+    rb_vm_pop_frame(ec);
+
+    EXEC_EVENT_HOOK(ec, RUBY_EVENT_C_RETURN, recv, me->def->original_id, ci->mid, me->owner, val);
+    RUBY_DTRACE_CMETHOD_RETURN_HOOK(ec, me->owner, me->def->original_id);
+
+    return val;
+}
+
+static VALUE
+vm_call_cfunc_s1(rb_execution_context_t *ec, rb_control_frame_t *reg_cfp, struct rb_calling_info *calling, const struct rb_call_info *ci, struct rb_call_cache *cc)
+{
+    VALUE val;
+    const rb_callable_method_entry_t *me = cc->me;
+    const rb_method_cfunc_t *cfunc = vm_method_cfunc_entry(me);
+    const int argc = 1;
+    const VALUE recv = calling->recv;
+    const VALUE block_handler = VM_BLOCK_HANDLER_NONE;
+
+    RUBY_DTRACE_CMETHOD_ENTRY_HOOK(ec, me->owner, me->def->original_id);
+    EXEC_EVENT_HOOK(ec, RUBY_EVENT_C_CALL, recv, me->def->original_id, ci->mid, me->owner, Qundef);
+
+    vm_push_frame(ec, NULL, VM_FRAME_MAGIC_CFUNC | VM_FRAME_FLAG_CFRAME | VM_ENV_FLAG_LOCAL, recv,
+		  block_handler, (VALUE)me,
+		  0, ec->cfp->sp, 0, 0);
+
+    reg_cfp->sp -= argc + 1;
+    val = call_cfunc_1(cfunc->func, recv, argc, reg_cfp->sp + 1);
+
+    CHECK_CFP_CONSISTENCY("vm_call_cfunc_s1");
+
+    rb_vm_pop_frame(ec);
+
+    EXEC_EVENT_HOOK(ec, RUBY_EVENT_C_RETURN, recv, me->def->original_id, ci->mid, me->owner, val);
+    RUBY_DTRACE_CMETHOD_RETURN_HOOK(ec, me->owner, me->def->original_id);
+
+    return val;
+}
+
+static VALUE
+vm_call_cfunc_s2(rb_execution_context_t *ec, rb_control_frame_t *reg_cfp, struct rb_calling_info *calling, const struct rb_call_info *ci, struct rb_call_cache *cc)
+{
+    VALUE val;
+    const rb_callable_method_entry_t *me = cc->me;
+    const rb_method_cfunc_t *cfunc = vm_method_cfunc_entry(me);
+    const int argc = 2;
+    const VALUE recv = calling->recv;
+    const VALUE block_handler = VM_BLOCK_HANDLER_NONE;
+
+    RUBY_DTRACE_CMETHOD_ENTRY_HOOK(ec, me->owner, me->def->original_id);
+    EXEC_EVENT_HOOK(ec, RUBY_EVENT_C_CALL, recv, me->def->original_id, ci->mid, me->owner, Qundef);
+
+    vm_push_frame(ec, NULL, VM_FRAME_MAGIC_CFUNC | VM_FRAME_FLAG_CFRAME | VM_ENV_FLAG_LOCAL, recv,
+		  block_handler, (VALUE)me,
+		  0, ec->cfp->sp, 0, 0);
+
+    reg_cfp->sp -= argc + 1;
+    val = call_cfunc_2(cfunc->func, recv, argc, reg_cfp->sp + 1);
+
+    CHECK_CFP_CONSISTENCY("vm_call_cfunc_s2");
+
+    rb_vm_pop_frame(ec);
+
+    EXEC_EVENT_HOOK(ec, RUBY_EVENT_C_RETURN, recv, me->def->original_id, ci->mid, me->owner, val);
+    RUBY_DTRACE_CMETHOD_RETURN_HOOK(ec, me->owner, me->def->original_id);
+
+    return val;
+}
+
+static VALUE
 vm_call_cfunc_with_frame(rb_execution_context_t *ec, rb_control_frame_t *reg_cfp, struct rb_calling_info *calling, const struct rb_call_info *ci, struct rb_call_cache *cc)
 {
     VALUE val;
@@ -1923,6 +2045,17 @@ vm_call_cfunc_with_frame(rb_execution_context_t *ec, rb_control_frame_t *reg_cfp
 		  0, ec->cfp->sp, 0, 0);
 
     if (len >= 0) rb_check_arity(argc, len, len);
+bp();
+    if (block_handler == VM_BLOCK_HANDLER_NONE &&
+        !IS_ARGS_SETUP_REQUIRED(ci) && argc <= 2 && len >= -1) {
+        switch (len) {
+          case -1: CC_SET_FASTPATH(cc, vm_call_cfunc_m1, TRUE); break;
+          case 0:  CC_SET_FASTPATH(cc, vm_call_cfunc_s0, TRUE); break;
+          case 1:  CC_SET_FASTPATH(cc, vm_call_cfunc_s1, TRUE); break;
+          case 2:  CC_SET_FASTPATH(cc, vm_call_cfunc_s2, TRUE); break;
+          default: break;
+        }
+    }
 
     reg_cfp->sp -= argc + 1;
     val = (*cfunc->invoker)(cfunc->func, recv, argc, reg_cfp->sp + 1);

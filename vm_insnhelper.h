@@ -307,10 +307,13 @@ THROW_DATA_CONSUMED_SET(struct vm_throw_data *obj)
 
 #define IS_ARGS_SPLAT(ci)   ((ci)->flag & VM_CALL_ARGS_SPLAT)
 #define IS_ARGS_KEYWORD(ci) ((ci)->flag & VM_CALL_KWARG)
+#define IS_ARGS_SETUP_REQUIRED(ci) (IS_ARGS_SPLAT(ci) || IS_ARGS_KEYWORD(ci))
 
 #define CALLER_SETUP_ARG(cfp, calling, ci) do { \
-    if (UNLIKELY(IS_ARGS_SPLAT(ci))) vm_caller_setup_arg_splat((cfp), (calling)); \
-    if (UNLIKELY(IS_ARGS_KEYWORD(ci))) vm_caller_setup_arg_kw((cfp), (calling), (ci)); \
+    if (UNLIKELY(IS_ARGS_SETUP_REQUIRED(ci))) { \
+        if (IS_ARGS_SPLAT(ci)) vm_caller_setup_arg_splat((cfp), (calling)); \
+        if (IS_ARGS_KEYWORD(ci)) vm_caller_setup_arg_kw((cfp), (calling), (ci)); \
+    } \
 } while (0)
 
 #endif /* RUBY_INSNHELPER_H */
