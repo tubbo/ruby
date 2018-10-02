@@ -106,7 +106,7 @@ struct transient_alloc_header {
 static struct transient_heap global_transient_heap;
 
 static void  transient_heap_promote_add(struct transient_heap* theap, VALUE obj);
-static void *transient_heap_ptr(VALUE obj, int error);
+static const void *transient_heap_ptr(VALUE obj, int error);
 static int   transient_header_managed_ptr_p(struct transient_heap* theap, const void *ptr);
 
 #define ROUND_UP(v, a)  (((size_t)(v) + (a) - 1) & ~((a) - 1))
@@ -158,7 +158,7 @@ static void
 transient_heap_ptr_check(struct transient_heap *theap, VALUE obj)
 {
     if (obj != Qundef) {
-        void *ptr = transient_heap_ptr(obj, FALSE);
+        const void *ptr = transient_heap_ptr(obj, FALSE);
         TH_ASSERT(ptr == NULL || transient_header_managed_ptr_p(theap, ptr));
     }
 }
@@ -354,7 +354,8 @@ rb_transient_heap_alloc(VALUE obj, size_t req_size)
     size_t size = ROUND_UP(req_size + sizeof(struct transient_alloc_header), TRANSIENT_HEAP_ALLOC_ALIGN);
 
     TH_ASSERT(RB_TYPE_P(obj, T_ARRAY) ||
-              RB_TYPE_P(obj, T_OBJECT)); /* supported types */
+              RB_TYPE_P(obj, T_OBJECT) ||
+              RB_TYPE_P(obj, T_STRUCT)); /* supported types */
 
     if (size > TRANSIENT_HEAP_ALLOC_MAX) {
         if (TRANSIENT_HEAP_DEBUG >= 3) fprintf(stderr, "rb_transient_heap_alloc: [too big: %ld] %s\n", (long)size, rb_obj_info(obj));
@@ -543,10 +544,10 @@ rb_transient_heap_mark(VALUE obj, const void *ptr)
     }
 }
 
-static void *
+static const void *
 transient_heap_ptr(VALUE obj, int error)
 {
-    void *ptr;
+    const void *ptr = NULL;
 
     switch (BUILTIN_TYPE(obj)) {
       case T_ARRAY:
@@ -554,24 +555,20 @@ transient_heap_ptr(VALUE obj, int error)
             TH_ASSERT(!FL_TEST_RAW(obj, RARRAY_EMBED_FLAG));
             ptr = RARRAY(obj)->as.heap.ptr;
         }
-        else {
-            ptr = NULL;
-        }
         break;
       case T_OBJECT:
         if (ROBJ_TRANSIENT_P(obj)) {
             ptr = ROBJECT_IVPTR(obj);
         }
-        else {
-            ptr = NULL;
+        break;
+      case T_STRUCT:
+        if (RSTRUCT_TRANSIENT_P(obj)) {
+            ptr = rb_struct_const_heap_ptr(obj);
         }
         break;
       default:
         if (error) {
             rb_bug("transient_heap_ptr: unknown obj %s\n", rb_obj_info(obj));
-        }
-        else {
-            ptr = NULL;
         }
     }
 
@@ -618,9 +615,6 @@ alloc_header(struct transient_heap_block* block, int index)
     return (void *)&block->buff[index];
 }
 
-void rb_ary_transient_heap_evacuate(VALUE ary, int promote);
-void rb_obj_transient_heap_evacuate(VALUE ary, int promote);
-
 static void
 transient_heap_reset(void)
 {
@@ -654,6 +648,10 @@ transient_heap_reset(void)
     theap->total_marked_objects = 0;
 }
 
+void rb_ary_transient_heap_evacuate(VALUE ary, int promote);
+void rb_obj_transient_heap_evacuate(VALUE ary, int promote);
+void rb_struct_transient_heap_evacuate(VALUE ary, int promote);
+
 static void
 transient_heap_block_evacuate(struct transient_heap* theap, struct transient_heap_block* block)
 {
@@ -675,6 +673,9 @@ transient_heap_block_evacuate(struct transient_heap* theap, struct transient_hea
                 break;
               case T_OBJECT:
                 rb_obj_transient_heap_evacuate(obj, !TRANSIENT_HEAP_DEBUG_DONT_PROMOTE);
+                break;
+              case T_STRUCT:
+                rb_struct_transient_heap_evacuate(obj, !TRANSIENT_HEAP_DEBUG_DONT_PROMOTE);
                 break;
               default:
                 rb_bug("unsupporeted");
@@ -808,7 +809,7 @@ rb_transient_heap_start_marking(int full_marking)
         int i;
         for (i=0; i<theap->promoted_objects_index; i++) {
             VALUE obj = theap->promoted_objects[i];
-            void *ptr = transient_heap_ptr(obj, TRUE);
+            const void *ptr = transient_heap_ptr(obj, TRUE);
             if (ptr) {
                 rb_transient_heap_mark(obj, ptr);
             }
