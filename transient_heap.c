@@ -676,20 +676,31 @@ transient_heap_block_evacuate(struct transient_heap* theap, struct transient_hea
         if (TRANSIENT_HEAP_DEBUG >= 3) fprintf(stderr, " * transient_heap_block_evacuate %p %s\n", header, rb_obj_info(obj));
 
         if (obj != Qnil) {
+            int promote;
             RB_DEBUG_COUNTER_INC(theap_evacuate);
+
+            if (TRANSIENT_HEAP_DEBUG_DONT_PROMOTE) {
+                promote = FALSE;
+            }
+            else if (RB_OBJ_PROMOTED_RAW(obj)) {
+                promote = TRUE;
+            }
+            else {
+                promote = FALSE;
+            }
 
             switch (BUILTIN_TYPE(obj)) {
               case T_ARRAY:
-                rb_ary_transient_heap_evacuate(obj, !TRANSIENT_HEAP_DEBUG_DONT_PROMOTE);
+                rb_ary_transient_heap_evacuate(obj, promote);
                 break;
               case T_OBJECT:
-                rb_obj_transient_heap_evacuate(obj, !TRANSIENT_HEAP_DEBUG_DONT_PROMOTE);
+                rb_obj_transient_heap_evacuate(obj, promote);
                 break;
               case T_STRUCT:
-                rb_struct_transient_heap_evacuate(obj, !TRANSIENT_HEAP_DEBUG_DONT_PROMOTE);
+                rb_struct_transient_heap_evacuate(obj, promote);
                 break;
               case T_HASH:
-                rb_hash_transient_heap_evacuate(obj, !TRANSIENT_HEAP_DEBUG_DONT_PROMOTE);
+                rb_hash_transient_heap_evacuate(obj, promote);
                 break;
               default:
                 rb_bug("unsupporeted: %s\n", rb_obj_info(obj));
