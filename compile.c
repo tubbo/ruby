@@ -742,6 +742,167 @@ rb_iseq_compile_node(rb_iseq_t *iseq, const NODE *node)
     return iseq_setup(iseq, ret);
 }
 
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+
+/*
+ * mmap() returns far address.
+ * malloc() returns near address, on main thread.
+ */
+static void *
+alloc_executable_memory(size_t size)
+{
+#if 0
+    void *ptr = mmap(NULL, size,
+                     PROT_EXEC | PROT_READ | PROT_WRITE,
+                     MAP_PRIVATE | MAP_ANONYMOUS, 0, 0);
+    if (ptr == MAP_FAILED) rb_bug("alloc_executable_memory");
+#else
+    size = 4096;
+    void *ptr = malloc(size * 2);
+    if (ptr == NULL) rb_bug("alloc_executable_memory: malloc");
+    void *aligned_ptr = (void *)(((VALUE)ptr + 4096)/4096 * 4096);
+
+    if (0) fprintf(stderr, "alloc:%p aligned:%p end:%p\n", ptr, aligned_ptr, (char *)ptr + 4096 * 2);
+
+    if (mprotect(aligned_ptr, size, PROT_READ | PROT_WRITE | PROT_EXEC) != 0) {
+        rb_bug("alloc_executable_memory: mprotect");
+    }
+    ptr = aligned_ptr;
+#endif
+    return ptr;
+}
+
+static ptrdiff_t
+addr_diff(char *x, char *y)
+{
+    ptrdiff_t abs_diff = x > y ? x - y : y - x;
+
+    if ((abs_diff >> 32) != 0) {
+        return 0;
+    }
+
+    ptrdiff_t diff = x-y;
+    // fprintf(stderr, "func:%p encoded:%p diff: %lx\n", (void *)x, (void *)y, diff);
+
+    return diff;
+}
+
+rb_control_frame_t *
+rb_insn_tail(rb_execution_context_t *ec, rb_control_frame_t *cfp)
+{
+    /* SHOULD BE EMPTY!! */
+    return NULL;
+}
+
+rb_control_frame_t *
+rb_insn_tail_true(rb_execution_context_t *ec, rb_control_frame_t *cfp)
+{
+    /* SHOULD BE EMPTY!! */
+    return (void *)TRUE;
+}
+
+static int
+emit_call(unsigned char *encoded, const void *func_ptr)
+{
+    ptrdiff_t diff = addr_diff((char *)func_ptr, (char *)(encoded + 5));
+    int i = 0;
+
+    if (diff == 0) {
+        rb_bug("unsupported yet");
+        
+        encoded[i++] = 0x48;
+        encoded[i++] = 0xa3;
+        for (int k=0; k<8; k++) {
+            encoded[i++] = ((VALUE)func_ptr >> k) & 0xff;
+        }
+        encoded[i++] = 0xff;
+        encoded[i++] = 0xd0;
+    }
+    else {
+        encoded[i++] = 0xe8;
+        for (int k=0; k<4; k++) {
+            encoded[i++] = (unsigned char)((diff >> (k * 8)) & 0xff);
+        }
+    }
+
+    return i;
+}
+
+static int
+emit_ret(unsigned char *encoded)
+{
+    int i = 0;
+    // 48 83 c4 08             add    $0x8,%rsp
+    encoded[i++] = 0x48;
+    encoded[i++] = 0x83;
+    encoded[i++] = 0xc4;
+    encoded[i++] = 0x08;
+
+    // ret
+    encoded[i++] = 0xc3;
+
+    return i;
+}
+
+struct jump_patch_table {
+    unsigned int size;
+    unsigned int max_size;
+    struct {
+        unsigned char *patch_location;
+        VALUE destination;
+    } entry[128]; /* TODO */
+};
+
+static int
+emit_jx(unsigned char *encoded, VALUE dst, struct jump_patch_table *jpt, char *insns, int insn_len)
+{
+    int i = 0;
+
+    for (int j=0; j<insn_len; j++) {
+        encoded[i++] = insns[j];
+    }
+
+    // register jpt to resolve this destination
+    jpt->entry[jpt->size].patch_location = &encoded[i];
+    jpt->entry[jpt->size].destination = dst;
+    jpt->size++;
+
+    // 4B 0 fill
+    encoded[i++] = 0x00;
+    encoded[i++] = 0x00;
+    encoded[i++] = 0x00;
+    encoded[i++] = 0x00;
+
+    return i;
+}
+
+static int
+emit_jmp(unsigned char *encoded, VALUE dst, struct jump_patch_table *jpt)
+{
+    char insns[] = {0xe9};
+    return emit_jx(encoded, dst, jpt, insns, 1);
+}
+
+static int
+emit_jnz(unsigned char *encoded, VALUE dst, struct jump_patch_table *jpt)
+{
+    char insns[] = {0x0f, 0x85};
+    return emit_jx(encoded, dst, jpt, insns, 2);
+}
+
+static int
+emit_test(unsigned char *encoded)
+{
+    encoded[0] = 0x85;
+    encoded[1] = 0xc0;
+    return 2;
+}
+
 int
 rb_iseq_translate_threaded_code(rb_iseq_t *iseq)
 {
@@ -756,7 +917,77 @@ rb_iseq_translate_threaded_code(rb_iseq_t *iseq)
 	encoded[i] = (VALUE)table[insn];
 	i += len;
     }
-    FL_SET(iseq, ISEQ_TRANSLATED);
+#elif OPT_SUBROUTINE_THREADED_CODE
+    const void * const *table = rb_vm_get_insns_address_table();
+    unsigned int i, j = 0;
+    unsigned int iseq_size = iseq->body->iseq_size;
+    VALUE *orig_iseq = (VALUE *)iseq->body->iseq_encoded;
+    unsigned char *encoded = alloc_executable_memory(4096);
+    unsigned char **start_points = ALLOCA_N(unsigned char *, iseq_size);
+    struct jump_patch_table jpt = {0};
+
+    // fprintf(stderr, "iseq->body->iseq_size:%d\n", (int)iseq->body->iseq_size);
+    //VALUE str = rb_iseq_disasm(iseq);
+    //printf("%s\n", StringValueCStr(str));
+
+    // To satisfy 16 B alignments.
+    // 48 83 ec 08             sub    $0x8,%rsp
+    encoded[j++] = 0x48; 
+    encoded[j++] = 0x83;
+    encoded[j++] = 0xec;
+    encoded[j++] = 0x08;
+
+    for (i=0; i<iseq_size; /* */) {
+        int insn = (int)orig_iseq[i];
+        // fprintf(stderr, "insn %03d:%s\n", i, insn_name(insn));
+        const void *func_ptr = table[insn];
+        start_points[i] = (void *)&encoded[j];
+
+        switch (insn) {
+          case BIN(jump):
+            {
+                VALUE dst = orig_iseq[i+1];
+                j += emit_call(&encoded[j], func_ptr);
+                j += emit_jmp(&encoded[j], (VALUE)i + dst + 2, &jpt);
+            }
+            break;
+          case BIN(branchif):
+            {
+                VALUE dst = orig_iseq[i+1];
+                j += emit_call(&encoded[j], func_ptr);
+                j += emit_test(&encoded[j]);
+                j += emit_jnz(&encoded[j], (VALUE)i + dst + 2, &jpt);
+            }
+            break;
+          case BIN(leave):
+            j += emit_call(&encoded[j], func_ptr);
+            j += emit_ret(&encoded[j]);
+            break;
+
+          default:
+            j += emit_call(&encoded[j], func_ptr);
+            break;
+        }
+
+        i += insn_len(insn);
+    }
+
+    // resolve jmp destination
+    for (i=0; i<jpt.size; i++) {
+        unsigned char *loc = jpt.entry[i].patch_location;
+        unsigned char *start_point = start_points[jpt.entry[i].destination];
+        int32_t diff = (int32_t)(start_point - (loc + 4 /* jmp insn num */));
+
+        // fprintf(stderr, "loc:%p dst:%ld, diff:%d\n", jpt.entry[i].patch_location, jpt.entry[i].destination, diff);
+
+        for (int j=0; j<4; j++) {
+            loc[j] = (diff >> (j*8)) & 0xff;
+        }
+    }
+
+    // FL_SET(iseq, ISEQ_TRANSLATED);
+
+    iseq->body->iseq_subr_encoded = encoded;
 #endif
     return COMPILE_OK;
 }

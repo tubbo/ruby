@@ -347,6 +347,10 @@ struct rb_iseq_constant_body {
 
     unsigned int iseq_size;
     VALUE *iseq_encoded; /* encoded iseq (insn addr and operands) */
+#if OPT_SUBROUTINE_THREADED_CODE
+    void *iseq_subr_encoded;
+#endif
+
 
     /**
      * parameter information
@@ -852,6 +856,10 @@ typedef struct rb_execution_context_struct {
     VALUE *vm_stack;		/* must free, must mark */
     size_t vm_stack_size;       /* size in word (byte size / sizeof(VALUE)) */
     rb_control_frame_t *cfp;
+
+#if OPT_SUBROUTINE_THREADED_CODE
+    int subroutine_threaded_code_finished;
+#endif
 
     struct rb_vm_tag *tag;
     struct rb_vm_protect_tag *protect_tag;

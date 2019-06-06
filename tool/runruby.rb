@@ -3,7 +3,7 @@
 # Used by "make runruby", configure, and by hand to run a locally-built Ruby
 # with correct environment variables and arguments.
 
-show = false
+show = true
 precommand = []
 srcdir = File.realpath('..', File.dirname(__FILE__))
 while arg = ARGV[0]

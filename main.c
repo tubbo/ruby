@@ -42,3 +42,33 @@ main(int argc, char **argv)
 	return ruby_run_node(ruby_options(argc, argv));
     }
 }
+
+void
+xxx(void)
+{
+    asm("mov %rdi, %r12");
+    asm("mov %rsi, %r13");
+    asm("mov %r12, %rdi");
+    asm("mov %r13, %rsi");
+    asm("jmp 12345");
+    asm("test %eax, %eax");
+    asm("jz 12345");
+    asm("jnz 12345");
+}
+
+void *rb_insn_tail(void *ec, void *cfp);
+
+VALUE
+yyy(void)
+{
+    void *ec, *cfp;
+
+    asm("mov %%r12, %0;"
+        "mov %%r13, %1;"
+        : "=r" (ec), "=r" (cfp)
+        : /* no input */
+        : /* no clobbing */);
+
+    //rb_insn_tail(ec, cfp);
+    return (VALUE)ec;
+}

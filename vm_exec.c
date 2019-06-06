@@ -43,7 +43,8 @@ vm_stack_overflow_for_insn(void)
 }
 #endif
 
-#if !OPT_CALL_THREADED_CODE
+#if OPT_DIRECT_THREADED_CODE || OPT_TOKEN_THREADED_CODE
+
 static VALUE
 vm_exec_core(rb_execution_context_t *ec, VALUE initial)
 {
@@ -128,8 +129,37 @@ rb_vm_get_insns_address_table(void)
     return (const void **)vm_exec_core(0, 0);
 }
 
-#else /* OPT_CALL_THREADED_CODE */
+#elif OPT_SUBROUTINE_THREADED_CODE
+#include "vm.inc"
+#include "vmtc.inc"
 
+rb_control_frame_t *
+rb_subroutine_threaded_tail(rb_execution_context_t *ec, rb_control_frame_t *cfp)
+{
+    return NULL;
+}
+
+const void **
+rb_vm_get_insns_address_table(void)
+{
+    return (const void **)insns_address_table;
+}
+
+const void **
+vm_exec_core(rb_execution_context_t *ec, VALUE initial)
+{
+    VALUE val = Qundef;
+
+    while (val == Qundef) {
+        rb_control_frame_t *reg_cfp = ec->cfp;
+        rb_insn_func_t func_ptr = reg_cfp->iseq->body->iseq_subr_encoded;
+        val = (*func_ptr)(ec, reg_cfp);
+    }
+
+    return (void **)val;
+}
+
+#else /* OPT_CALL_THREADED_CODE */
 #include "vm.inc"
 #include "vmtc.inc"
 

@@ -70,6 +70,31 @@ error !
 #define DISPATCH_ORIGINAL_INSN(x) return LABEL(x)(ec, reg_cfp);
 
 /************************************************/
+#elif OPT_SUBROUTINE_THREADED_CODE
+
+#define LABEL(x)  insn_func_##x
+#define ELABEL(x)
+#define LABEL_PTR(x) &LABEL(x)
+
+#define INSN_ENTRY(insn) \
+  static rb_control_frame_t * \
+    FUNC_FASTCALL(LABEL(insn))(rb_execution_context_t *ec, rb_control_frame_t *reg_cfp) { \
+        if (0) fprintf(stderr, "cfp:%p ", reg_cfp); \
+        if (0) fprintf(stderr, "insn: %d %s\n",(int)(GET_PC() - GET_ISEQ()->body->iseq_encoded), #insn);
+
+rb_control_frame_t *rb_insn_tail(rb_execution_context_t *ec, rb_control_frame_t *cfp);
+
+#define END_INSN(insn) return rb_insn_tail(ec, reg_cfp);}
+//asm ("" : /* no output */ : "r" (ec), "r" (reg_cfp) : /* no clobbered */); return NULL; }
+// 
+
+#define NEXT_INSN() return reg_cfp;
+
+#define START_OF_ORIGINAL_INSN(x) /* ignore */
+#define DISPATCH_ORIGINAL_INSN(x) return LABEL(x)(ec, reg_cfp);
+
+
+/************************************************/
 #elif OPT_TOKEN_THREADED_CODE || OPT_DIRECT_THREADED_CODE
 /* threaded code with gcc */
 
@@ -139,8 +164,8 @@ error !
 #define DISPATCH_ORIGINAL_INSN(x) goto  start_of_##x;
 
 /************************************************/
-#else /* no threaded code */
-/* most common method */
+
+#elif OPT_CALL_THREADED_CODE /* most common method */
 
 #define INSN_ENTRY(insn) \
 case BIN(insn):
