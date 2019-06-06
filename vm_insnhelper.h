@@ -85,7 +85,7 @@ enum vm_regan_acttype {
 #if OPT_SUBROUTINE_THREADED_CODE
 rb_control_frame_t *rb_insn_tail_true(rb_execution_context_t *ec, rb_control_frame_t *cfp);
 
-#define JUMP(dst)          (SET_PC(VM_REG_PC + (dst))); return rb_insn_tail_true(ec, reg_cfp);
+#define JUMP(dst)          (SET_PC(VM_REG_PC + (dst))); return (void *)TRUE;
 #else
 #define JUMP(dst)          (SET_PC(VM_REG_PC + (dst)))
 #endif

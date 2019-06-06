@@ -809,7 +809,7 @@ rb_insn_tail_true(rb_execution_context_t *ec, rb_control_frame_t *cfp)
 static int
 emit_call(unsigned char *encoded, const void *func_ptr)
 {
-    ptrdiff_t diff = addr_diff((char *)func_ptr, (char *)(encoded + 5));
+    ptrdiff_t diff = addr_diff((char *)func_ptr, (char *)(encoded + 5 /* call */ + 6 /* setup */));
     int i = 0;
 
     if (diff == 0) {
@@ -824,27 +824,23 @@ emit_call(unsigned char *encoded, const void *func_ptr)
         encoded[i++] = 0xd0;
     }
     else {
+        // setup param
+        // 4c 89 e7                mov    %r12,%rdi
+        // 4c 89 ee                mov    %r13,%rsi
+        encoded[i++] = 0x4c;
+        encoded[i++] = 0x89;
+        encoded[i++] = 0xe7;
+
+        encoded[i++] = 0x4c;
+        encoded[i++] = 0x89;
+        encoded[i++] = 0xee;
+
+        // call
         encoded[i++] = 0xe8;
         for (int k=0; k<4; k++) {
             encoded[i++] = (unsigned char)((diff >> (k * 8)) & 0xff);
         }
     }
-
-    return i;
-}
-
-static int
-emit_ret(unsigned char *encoded)
-{
-    int i = 0;
-    // 48 83 c4 08             add    $0x8,%rsp
-    encoded[i++] = 0x48;
-    encoded[i++] = 0x83;
-    encoded[i++] = 0xc4;
-    encoded[i++] = 0x08;
-
-    // ret
-    encoded[i++] = 0xc3;
 
     return i;
 }
@@ -903,6 +899,59 @@ emit_test(unsigned char *encoded)
     return 2;
 }
 
+static int
+emit_prologue(unsigned char *encoded)
+{
+    int i = 0;
+
+    // 41 55                   push   %r13
+    // 41 54                   push   %r12
+    // 53                      push   %rbx
+    encoded[i++] = 0x41;
+    encoded[i++] = 0x55;
+
+    encoded[i++] = 0x41;
+    encoded[i++] = 0x54;
+
+    encoded[i++] = 0x53;
+
+    // 49 89 fc                mov    %rdi,%r12
+    // 49 89 f5                mov    %rsi,%r13
+    encoded[i++] = 0x49;
+    encoded[i++] = 0x89;
+    encoded[i++] = 0xfc;
+
+    encoded[i++] = 0x49;
+    encoded[i++] = 0x89;
+    encoded[i++] = 0xf5;
+
+    return i;
+}
+
+static int
+emit_ret(unsigned char *encoded)
+{
+    int i = 0;
+
+    // epilogue code
+
+    // 5b                      pop    %rbx
+    // 41 5c                   pop    %r12
+    // 41 5d                   pop    %r13
+    encoded[i++] = 0x5b;
+
+    encoded[i++] = 0x41;
+    encoded[i++] = 0x5c;
+
+    encoded[i++] = 0x41;
+    encoded[i++] = 0x5d;
+
+    // ret
+    encoded[i++] = 0xc3;
+
+    return i;
+}
+
 int
 rb_iseq_translate_threaded_code(rb_iseq_t *iseq)
 {
@@ -930,12 +979,7 @@ rb_iseq_translate_threaded_code(rb_iseq_t *iseq)
     //VALUE str = rb_iseq_disasm(iseq);
     //printf("%s\n", StringValueCStr(str));
 
-    // To satisfy 16 B alignments.
-    // 48 83 ec 08             sub    $0x8,%rsp
-    encoded[j++] = 0x48; 
-    encoded[j++] = 0x83;
-    encoded[j++] = 0xec;
-    encoded[j++] = 0x08;
+    j += emit_prologue(&encoded[j]);
 
     for (i=0; i<iseq_size; /* */) {
         int insn = (int)orig_iseq[i];

@@ -59,16 +59,15 @@ xxx(void)
 void *rb_insn_tail(void *ec, void *cfp);
 
 VALUE
-yyy(void)
+yyy(void *ec, void *cfp)
 {
-    void *ec, *cfp;
+    asm("mov %0, %%r12;"
+        "mov %1, %%r13;"
+        : /* out */
+        : "r" (ec), "r" (cfp)
+        : "%r12", "%r13");
 
-    asm("mov %%r12, %0;"
-        "mov %%r13, %1;"
-        : "=r" (ec), "=r" (cfp)
-        : /* no input */
-        : /* no clobbing */);
+    rb_insn_tail(cfp, ec);
 
-    //rb_insn_tail(ec, cfp);
     return (VALUE)ec;
 }

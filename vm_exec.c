@@ -153,6 +153,7 @@ vm_exec_core(rb_execution_context_t *ec, VALUE initial)
     while (val == Qundef) {
         rb_control_frame_t *reg_cfp = ec->cfp;
         rb_insn_func_t func_ptr = reg_cfp->iseq->body->iseq_subr_encoded;
+        bp();
         val = (*func_ptr)(ec, reg_cfp);
     }
 

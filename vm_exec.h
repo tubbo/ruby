@@ -84,7 +84,7 @@ error !
 
 rb_control_frame_t *rb_insn_tail(rb_execution_context_t *ec, rb_control_frame_t *cfp);
 
-#define END_INSN(insn) return rb_insn_tail(ec, reg_cfp);}
+#define END_INSN(insn) return;}
 //asm ("" : /* no output */ : "r" (ec), "r" (reg_cfp) : /* no clobbered */); return NULL; }
 // 
 

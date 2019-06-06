@@ -976,6 +976,9 @@ branchif
 	RUBY_VM_CHECK_INTS(ec);
 	JUMP(dst);
     }
+    else {
+        return 0;
+    }
 }
 
 /* if val is false or nil, set PC to (PC + dst). */
