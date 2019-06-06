@@ -559,7 +559,7 @@ rb_fix_plus_fix(VALUE x, VALUE y)
      *         * positive: 0b01xxx...
      *         * negative: 0b10xxx...
      */
-    if (__builtin_add_overflow((long)x, (long)y-1, &lz)) {
+    if (UNLIKELY(__builtin_add_overflow((long)x, (long)y-1, &lz))) {
 	return rb_int2big(rb_overflowed_fix_to_int(lz));
     }
     else {

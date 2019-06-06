@@ -322,6 +322,12 @@ struct rb_iseq_constant_body {
 
     unsigned int iseq_size;
     VALUE *iseq_encoded; /* encoded iseq (insn addr and operands) */
+#if OPT_SUBROUTINE_THREADED_CODE
+    void *subr_encoded;
+    void *subr_encoded_jump;
+    void **subr_entry_points;
+#endif
+
 
     /**
      * parameter information

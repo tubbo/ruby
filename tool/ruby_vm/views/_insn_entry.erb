@@ -35,7 +35,10 @@ INSN_ENTRY(<%= insn.name %>)
 % end
 
     /* ### Instruction preambles. ### */
-    if (! leaf) ADD_PC(INSN_ATTR(width));
+    if (! leaf) {
+        reg_cfp->pc = ADD_PC(INSN_ATTR(width));
+        reg_cfp->sp = GET_SP();
+    }
 % if insn.handles_sp?
     POPN(INSN_ATTR(popn));
 % end

@@ -1126,48 +1126,60 @@ refine_sym_proc_call(RB_BLOCK_CALL_FUNC_ARGLIST(yielded_arg, callback_arg))
     return ret;
 }
 
-static VALUE
-vm_caller_setup_arg_block(const rb_execution_context_t *ec, rb_control_frame_t *reg_cfp,
-                          const struct rb_call_info *ci, const rb_iseq_t *blockiseq, const int is_super)
-{
-    if (ci->flag & VM_CALL_ARGS_BLOCKARG) {
-	VALUE block_code = *(--reg_cfp->sp);
+#define CALLER_SETUP_ARG_BLOCK(bh, ec, reg_cfp, ci, blockiseq, is_super) do { \
+    if ((ci)->flag & VM_CALL_ARGS_BLOCKARG) { \
+        VALUE block_code = *(--GET_SP()); \
+        bh = vm_caller_setup_arg_from_stack(ec, reg_cfp, ci, block_code); \
+    } \
+    else { \
+        bh = vm_caller_setup_arg_iseq(ec, reg_cfp, ci, blockiseq, is_super); \
+    } \
+} while (0)
 
-	if (NIL_P(block_code)) {
-            return VM_BLOCK_HANDLER_NONE;
-        }
-	else if (block_code == rb_block_param_proxy) {
-            return VM_CF_BLOCK_HANDLER(reg_cfp);
-        }
-	else if (SYMBOL_P(block_code) && rb_method_basic_definition_p(rb_cSymbol, idTo_proc)) {
-	    const rb_cref_t *cref = vm_env_cref(reg_cfp->ep);
-	    if (cref && !NIL_P(cref->refinements)) {
-		VALUE ref = cref->refinements;
-		VALUE func = rb_hash_lookup(ref, block_code);
-		if (NIL_P(func)) {
-		    /* TODO: limit cached funcs */
-                    VALUE callback_arg = rb_ary_tmp_new(2);
-                    rb_ary_push(callback_arg, block_code);
-                    rb_ary_push(callback_arg, ref);
-                    OBJ_FREEZE_RAW(callback_arg);
-                    func = rb_func_proc_new(refine_sym_proc_call, callback_arg);
-		    rb_hash_aset(ref, block_code, func);
-		}
-		block_code = func;
-	    }
-            return block_code;
-        }
-        else {
-            return vm_to_proc(block_code);
-        }
+static VALUE
+vm_caller_setup_arg_from_stack(const rb_execution_context_t *ec, rb_control_frame_t *reg_cfp,
+                               const struct rb_call_info *ci, VALUE block_code)
+{
+    if (NIL_P(block_code)) {
+        return VM_BLOCK_HANDLER_NONE;
     }
-    else if (blockiseq != NULL) { /* likely */
-	struct rb_captured_block *captured = VM_CFP_TO_CAPTURED_BLOCK(reg_cfp);
-	captured->code.iseq = blockiseq;
+    else if (block_code == rb_block_param_proxy) {
+        return VM_CF_BLOCK_HANDLER(reg_cfp);
+    }
+    else if (SYMBOL_P(block_code) && rb_method_basic_definition_p(rb_cSymbol, idTo_proc)) {
+        const rb_cref_t *cref = vm_env_cref(reg_cfp->ep);
+        if (cref && !NIL_P(cref->refinements)) {
+            VALUE ref = cref->refinements;
+            VALUE func = rb_hash_lookup(ref, block_code);
+            if (NIL_P(func)) {
+                /* TODO: limit cached funcs */
+                VALUE callback_arg = rb_ary_tmp_new(2);
+                rb_ary_push(callback_arg, block_code);
+                rb_ary_push(callback_arg, ref);
+                OBJ_FREEZE_RAW(callback_arg);
+                func = rb_func_proc_new(refine_sym_proc_call, callback_arg);
+                rb_hash_aset(ref, block_code, func);
+            }
+            block_code = func;
+        }
+        return block_code;
+    }
+    else {
+        return vm_to_proc(block_code);
+    }
+}
+
+static VALUE
+vm_caller_setup_arg_iseq(const rb_execution_context_t *ec, rb_control_frame_t *reg_cfp,
+                         const struct rb_call_info *ci, const rb_iseq_t *blockiseq, const int is_super)
+{
+    if (blockiseq != NULL) { /* likely */
+        struct rb_captured_block *captured = VM_CFP_TO_CAPTURED_BLOCK(reg_cfp);
+        captured->code.iseq = blockiseq;
         return VM_BH_FROM_ISEQ_BLOCK(captured);
     }
     else {
-	if (is_super) {
+        if (is_super) {
             return GET_BLOCK_HANDLER();
         }
         else {

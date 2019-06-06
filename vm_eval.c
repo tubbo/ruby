@@ -114,6 +114,10 @@ vm_call0_cfunc(rb_execution_context_t *ec, struct rb_calling_info *calling, cons
     return vm_call0_cfunc_with_frame(ec, calling, ci, cc, argv);
 }
 
+static inline VALUE
+vm_call_iseq_setup_normal(rb_execution_context_t *ec, rb_control_frame_t *cfp, struct rb_calling_info *calling, const rb_callable_method_entry_t *me,
+                          int opt_pc, int param_size, int local_size, int finish);
+
 /* `ci' should point temporal value (on stack value) */
 static VALUE
 vm_call0_body(rb_execution_context_t *ec, struct rb_calling_info *calling, const struct rb_call_info *ci, struct rb_call_cache *cc, const VALUE *argv)
@@ -137,9 +141,14 @@ vm_call0_body(rb_execution_context_t *ec, struct rb_calling_info *calling, const
 		*reg_cfp->sp++ = argv[i];
 	    }
 
-	    vm_call_iseq_setup(ec, reg_cfp, calling, ci, cc);
-	    VM_ENV_FLAGS_SET(ec->cfp->ep, VM_FRAME_FLAG_FINISH);
-	    return vm_exec(ec, TRUE); /* CHECK_INTS in this function */
+            VALUE result = vm_call_iseq_setup_from_c(ec, reg_cfp, calling, ci, cc);
+            if (result == Qundef) {
+                VM_ENV_FLAGS_SET(ec->cfp->ep, VM_FRAME_FLAG_FINISH);
+                return vm_exec(ec, TRUE); /* CHECK_INTS in this function */
+            }
+            else {
+                return result;
+            }
 	}
       case VM_METHOD_TYPE_NOTIMPLEMENTED:
       case VM_METHOD_TYPE_CFUNC:

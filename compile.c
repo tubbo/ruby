@@ -726,6 +726,369 @@ rb_iseq_compile_node(rb_iseq_t *iseq, const NODE *node)
     return iseq_setup(iseq, ret);
 }
 
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+
+#define PAGE_SIZE 4096
+
+static struct executable_storage {
+    unsigned char *buff;
+    unsigned int size;
+    unsigned int pos;
+} subr_exec_storage;
+static unsigned char code_buff[1024 * 1024 * 128];
+
+#include <stdlib.h>
+
+
+/*
+ * mmap() returns far address.
+ * malloc() returns near address, on main thread.
+ */
+static void *
+alloc_executable_memory(const void *hint, unsigned int *encoded_limit)
+{
+    int page_size = sysconf(_SC_PAGE_SIZE);
+    struct executable_storage *es = &subr_exec_storage;
+    if (es->buff == NULL) {
+        uint64_t ptr = (uint64_t)&code_buff[0];
+        if ((ptr % page_size) != 0) {
+            es->buff = (void *)((ptr / page_size + 1) * page_size);
+            es->size = sizeof(code_buff) - page_size;
+        }
+        else {
+            es->buff = &code_buff[0];
+            es->size = sizeof(code_buff);
+        }
+        // fprintf(stderr, "code_buff:%p es->buff:%p es->size:%d page_size:%d\n", code_buff, es->buff, (int)es->size, page_size);
+        // fprintf(stderr, "%d, %d\n", (uint64_t)es->buff % page_size, es->size % page_size);
+        if (mprotect(es->buff, es->size, PROT_READ | PROT_WRITE | PROT_EXEC) == -1) {
+            perror(__func__);
+            exit(1);
+        }
+    }
+    void *ptr = &es->buff[es->pos];
+    *encoded_limit = es->size - es->pos;
+    // fprintf(stderr, "ptr:%p pos:%u\n", ptr, es->pos);
+    return ptr;
+
+#if 0
+    void *ptr = mmap((void *)hint, size,
+                     PROT_EXEC | PROT_READ | PROT_WRITE,
+                     MAP_PRIVATE | MAP_ANONYMOUS, 0, 0);
+    if (ptr == MAP_FAILED) rb_bug("alloc_executable_memory");
+    fprintf(stderr, "hint:%p, ptr:%p, diff:%p, code_buff:%p\n", hint, ptr, labs((uint64_t)hint - (uint64_t)ptr), code_buff);
+    exit(1);
+#elif 0
+    size = (((size % PAGE_SIZE) > 0 ? 1 : 0)  + size / PAGE_SIZE) * PAGE_SIZE;
+    void *ptr = malloc(size + PAGE_SIZE);
+    if (ptr == NULL) rb_bug("alloc_executable_memory: malloc");
+    void *aligned_ptr = (void *)(((VALUE)ptr + 4096)/4096 * 4096);
+
+    if (0) fprintf(stderr, "alloc:%p aligned:%p end:%p\n", ptr, aligned_ptr, (char *)ptr + 4096 * 2);
+
+    if (mprotect(aligned_ptr, size, PROT_READ | PROT_WRITE | PROT_EXEC) != 0) {
+        rb_bug("alloc_executable_memory: mprotect");
+    }
+    ptr = aligned_ptr;
+    return ptr;
+#endif
+}
+
+void /* trick */
+rb_insn_tail(void)
+{
+    /* SHOULD BE EMPTY!! */
+}
+
+rb_control_frame_t *
+rb_insn_tail_true(void)
+{
+    /* SHOULD BE EMPTY!! */
+    return (void *)TRUE;
+}
+
+rb_control_frame_t *
+rb_insn_tail_false(void)
+{
+    /* SHOULD BE EMPTY!! */
+    return (void *)FALSE;
+}
+
+rb_control_frame_t *
+rb_insn_tail_value(rb_execution_context_t *ec, rb_control_frame_t *cfp, const VALUE *pc, VALUE *sp, VALUE v)
+{
+    return (void *)v;
+}
+
+static ptrdiff_t
+addr_diff(char *x, char *y)
+{
+    ptrdiff_t abs_diff = x > y ? x - y : y - x;
+
+    if ((abs_diff >> 32) != 0) {
+        bp();
+        return 0;
+    }
+
+    ptrdiff_t diff = x-y;
+    // fprintf(stderr, "func:%p encoded:%p diff: %lx\n", (void *)x, (void *)y, diff);
+
+    return diff;
+}
+
+static int
+emit_call(unsigned char *encoded, const void *func_ptr)
+{
+    ptrdiff_t diff = addr_diff((char *)func_ptr, (char *)(encoded + 5));
+    int i = 0;
+
+    if (diff == 0) {
+        rb_bug("unsupported yet");
+        
+        encoded[i++] = 0x48;
+        encoded[i++] = 0xa3;
+        for (int k=0; k<8; k++) {
+            encoded[i++] = ((VALUE)func_ptr >> k) & 0xff;
+        }
+        encoded[i++] = 0xff;
+        encoded[i++] = 0xd0;
+    }
+    else {
+        encoded[i++] = 0xe8;
+        for (int k=0; k<4; k++) {
+            encoded[i++] = (unsigned char)((diff >> (k * 8)) & 0xff);
+        }
+    }
+
+    return i;
+}
+
+static int
+emit_code(unsigned char *encoded, const unsigned char *code, int n)
+{
+    for (int i=0; i<n; i++) {
+        encoded[i] = code[i];
+    }
+    return n;
+}
+
+static int
+emit_ret(unsigned char *encoded)
+{
+    static const unsigned char code[] = {
+        0x48, 0x83, 0xc4, 0x08,  // add    $0x8,%rsp
+        0xc3,                    // ret
+    };
+    return emit_code(encoded, code, sizeof(code));
+}
+
+#define MAX_JPT_SIZE 1024
+
+struct jump_patch_table {
+    unsigned int size;
+    unsigned int max_size;
+    struct {
+        unsigned char *patch_location;
+        VALUE destination;
+    } entry[MAX_JPT_SIZE]; /* TODO */
+};
+
+static int
+emit_jx(unsigned char *encoded, VALUE dst, struct jump_patch_table *jpt, const unsigned char *insns, int insn_len)
+{
+    int i = 0;
+
+    for (int j=0; j<insn_len; j++) {
+        encoded[i++] = insns[j];
+    }
+
+    if (jpt->size == MAX_JPT_SIZE) rb_bug(__func__);
+
+    // register jpt to resolve this destination
+    jpt->entry[jpt->size].patch_location = &encoded[i];
+    jpt->entry[jpt->size].destination = dst;
+    jpt->size++;
+
+    // 4B 0 fill
+    encoded[i++] = 0x00;
+    encoded[i++] = 0x00;
+    encoded[i++] = 0x00;
+    encoded[i++] = 0x00;
+
+    return i;
+}
+
+static int
+emit_jmp(unsigned char *encoded, VALUE dst, struct jump_patch_table *jpt)
+{
+    const unsigned char insns[] = {0xe9};
+    return emit_jx(encoded, dst, jpt, insns, 1);
+}
+
+#if 0
+static int
+emit_jnz(unsigned char *encoded, VALUE dst, struct jump_patch_table *jpt)
+{
+    static const unsigned char insns[] = {0x0f, 0x85};
+    return emit_jx(encoded, dst, jpt, insns, 2);
+}
+#endif
+
+static int
+emit_test(unsigned char *encoded)
+{
+    static const unsigned char code[] = {
+        0x85, 0xc0, // test   %eax,%eax
+    };
+    return emit_code(encoded, code, sizeof(code));
+}
+
+static int
+emit_add_pc(unsigned char *encoded, int n)
+{
+    int i = 0;
+
+    if (-128 <= n && n <= 127) {
+        unsigned char code[] = {
+            0x48, 0x83, 0xc2, 0x00, // addq   $0x??, %rdx
+        };
+        code[3] = n % 0xff;
+        return emit_code(encoded, code, sizeof(code));
+    }
+    else {
+        unsigned char code[] = {
+            0x48, 0x81, 0xc2,       // addq    $????, %rdx
+            0x00, 0x00, 0x00, 0x00,
+        };
+        ((int *)&code[3])[0] = n;
+        return emit_code(encoded, code, sizeof(code));
+    }
+
+    return i;
+}
+
+static int
+emit_VM_pop(unsigned char *encoded)
+{
+    static const unsigned char code[] = {
+        0x48, 0x83, 0xe9, 0x08,                           // sub    $0x8,%rcx
+        0x48, 0x8b, 0x01,                                 // mov    (%rcx),%rax
+    };
+    return emit_code(encoded, code, sizeof(code));
+}
+
+static int
+emit_RTEST(unsigned char *encoded)
+{
+    static const unsigned char code[] = {
+        0x48, 0xa9, 0xf7, 0xff, 0xff, 0xff, // test   $0xfffffffffffffff7,%rax
+    };
+    return emit_code(encoded, code, sizeof(code));
+}
+
+static int
+emit_nil_p(unsigned char *encoded)
+{
+    static const unsigned char code[] = {
+        0x48, 0x83, 0xf8, 0x08, //             cmp    $0x8,%rax
+    };
+    return emit_code(encoded, code, sizeof(code));
+}
+
+static int
+emit_jz(unsigned char *encoded)
+{
+    unsigned char code[6] = {
+        0x0f, 0x84, 0x00, 0x00, 0x00, 0x00, // jz
+    };
+    return emit_code(encoded, code, sizeof(code));
+}
+
+static int
+emit_jnz(unsigned char *encoded)
+{
+    unsigned char code[6] = {
+        0x0f, 0x85, 0x00, 0x00, 0x00, 0x00, // jnz
+    };
+    return emit_code(encoded, code, sizeof(code));
+}
+
+static void
+fill_32bit(unsigned char *encoded, int n)
+{
+    unsigned char code[4] = {
+        (n >> 0) & 0xff,
+        (n >> 8) & 0xff,
+        (n >>16) & 0xff,
+        (n >>24) & 0xff,
+    };
+    emit_code(encoded, code, sizeof(code));
+}
+
+static void
+info_for_perf(const unsigned char *encoded, unsigned int j, const rb_iseq_t *iseq)
+{
+    char file[0x100];
+    snprintf(file, 0x100, "/tmp/perf-%d.map", getpid());
+
+    char name[0x100];
+    VALUE label = iseq->body->location.label;
+    VALUE path = rb_iseq_path(iseq);
+    snprintf(name, 0x100, "%s@%s", StringValueCStr(label), StringValueCStr(path));
+
+    FILE *fd;
+    if ((fd = fopen(file, "a")) == NULL) {
+        rb_bug("!!");
+    }
+    fprintf(fd, "%lx %x %s\n", (unsigned long)encoded, j, name);
+    fclose(fd);
+}
+
+#if OPT_SUBROUTINE_THREADED_CODE
+static void
+disasm_native(const unsigned char *code, unsigned int size)
+{
+    char buff[128];
+    snprintf(buff, 128, "gdb -q -batch -p %d -ex 'disass %p, %p'", getpid(), code, code+size);
+    // fprintf(stderr, "cmd: %s\n", buff);
+    if (system(buff) == -1) {
+        //...
+    }
+}
+#endif
+
+#if 0
+  /* nop */
+  static const char nop_1[] = { 0x90 };
+
+  /* xchg %ax,%ax */
+  static const char nop_2[] = { 0x66, 0x90 };
+
+  /* nopl (%[re]ax) */
+  static const unsigned char nop_3[] = { 0x0f, 0x1f, 0x00 };
+
+  /* nopl 0(%[re]ax) */
+  static const char nop_4[] = { 0x0f, 0x1f, 0x40, 0x00 };
+
+  /* nopl 0(%[re]ax,%[re]ax,1) */
+  static const char nop_5[] = { 0x0f, 0x1f, 0x44, 0x00, 0x00 };
+
+  /* nopw 0(%[re]ax,%[re]ax,1) */
+  static const char nop_6[] = { 0x66, 0x0f, 0x1f, 0x44, 0x00, 0x00 };
+
+  /* nopl 0L(%[re]ax) */
+  static const char nop_7[] = { 0x0f, 0x1f, 0x80, 0x00, 0x00, 0x00, 0x00 };
+
+  /* nopl 0L(%[re]ax,%[re]ax,1) */
+  static const char nop_8[] =
+    { 0x0f, 0x1f, 0x84, 0x00, 0x00, 0x00, 0x00, 0x00};
+#endif
+
 int
 rb_iseq_translate_threaded_code(rb_iseq_t *iseq)
 {
@@ -740,7 +1103,336 @@ rb_iseq_translate_threaded_code(rb_iseq_t *iseq)
 	encoded[i] = (VALUE)table[insn];
 	i += len;
     }
-    FL_SET(iseq, ISEQ_TRANSLATED);
+#elif OPT_SUBROUTINE_THREADED_CODE
+    const void * const *table = rb_vm_get_insns_address_table();
+    unsigned int i, j, k, insn_index, encoded_limit;
+    unsigned int iseq_size = iseq->body->iseq_size;
+    VALUE *orig_iseq = (VALUE *)iseq->body->iseq_encoded;
+    unsigned char *encoded = alloc_executable_memory(table[0], &encoded_limit);
+    unsigned char **entry_points = ALLOC_N(unsigned char *, iseq_size);
+    struct jump_patch_table jpt = {0};
+
+    if (0) {
+        fprintf(stderr, "iseq_size:%d %s\n", (int)iseq->body->iseq_size, RSTRING_PTR(rb_iseq_label(iseq)));
+        //VALUE str = rb_iseq_disasm(iseq);
+        //printf("%s\n", StringValueCStr(str));
+    }
+
+    static const unsigned char prologue_code[] = {
+        // To satisfy 16 B alignments for stack.
+        0x48, 0x83, 0xec, 0x08,             // sub    $0x8,%rsp
+    };
+    j = emit_code(encoded, prologue_code, sizeof(prologue_code));
+
+    for (i=insn_index=0; i<iseq_size; insn_index++) {
+        int insn = (int)orig_iseq[i];
+        // fprintf(stderr, "insn %03d:%s\n", i, insn_name(insn));
+        const void *func_ptr = table[insn];
+        entry_points[i] = (void *)&encoded[j];
+
+        switch (insn) {
+          // control instructions
+
+          case BIN(jump):
+            {
+                VALUE dst = orig_iseq[i+1];
+                // j += emit_call(&encoded[j], func_ptr);
+                j += emit_add_pc(&encoded[j], sizeof(VALUE) * (dst + 2));
+                j += emit_jmp(&encoded[j], (VALUE)i + dst + 2, &jpt);
+            }
+            break;
+          case BIN(branchif):
+            {
+                VALUE dst = orig_iseq[i+1];
+                j += emit_VM_pop(&encoded[j]);
+                j += emit_RTEST(&encoded[j]);
+                j += emit_jz(&encoded[j]); // skip THEN part
+                k = j;
+
+                // THEN
+                j += emit_add_pc(&encoded[j], sizeof(VALUE) * (dst + 2));
+                j += emit_jmp(&encoded[j], (VALUE)i + dst + 2, &jpt);
+                fill_32bit(&encoded[k-4], j-k);
+
+                // ELSE
+                j += emit_add_pc(&encoded[j], sizeof(VALUE) * 2);
+
+                /*  v = VM_pop
+                 *  RTEST(v)
+                 *  jz ELSE
+                 *    add_pc w/DST
+                 *    jmp    DST
+                 *  ELSE:
+                 *    add_pc 2
+                 */
+            }
+            break;
+          case BIN(branchnil):
+            {
+                VALUE dst = orig_iseq[i+1];
+                j += emit_VM_pop(&encoded[j]);
+                j += emit_nil_p(&encoded[j]);
+                j += emit_jnz(&encoded[j]);
+                k = j;
+
+                // THEN
+                j += emit_add_pc(&encoded[j], sizeof(VALUE) * (dst + 2));
+                j += emit_jmp(&encoded[j], (VALUE)i + dst + 2, &jpt);
+                fill_32bit(&encoded[k-4], j-k);
+
+                // ELSE
+                j += emit_add_pc(&encoded[j], sizeof(VALUE) * 2);
+            }
+            break;
+          case BIN(branchunless):
+            {
+                VALUE dst = orig_iseq[i+1];
+                j += emit_VM_pop(&encoded[j]);
+                j += emit_RTEST(&encoded[j]);
+                j += emit_jnz(&encoded[j]); // skip THEN part
+                k = j;
+
+                // THEN
+                j += emit_add_pc(&encoded[j], sizeof(VALUE) * (dst + 2));
+                j += emit_jmp(&encoded[j], (VALUE)i + dst + 2, &jpt);
+                fill_32bit(&encoded[k-4], j-k);
+
+                // ELSE
+                j += emit_add_pc(&encoded[j], sizeof(VALUE) * 2);
+
+                /*  v = VM_pop
+                 *  RTEST(v)
+                 *  jnz ELSE
+                 *    add_pc w/DST
+                 *    jmp    DST
+                 *  ELSE:
+                 *    add_pc 2
+                 */
+            }
+            break;
+          case BIN(opt_getinlinecache):
+            {
+                j += emit_call(&encoded[j], func_ptr);
+                /* IF: %rax != 0
+                 *   jmp DST
+                 * ELSE:
+                 *   do nothing
+                 */
+
+                j += emit_test(&encoded[j]);
+                j += emit_jz(&encoded[j]);
+                k = j;
+
+                // THEN:
+                VALUE dst = orig_iseq[i+1];
+                j += emit_add_pc(&encoded[j], sizeof(VALUE) * (dst + 3));
+                j += emit_jmp(&encoded[j], (VALUE)i + dst + 3, &jpt);
+                fill_32bit(&encoded[k-4], j-k);
+
+                // ELSE:
+                j += emit_add_pc(&encoded[j], sizeof(VALUE) * 3);
+            }
+            break;
+          case BIN(opt_case_dispatch):
+            {
+                j += emit_call(&encoded[j], func_ptr);
+                // jump to destination
+                static const unsigned char code[] = {
+                    0xff, 0xe0,        // jmpq   *%rax
+                };
+                j += emit_code(&encoded[j], code, sizeof(code));
+            }
+            break;
+          case BIN(leave):
+            // epilogue
+            j += emit_call(&encoded[j], func_ptr);
+            j += emit_ret(&encoded[j]);
+            break;
+          case BIN(throw):
+            j += emit_call(&encoded[j], func_ptr);
+            j += emit_ret(&encoded[j]);
+
+            // optimize
+#define USE_SUBR_OPTIMIZE 0
+
+#if USE_SUBR_OPTIMIZE
+          case BIN(putobject):
+            {
+                VALUE obj = orig_iseq[i+1];
+
+                if ((int32_t)obj == (int64_t)obj) {
+                    if ((int32_t)obj >= 0) {
+                        unsigned char mov_to_eax[5] = {
+                            0xb8, 0, 0, 0, 0, // mov    $0x??,%eax
+                        };
+                        ((int32_t*)&mov_to_eax[1])[0] = (int32_t)obj;
+                        j += emit_code(&encoded[j], mov_to_eax, sizeof(mov_to_eax));
+                    }
+                    else {
+                        unsigned char mov_to_rax[7] = {
+                            0x48, 0xc7, 0xc0, // mov    $0x??,%rax
+                        };
+                        ((int32_t*)&mov_to_rax[3])[0] = (int32_t)obj;
+                        j += emit_code(&encoded[j], mov_to_rax, sizeof(mov_to_rax));
+                    }
+                }
+                else {
+                    unsigned char mov_to_rax[10] = {
+                        0x48, 0xb8, // movabs $0x??, %rax
+                    };
+                    ((VALUE *)&mov_to_rax[2])[0] = obj;
+                    j += emit_code(&encoded[j], mov_to_rax, sizeof(mov_to_rax));
+                }
+
+                const unsigned char code[] = {
+                    0x48, 0x83, 0xc1, 0x08,                           // add    $0x8,%rcx
+                    0x48, 0x83, 0xc2, 0x10,                           // add    $0x10,%rdx
+                    0x48, 0x89, 0x41, 0xf8,                           // mov    %rax,-0x8(%rcx)
+                };
+                j += emit_code(&encoded[j], code, sizeof(code));
+            }
+            break;
+#endif
+#if USE_SUBR_OPTIMIZE
+          case BIN(getlocal_WC_0):
+            {
+                unsigned long idx = (unsigned long)orig_iseq[i+1];
+
+                if (idx >= 3 && idx < 10) {
+                    unsigned char idx_code = 0 - 8 * idx;
+                    const unsigned char code[] = {
+                        0x48, 0x8b, 0x46, 0x20,                           // mov    0x20(%rsi),%rax
+                        0x48, 0x83, 0xc1, 0x08,                           // add    $0x8,%rcx
+                        0x48, 0x83, 0xc2, 0x10,                           // add    $0x10,%rdx
+                        0x48, 0x8b, 0x40, idx_code,                       // mov    ?? (%rax),%rax
+                        0x48, 0x89, 0x41, 0xf8,                           // mov    %rax,-0x8(%rcx)
+                    };
+                    j += emit_code(&encoded[j], code, sizeof(code));
+                }
+                else {
+                    j += emit_call(&encoded[j], func_ptr);
+                }
+            }
+            break;
+#endif
+#if USE_SUBR_OPTIMIZE
+          // simple copy instructions
+          case BIN(putself):
+            {
+                const unsigned char code[] = {
+                    0x48, 0x8b, 0x46, 0x18,                           // mov    0x18(%rsi),%rax
+                    0x48, 0x83, 0xc1, 0x08,                           // add    $0x8,%rcx
+                    0x48, 0x83, 0xc2, 0x08,                           // add    $0x8,%rdx
+                    0x48, 0x89, 0x41, 0xf8,                           // mov    %rax,-0x8(%rcx)
+                };
+                j += emit_code(&encoded[j], code, sizeof(code));
+            }
+            break;
+          case BIN(nop):
+            {
+                const unsigned char code[] = {
+                    0x48, 0x83, 0xc2, 0x08,                           // add    $0x8,%rdx
+                };
+                j += emit_code(&encoded[j], code, sizeof(code));
+            }
+            break;
+          case BIN(putnil):
+            {
+                const unsigned char code[] = {
+                    0x48, 0xc7, 0x01, 0x08, 0x00, 0x00, 0x00,         // movq   $0x8,(%rcx)
+                    0x48, 0x83, 0xc2, 0x08,                           // add    $0x8,%rdx
+                    0x48, 0x83, 0xc1, 0x08,                           // add    $0x8,%rcx
+                };
+                j += emit_code(&encoded[j], code, sizeof(code));
+            }
+            break;
+          case BIN(pop):
+            {
+                const unsigned char code[] = {
+                    0x48, 0x83, 0xe9, 0x08,                           // sub    $0x8,%rcx
+                    0x48, 0x83, 0xc2, 0x08,                           // add    $0x8,%rdx
+                };
+                j += emit_code(&encoded[j], code, sizeof(code));
+            }
+            break;
+          case BIN(dup):
+            {
+                const unsigned char code[] = {
+                    0x48, 0x8b, 0x41, 0xf8,                           // mov    -0x8(%rcx),%rax
+                    0x48, 0x83, 0xc2, 0x08,                           // add    $0x8,%rdx
+                    0x48, 0x83, 0xc1, 0x08,                           // add    $0x8,%rcx
+                    0x48, 0x89, 0x41, 0xf8,                           // mov    %rax,-0x8(%rcx)
+                };
+                j += emit_code(&encoded[j], code, sizeof(code));
+            }
+            break;
+          case BIN(swap):
+            {
+                const unsigned char code[] = {
+                    0x48, 0x8b, 0x41, 0xf8,                           // mov    -0x8(%rcx),%rax
+                    0x4c, 0x8b, 0x41, 0xf0,                           // mov    -0x10(%rcx),%r8
+                    0x48, 0x83, 0xc2, 0x08,                           // add    $0x8,%rdx
+                    0x4c, 0x89, 0x41, 0xf8,                           // mov    %r8,-0x8(%rcx)
+                    0x48, 0x89, 0x41, 0xf0,                           // mov    %rax,-0x10(%rcx)
+                };
+                j += emit_code(&encoded[j], code, sizeof(code));
+            }
+            break;
+#endif
+          default:
+            j += emit_call(&encoded[j], func_ptr);
+            break;
+        }
+
+        i += insn_len(insn);
+    }
+
+    iseq->body->subr_encoded_jump = &encoded[j];
+    static const unsigned char dispatch_code[] = {
+        // To satisfy 16 B alignments for stack.
+        0x48, 0x83, 0xec, 0x08,             // sub    $0x8,%rsp
+        0x41, 0xff, 0xe0,                   // jmpq   *%r8
+        0x0f, 0x0b,                         // ud2
+    };
+    j += emit_code(&encoded[j], dispatch_code, sizeof(dispatch_code));
+
+    if (j % 16 != 0) {
+        j += 16 - j%16;
+        // TODO: fill nop
+    }
+    subr_exec_storage.pos += j;
+    // fprintf(stderr, "update pos:%u\n", subr_exec_storage.pos);
+
+    for (i=0; i<jpt.size; i++) {
+        unsigned char *loc = jpt.entry[i].patch_location;
+        unsigned char *entry_point = entry_points[jpt.entry[i].destination];
+        int32_t diff = (int32_t)(entry_point - (loc + 4 /* jmp insn num */));
+
+        // fprintf(stderr, "loc:%p dst:%ld, diff:%d\n", jpt.entry[i].patch_location, jpt.entry[i].destination, diff);
+
+        for (int j=0; j<4; j++) {
+            loc[j] = (diff >> (j*8)) & 0xff;
+        }
+    }
+
+    // FL_SET(iseq, ISEQ_TRANSLATED);
+    info_for_perf(encoded, j, iseq);
+
+    iseq->body->subr_encoded = encoded;
+    iseq->body->subr_entry_points = (void **)entry_points;
+
+    if (getenv("RUBY_CT_DUMP")) {
+        fprintf(stderr, "\n==> ");
+        rp(iseq);
+        disasm_native(encoded, j);
+    }
+
+    // fprintf(stderr, "%6d\t", (int)j); rp(iseq);
+    if (j >= encoded_limit) {
+        rp(iseq);
+        disasm_native(encoded, j);
+        rb_bug("JIT code overflow!! %u (max:%u)", j, encoded_limit);
+    }
 #endif
     return COMPILE_OK;
 }

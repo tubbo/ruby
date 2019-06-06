@@ -3545,3 +3545,60 @@ Init_ISeq(void)
     rb_undef_method(CLASS_OF(rb_cISeq), "translate");
     rb_undef_method(CLASS_OF(rb_cISeq), "load_iseq");
 }
+
+void rb_insn_tail(void);
+
+static int
+jmp_to_insn_tail_p(const unsigned char *code)
+{
+    unsigned int offset = 0;
+    for (int i=0; i<4; i++) {
+        offset |= (code[i] << (i * 8));
+    }
+    // fprintf(stderr, "code:%p offset:%u dst:%p tail:%p\n", code, offset, &code[4] + (int)offset, rb_insn_tail);
+    if (&code[4] + (int)offset == (void *)rb_insn_tail) {
+        return TRUE;
+    }
+    else {
+        return FALSE;
+    }
+}
+
+#include <sys/mman.h>
+#define PAGE_SIZE 4096L
+
+void
+Init_vm_modify(void)
+{
+    if (getenv("RUBY_SUBR_MODIFY_CODE") == NULL) return;
+
+    const void * const *table = rb_vm_get_insns_address_table();
+
+    for (int i=0; i<VM_INSTRUCTION_SIZE/2; i++) {
+        unsigned char *fp = (unsigned char *)table[i];
+        // fprintf(stderr, "insn:%s (%p)\n", insn_name(i), fp);
+
+        for (int j=0; j<128; j++) {
+            if (fp[j] == 0xe9 && jmp_to_insn_tail_p(&fp[j+1])) {
+                // fprintf(stderr, "found: %s (%d)\n", insn_name(i), j);
+                // jmpq   73930 <rb_insn_tail> -> retq
+                void *page = (void *)(((uint64_t)&fp[j] / PAGE_SIZE) * PAGE_SIZE);
+                size_t size = PAGE_SIZE;
+                if (&fp[j+4] >= (unsigned char *)page + PAGE_SIZE) size *= 2;
+
+                // fprintf(stderr, "%p < %p < %p\n", page, &fp[j], (void *)((uint64_t)page + PAGE_SIZE));
+                if (mprotect(page, size, PROT_READ | PROT_WRITE | PROT_EXEC) == -1) rb_bug("!!1");
+                // repz retq
+                fp[j+0] = 0xf3;
+                fp[j+1] = 0xc3;
+                // nopl (%[re]ax)
+                fp[j+2] = 0x0f;
+                fp[j+3] = 0x1f;
+                fp[j+4] = 0x40;
+
+                if (mprotect(page, size, PROT_READ | PROT_EXEC) == -1) rb_bug("!!2");
+                break;
+            }
+        }
+    }
+}

@@ -63,6 +63,63 @@ error !
 #define DISPATCH_ORIGINAL_INSN(x) return LABEL(x)(ec, reg_cfp);
 
 /************************************************/
+#elif OPT_SUBROUTINE_THREADED_CODE
+
+#define LABEL(x)  insn_func_##x
+#define ELABEL(x)
+#define LABEL_PTR(x) &LABEL(x)
+
+static inline int
+cf_cnt(rb_execution_context_t *ec, rb_control_frame_t *reg_cfp)
+{
+    return (int)(((rb_control_frame_t *)(ec->vm_stack + ec->vm_stack_size)) - reg_cfp);
+}
+static inline int
+pc_cnt(const VALUE *pc, const rb_iseq_t *iseq)
+{
+    return (int)(pc - iseq->body->iseq_encoded);
+}
+
+static inline int
+sp_cnt(rb_execution_context_t *ec, const VALUE *sp)
+{
+    return (int)(sp - ec->vm_stack);
+}
+
+#define SUBR_DEBUG 0
+
+#if SUBR_DEBUG
+extern int ruby_vm_subr_debug_verbose;
+#define SUBR_DEBUG_VERBOSE() ruby_vm_subr_debug_verbose
+#else
+#define SUBR_DEBUG_VERBOSE() 0
+#endif
+
+static void vm_line_status(rb_execution_context_t *ec, rb_control_frame_t *reg_cfp, const VALUE *reg_pc, VALUE *reg_sp, const char *insn_name);
+
+#define INSN_ENTRY(insn) \
+  static rb_control_frame_t * \
+    FUNC_FASTCALL(LABEL(insn))(rb_execution_context_t *ec, rb_control_frame_t *reg_cfp, const VALUE *reg_pc, VALUE *reg_sp) { \
+        if (SUBR_DEBUG_VERBOSE()) vm_line_status(ec, reg_cfp, reg_pc, reg_sp, #insn);
+
+rb_control_frame_t *rb_insn_tail      (rb_execution_context_t *ec, rb_control_frame_t *cfp, const VALUE *pc, VALUE *sp);
+
+rb_control_frame_t *rb_insn_tail_true (rb_execution_context_t *ec, rb_control_frame_t *cfp, const VALUE *pc, VALUE *sp);
+rb_control_frame_t *rb_insn_tail_false(rb_execution_context_t *ec, rb_control_frame_t *cfp, const VALUE *pc, VALUE *sp);
+rb_control_frame_t *rb_insn_tail_value(rb_execution_context_t *ec, rb_control_frame_t *cfp, const VALUE *pc, VALUE *sp, VALUE v);
+
+#define SUBR_TAIL_TRUE()   rb_insn_tail_true (ec, reg_cfp, GET_PC(), GET_SP())
+#define SUBR_TAIL_FALSE()  rb_insn_tail_false(ec, reg_cfp, GET_PC(), GET_SP())
+#define SUBR_TAIL_VALUE(v) rb_insn_tail_value(ec, reg_cfp, GET_PC(), GET_SP(), (v))
+
+#define END_INSN(insn) return rb_insn_tail  (ec, reg_cfp, GET_PC(), GET_SP());}
+#define NEXT_INSN()    return rb_insn_tail_true(ec, reg_cfp, GET_PC(), GET_SP());
+
+#define START_OF_ORIGINAL_INSN(x) /* ignore */
+#define DISPATCH_ORIGINAL_INSN(x) return LABEL(x)(ec, reg_cfp, GET_PC(), GET_SP());
+
+
+/************************************************/
 #elif OPT_TOKEN_THREADED_CODE || OPT_DIRECT_THREADED_CODE
 /* threaded code with gcc */
 
@@ -130,8 +187,8 @@ error !
 #define DISPATCH_ORIGINAL_INSN(x) goto  start_of_##x;
 
 /************************************************/
-#else /* no threaded code */
-/* most common method */
+
+#elif OPT_CALL_THREADED_CODE /* most common method */
 
 #define INSN_ENTRY(insn) \
 case BIN(insn):
@@ -171,8 +228,13 @@ default:                        \
     ec->errinfo = (VALUE)(exc); \
     return 0; \
 } while (0)
+#elif OPT_SUBROUTINE_THREADED_CODE
+#define THROW_EXCEPTION(exc) do { \
+    ec->errinfo = (VALUE)(exc); \
+    EC_JUMP_TAG(ec, ec->tag->state); \
+} while (0)
 #else
-#define THROW_EXCEPTION(exc) return (VALUE)(exc)
+#define THROW_EXCEPTION(exc) return (void *)(exc)
 #endif
 #endif
 

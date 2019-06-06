@@ -47,8 +47,8 @@ RUBY_SYMBOL_EXPORT_END
 /**********************************************************/
 
 #define VM_REG_CFP (reg_cfp)
-#define VM_REG_PC  (VM_REG_CFP->pc)
-#define VM_REG_SP  (VM_REG_CFP->sp)
+#define VM_REG_PC  (reg_pc)
+#define VM_REG_SP  (reg_sp)
 #define VM_REG_EP  (VM_REG_CFP->ep)
 
 #define RESTORE_REGS() do { \
@@ -81,12 +81,17 @@ enum vm_regan_acttype {
 #define GET_CURRENT_INSN() (*GET_PC())
 #define GET_OPERAND(n)     (GET_PC()[(n)])
 #define ADD_PC(n)          (SET_PC(VM_REG_PC + (n)))
+
+#if OPT_SUBROUTINE_THREADED_CODE
+#define JUMP(dst)          (SET_PC(VM_REG_PC + (dst))); return SUBR_TAIL_TRUE();
+#else
 #define JUMP(dst)          (SET_PC(VM_REG_PC + (dst)))
+#endif
 
 /* frame pointer, environment pointer */
 #define GET_CFP()  (COLLECT_USAGE_REGISTER_HELPER(CFP, GET, VM_REG_CFP))
 #define GET_EP()   (COLLECT_USAGE_REGISTER_HELPER(EP, GET, VM_REG_EP))
-#define SET_EP(x)  (VM_REG_EP = (COLLECT_USAGE_REGISTER_HELPER(EP, SET, (x))))
+#define SET_EP(x)  (VM_CFP->ep = VM_REG_EP = (COLLECT_USAGE_REGISTER_HELPER(EP, SET, (x))))
 #define GET_LEP()  (VM_EP_LEP(GET_EP()))
 
 /* SP */

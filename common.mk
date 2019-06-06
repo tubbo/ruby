@@ -1155,10 +1155,10 @@ $(srcdir)/ext/etc/constdefs.h: $(srcdir)/ext/etc/depend
 ##
 
 run: fake miniruby$(EXEEXT) PHONY
-	$(BTESTRUBY) $(TESTRUN_SCRIPT) $(RUNOPT)
+	time -p $(BTESTRUBY) $(TESTRUN_SCRIPT) $(RUNOPT)
 
 runruby: $(PROGRAM) PHONY
-	$(RUNRUBY) $(TESTRUN_SCRIPT)
+	time -p $(RUNRUBY) $(TESTRUN_SCRIPT)
 
 parse: fake miniruby$(EXEEXT) PHONY
 	$(BTESTRUBY) --dump=parsetree_with_comment,insns $(TESTRUN_SCRIPT)

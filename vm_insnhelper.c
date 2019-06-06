@@ -232,7 +232,7 @@ vm_check_canary(const rb_execution_context_t *ec, VALUE *sp)
 
     const VALUE *orig = rb_iseq_original_iseq(iseq);
     const VALUE *encoded = iseq->body->iseq_encoded;
-    const ptrdiff_t pos = GET_PC() - encoded;
+    const ptrdiff_t pos = reg_cfp->pc - encoded;
     const enum ruby_vminsn_type insn = (enum ruby_vminsn_type)orig[pos];
     const char *name = insn_name(insn);
     const VALUE iseqw = rb_iseqw_new(iseq);
@@ -1007,6 +1007,7 @@ vm_search_const_defined_class(const VALUE cbase, ID id)
 }
 
 ALWAYS_INLINE(static VALUE vm_getivar(VALUE, ID, IC, struct rb_call_cache *, int));
+
 static inline VALUE
 vm_getivar(VALUE obj, ID id, IC ic, struct rb_call_cache *cc, int is_attr)
 {
@@ -1060,6 +1061,33 @@ vm_getivar(VALUE obj, ID id, IC ic, struct rb_call_cache *cc, int is_attr)
     return rb_ivar_get(obj, id);
 }
 
+NOINLINE(static void * vm_getinstancevariable_slowpath(rb_execution_context_t *ec, rb_control_frame_t *reg_cfp, const VALUE *reg_pc, VALUE *reg_sp));
+
+static void *
+vm_getinstancevariable_slowpath(rb_execution_context_t *ec, rb_control_frame_t *reg_cfp, const VALUE *reg_pc, VALUE *reg_sp)
+{
+    ID id = (ID)GET_PC()[-2];
+    IC ic = (IC)GET_PC()[-1];
+    VALUE obj = GET_SELF();
+    VALUE val = vm_getivar(obj, id, ic, NULL, FALSE);
+    PUSH(val);
+    return rb_insn_tail(ec, reg_cfp, reg_pc, reg_sp);
+}
+
+static inline VALUE
+vm_getinstancevariable_fastpath(VALUE obj, ID id, IC ic)
+{
+    if (LIKELY(RB_TYPE_P(obj, T_OBJECT))) {
+        if (LIKELY(ic->ic_serial == RCLASS_SERIAL(RBASIC(obj)->klass))) {
+            st_index_t index = ic->ic_value.index;
+            if (LIKELY(index < ROBJECT_NUMIV(obj))) {
+                return ROBJECT_IVPTR(obj)[index];
+            }
+        }
+    }
+    return Qundef;
+}
+
 static inline VALUE
 vm_setivar(VALUE obj, ID id, VALUE val, IC ic, struct rb_call_cache *cc, int is_attr)
 {
@@ -1108,12 +1136,6 @@ vm_setivar(VALUE obj, ID id, VALUE val, IC ic, struct rb_call_cache *cc, int is_
     return rb_ivar_set(obj, id, val);
 }
 
-static inline VALUE
-vm_getinstancevariable(VALUE obj, ID id, IC ic)
-{
-    return vm_getivar(obj, id, ic, NULL, FALSE);
-}
-
 static inline void
 vm_setinstancevariable(VALUE obj, ID id, VALUE val, IC ic)
 {
@@ -1152,9 +1174,9 @@ vm_throw_start(const rb_execution_context_t *ec, rb_control_frame_t *const reg_c
     }
     else if (state == TAG_BREAK) {
 	int is_orphan = 1;
-	const VALUE *ep = GET_EP();
-	const rb_iseq_t *base_iseq = GET_ISEQ();
-	escape_cfp = reg_cfp;
+        const VALUE *ep = GET_EP();
+        const rb_iseq_t *base_iseq = GET_ISEQ();
+        escape_cfp = reg_cfp;
 
 	while (base_iseq->body->type != ISEQ_TYPE_BLOCK) {
 	    if (escape_cfp->iseq->body->type == ISEQ_TYPE_CLASS) {
@@ -1711,12 +1733,35 @@ vm_base_ptr(const rb_control_frame_t *cfp)
 #endif
 }
 
+static void
+vm_line_status(rb_execution_context_t *ec, rb_control_frame_t *reg_cfp, const VALUE *reg_pc, VALUE *reg_sp, const char *insn_name)
+{
+    if (0) {
+        for (rb_control_frame_t *cfp = reg_cfp;
+             cfp != RUBY_VM_NEXT_CONTROL_FRAME(RUBY_VM_END_CONTROL_FRAME(ec));
+             cfp = RUBY_VM_PREVIOUS_CONTROL_FRAME(cfp)) {
+            fprintf(stderr, "-- %d --\n", cf_cnt(ec, cfp));
+            for (int i=0; i<(int)(reg_sp-vm_base_ptr(cfp)); i++) {
+                fprintf(stderr, "%d - ", i);
+                rp(vm_base_ptr(cfp)[i]);
+            }
+        }
+    }
+    fprintf(stderr, "|%*d> ep:%-3d sp:%3d(%d) pc:%3d %s\n",
+            cf_cnt(ec, reg_cfp), cf_cnt(ec, reg_cfp),
+            (int)(reg_cfp->ep - ec->vm_stack) % 1000,
+            sp_cnt(ec, reg_sp),
+            (int)(reg_sp - vm_base_ptr(reg_cfp)),
+            pc_cnt(reg_pc, reg_cfp->iseq), insn_name);
+
+}
+
 /* method call processes with call_info */
 
 #include "vm_args.c"
 
 static inline VALUE vm_call_iseq_setup_2(rb_execution_context_t *ec, rb_control_frame_t *cfp, struct rb_calling_info *calling, const struct rb_call_info *ci, struct rb_call_cache *cc, int opt_pc, int param_size, int local_size);
-ALWAYS_INLINE(static VALUE vm_call_iseq_setup_normal(rb_execution_context_t *ec, rb_control_frame_t *cfp, struct rb_calling_info *calling, const rb_callable_method_entry_t *me, int opt_pc, int param_size, int local_size));
+ALWAYS_INLINE(static VALUE vm_call_iseq_setup_normal(rb_execution_context_t *ec, rb_control_frame_t *cfp, struct rb_calling_info *calling, const rb_callable_method_entry_t *me, int opt_pc, int param_size, int local_size, int finish));
 static inline VALUE vm_call_iseq_setup_tailcall(rb_execution_context_t *ec, rb_control_frame_t *cfp, struct rb_calling_info *calling, const struct rb_call_info *ci, struct rb_call_cache *cc, int opt_pc);
 static VALUE vm_call_super_method(rb_execution_context_t *ec, rb_control_frame_t *reg_cfp, struct rb_calling_info *calling, const struct rb_call_info *ci, struct rb_call_cache *cc);
 static VALUE vm_call_method_nome(rb_execution_context_t *ec, rb_control_frame_t *cfp, struct rb_calling_info *calling, const struct rb_call_info *ci, struct rb_call_cache *cc);
@@ -1741,7 +1786,7 @@ vm_call_iseq_setup_normal_0start(rb_execution_context_t *ec, rb_control_frame_t 
     const rb_iseq_t *iseq = def_iseq_ptr(cc->me->def);
     int param = iseq->body->param.size;
     int local = iseq->body->local_table_size;
-    return vm_call_iseq_setup_normal(ec, cfp, calling, cc->me, 0, param, local);
+    return vm_call_iseq_setup_normal(ec, cfp, calling, cc->me, 0, param, local, FALSE);
 }
 
 MJIT_STATIC bool
@@ -1869,7 +1914,7 @@ vm_call_iseq_setup_normal_opt_start(rb_execution_context_t *ec, rb_control_frame
     }
 #endif
 
-    return vm_call_iseq_setup_normal(ec, cfp, calling, cc->me, opt_pc, param - delta, local);
+    return vm_call_iseq_setup_normal(ec, cfp, calling, cc->me, opt_pc, param - delta, local, FALSE);
 }
 
 static void
@@ -1899,7 +1944,7 @@ vm_call_iseq_setup_kwparm_kwarg(rb_execution_context_t *ec, rb_control_frame_t *
 
     int param = iseq->body->param.size;
     int local = iseq->body->local_table_size;
-    return vm_call_iseq_setup_normal(ec, cfp, calling, cc->me, 0, param, local);
+    return vm_call_iseq_setup_normal(ec, cfp, calling, cc->me, 0, param, local, FALSE);
 }
 
 static VALUE
@@ -1924,7 +1969,7 @@ vm_call_iseq_setup_kwparm_nokwarg(rb_execution_context_t *ec, rb_control_frame_t
 
     int param = iseq->body->param.size;
     int local = iseq->body->local_table_size;
-    return vm_call_iseq_setup_normal(ec, cfp, calling, cc->me, 0, param, local);
+    return vm_call_iseq_setup_normal(ec, cfp, calling, cc->me, 0, param, local, FALSE);
 }
 
 static inline int
@@ -2023,33 +2068,57 @@ vm_call_iseq_setup(rb_execution_context_t *ec, rb_control_frame_t *cfp, struct r
     return vm_call_iseq_setup_2(ec, cfp, calling, ci, cc, opt_pc, param_size, local_size);
 }
 
+static VALUE
+vm_call_iseq_setup_from_c(rb_execution_context_t *ec, rb_control_frame_t *cfp, struct rb_calling_info *calling, const struct rb_call_info *ci, struct rb_call_cache *cc)
+{
+    RB_DEBUG_COUNTER_INC(ccf_iseq_setup);
+
+    const rb_iseq_t *iseq = def_iseq_ptr(cc->me->def);
+    const int param_size = iseq->body->param.size;
+    const int local_size = iseq->body->local_table_size;
+    const int opt_pc = vm_callee_setup_arg(ec, calling, ci, cc, def_iseq_ptr(cc->me->def), cfp->sp - calling->argc, param_size, local_size);
+
+    // no tailcall
+    return vm_call_iseq_setup_normal(ec, cfp, calling, cc->me, opt_pc, param_size, local_size, TRUE);
+}
+
 static inline VALUE
 vm_call_iseq_setup_2(rb_execution_context_t *ec, rb_control_frame_t *cfp, struct rb_calling_info *calling, const struct rb_call_info *ci, struct rb_call_cache *cc,
 		     int opt_pc, int param_size, int local_size)
 {
     if (LIKELY(!(ci->flag & VM_CALL_TAILCALL))) {
-        return vm_call_iseq_setup_normal(ec, cfp, calling, cc->me, opt_pc, param_size, local_size);
+        return vm_call_iseq_setup_normal(ec, cfp, calling, cc->me, opt_pc, param_size, local_size, FALSE);
     }
     else {
 	return vm_call_iseq_setup_tailcall(ec, cfp, calling, ci, cc, opt_pc);
     }
 }
 
+static VALUE vm_exec_subr_code_cont(rb_execution_context_t *ec, rb_control_frame_t *reg_cfp, const rb_iseq_t *iseq, int start);
+
 static inline VALUE
 vm_call_iseq_setup_normal(rb_execution_context_t *ec, rb_control_frame_t *cfp, struct rb_calling_info *calling, const rb_callable_method_entry_t *me,
-                          int opt_pc, int param_size, int local_size)
+                          int opt_pc, int param_size, int local_size, int finish)
 {
     const rb_iseq_t *iseq = def_iseq_ptr(me->def);
     VALUE *argv = cfp->sp - calling->argc;
     VALUE *sp = argv + param_size;
     cfp->sp = argv - 1 /* recv */;
 
-    vm_push_frame(ec, iseq, VM_FRAME_MAGIC_METHOD | VM_ENV_FLAG_LOCAL, calling->recv,
-                  calling->block_handler, (VALUE)me,
-                  iseq->body->iseq_encoded + opt_pc, sp,
-                  local_size - param_size,
-                  iseq->body->stack_max);
-    return Qundef;
+    rb_control_frame_t *new_cfp =
+      vm_push_frame(ec, iseq,
+                    VM_FRAME_MAGIC_METHOD | VM_ENV_FLAG_LOCAL | (finish ? VM_FRAME_FLAG_FINISH : 0),
+                    calling->recv, calling->block_handler, (VALUE)me,
+                    iseq->body->iseq_encoded + opt_pc, sp,
+                    local_size - param_size,
+                    iseq->body->stack_max);
+
+    if (opt_pc > 0) {
+        return vm_exec_subr_code_cont(ec, new_cfp, iseq, opt_pc);
+    }
+    else {
+        return Qundef;
+    }
 }
 
 static inline VALUE
@@ -2096,6 +2165,7 @@ vm_call_iseq_setup_tailcall(rb_execution_context_t *ec, rb_control_frame_t *cfp,
 		  iseq->body->local_table_size - iseq->body->param.size,
 		  iseq->body->stack_max);
 
+    rb_bug(__func__);
     cfp->sp = sp_orig;
     RUBY_VM_CHECK_INTS(ec);
 
@@ -2263,12 +2333,10 @@ vm_call_cfunc_with_frame(rb_execution_context_t *ec, rb_control_frame_t *reg_cfp
     const rb_callable_method_entry_t *me = cc->me;
     const rb_method_cfunc_t *cfunc = vm_method_cfunc_entry(me);
     int len = cfunc->argc;
-
     VALUE recv = calling->recv;
     VALUE block_handler = calling->block_handler;
     VALUE frame_type = VM_FRAME_MAGIC_CFUNC | VM_FRAME_FLAG_CFRAME | VM_ENV_FLAG_LOCAL;
     int argc = calling->argc;
-    int orig_argc = argc;
 
     if (UNLIKELY(calling->kw_splat)) {
         frame_type |= VM_FRAME_FLAG_CFRAME_KW;
@@ -2277,17 +2345,21 @@ vm_call_cfunc_with_frame(rb_execution_context_t *ec, rb_control_frame_t *reg_cfp
         frame_type |= VM_FRAME_FLAG_CFRAME_EMPTY_KW;
     }
 
+    // TODO: fix it.
+    VALUE *sp = reg_cfp->sp;
+    const VALUE *argv = sp - argc;
+
     RUBY_DTRACE_CMETHOD_ENTRY_HOOK(ec, me->owner, me->def->original_id);
     EXEC_EVENT_HOOK(ec, RUBY_EVENT_C_CALL, recv, me->def->original_id, ci->mid, me->owner, Qundef);
 
     vm_push_frame(ec, NULL, frame_type, recv,
 		  block_handler, (VALUE)me,
-		  0, ec->cfp->sp, 0, 0);
+                  0, sp, 0, 0);
 
     if (len >= 0) rb_check_arity(argc, len, len);
 
-    reg_cfp->sp -= orig_argc + 1;
-    val = (*cfunc->invoker)(recv, argc, reg_cfp->sp + 1, cfunc->func);
+    reg_cfp->sp -= argc + 1; // should be after EVENT_HOOK
+    val = (*cfunc->invoker)(recv, argc, argv, cfunc->func);
 
     CHECK_CFP_CONSISTENCY("vm_call_cfunc");
 
@@ -2356,8 +2428,7 @@ vm_call_bmethod(rb_execution_context_t *ec, rb_control_frame_t *cfp, struct rb_c
     argc = calling->argc;
     argv = ALLOCA_N(VALUE, argc);
     MEMCPY(argv, cfp->sp - argc, VALUE, argc);
-    cfp->sp += - argc - 1;
-
+    cfp->sp -= argc + 1 /* recv */;
     return vm_call_bmethod_body(ec, calling, ci, cc, argv);
 }
 
@@ -2404,6 +2475,7 @@ vm_call_opt_send(rb_execution_context_t *ec, rb_control_frame_t *reg_cfp, struct
     cc_entry = *orig_cc;
     cc = &cc_entry;
 
+    VALUE * const reg_sp = reg_cfp->sp;
     sym = TOPN(i);
 
     if (!(ci->mid = rb_check_id(&sym))) {
@@ -2424,7 +2496,7 @@ vm_call_opt_send(rb_execution_context_t *ec, rb_control_frame_t *reg_cfp, struct
 	    MEMMOVE(&TOPN(i), &TOPN(i-1), VALUE, i);
 	}
 	calling->argc -= 1;
-	DEC_SP(1);
+        reg_cfp->sp--;
     }
 
     cc->me = rb_callable_method_entry_with_refinements(CLASS_OF(calling->recv), ci->mid, NULL);
@@ -2443,10 +2515,11 @@ vm_invoke_block_opt_call(rb_execution_context_t *ec, rb_control_frame_t *reg_cfp
 			 struct rb_calling_info *calling, const struct rb_call_info *ci, VALUE block_handler)
 {
     int argc = calling->argc;
+    VALUE *reg_sp = reg_cfp->sp;
 
     /* remove self */
     if (argc > 0) MEMMOVE(&TOPN(argc), &TOPN(argc-1), VALUE, argc);
-    DEC_SP(1);
+    reg_cfp->sp -= 1;
 
     return vm_invoke_block(ec, reg_cfp, calling, ci, block_handler);
 }
@@ -2481,6 +2554,7 @@ vm_call_method_missing(rb_execution_context_t *ec, rb_control_frame_t *reg_cfp, 
 {
     RB_DEBUG_COUNTER_INC(ccf_method_missing);
 
+    VALUE * const reg_sp = reg_cfp->sp;
     VALUE *argv = STACK_ADDR_FROM_TOP(calling->argc);
     struct rb_call_info ci_entry;
     const struct rb_call_info *ci;
@@ -2510,7 +2584,7 @@ vm_call_method_missing(rb_execution_context_t *ec, rb_control_frame_t *reg_cfp, 
 	MEMMOVE(argv+1, argv, VALUE, argc-1);
     }
     argv[0] = ID2SYM(orig_ci->mid);
-    INC_SP(1);
+    reg_cfp->sp += 1;
 
     ec->method_missing_reason = orig_cc->aux.method_missing_reason;
     return vm_call_method(ec, reg_cfp, calling, ci, cc);
@@ -2768,8 +2842,8 @@ vm_call_method_nome(rb_execution_context_t *ec, rb_control_frame_t *cfp, struct 
     const int stat = ci_missing_reason(ci);
 
     if (ci->mid == idMethodMissing) {
-	rb_control_frame_t *reg_cfp = cfp;
-	VALUE *argv = STACK_ADDR_FROM_TOP(calling->argc);
+        const VALUE * const reg_sp = cfp->sp;
+        const VALUE *argv = STACK_ADDR_FROM_TOP(calling->argc);
 	vm_raise_method_missing(ec, calling->argc, argv, calling->recv, stat);
     }
     else {
@@ -3085,20 +3159,24 @@ vm_invoke_iseq_block(rb_execution_context_t *ec, rb_control_frame_t *reg_cfp,
 {
     const rb_iseq_t *iseq = rb_iseq_check(captured->code.iseq);
     const int arg_size = iseq->body->param.size;
-    VALUE * const rsp = GET_SP() - calling->argc;
+    VALUE * const rsp = reg_cfp->sp - calling->argc;
     int opt_pc = vm_callee_setup_block_arg(ec, calling, ci, iseq, rsp, is_lambda ? arg_setup_method : arg_setup_block);
+    reg_cfp->sp = rsp;
 
-    SET_SP(rsp);
-
-    vm_push_frame(ec, iseq,
-		  VM_FRAME_MAGIC_BLOCK | (is_lambda ? VM_FRAME_FLAG_LAMBDA : 0),
-		  captured->self,
-		  VM_GUARDED_PREV_EP(captured->ep), 0,
-		  iseq->body->iseq_encoded + opt_pc,
-		  rsp + arg_size,
-		  iseq->body->local_table_size - arg_size, iseq->body->stack_max);
-
-    return Qundef;
+    rb_control_frame_t *new_cfp =
+      vm_push_frame(ec, iseq,
+                    VM_FRAME_MAGIC_BLOCK | (is_lambda ? VM_FRAME_FLAG_LAMBDA : 0),
+                    captured->self,
+                    VM_GUARDED_PREV_EP(captured->ep), 0,
+                    iseq->body->iseq_encoded + opt_pc,
+                    rsp + arg_size,
+                    iseq->body->local_table_size - arg_size, iseq->body->stack_max);
+    if (opt_pc == 0) {
+        return Qundef;
+    }
+    else {
+        return vm_exec_subr_code_cont(ec, new_cfp, iseq, opt_pc);
+    }
 }
 
 static VALUE
@@ -3106,12 +3184,11 @@ vm_invoke_symbol_block(rb_execution_context_t *ec, rb_control_frame_t *reg_cfp,
 		       struct rb_calling_info *calling, const struct rb_call_info *ci,
 		       VALUE symbol)
 {
-    VALUE val;
-    int argc;
     CALLER_SETUP_ARG(ec->cfp, calling, ci);
-    argc = calling->argc;
-    val = vm_yield_with_symbol(ec, symbol, argc, STACK_ADDR_FROM_TOP(argc), calling->kw_splat, calling->block_handler);
-    POPN(argc);
+    int argc = calling->argc;
+    const VALUE *reg_sp = reg_cfp->sp;
+    VALUE val = vm_yield_with_symbol(ec, symbol, argc, STACK_ADDR_FROM_TOP(argc), calling->kw_splat, calling->block_handler);
+    reg_cfp->sp -= argc;
     return val;
 }
 
@@ -3120,8 +3197,6 @@ vm_invoke_ifunc_block(rb_execution_context_t *ec, rb_control_frame_t *reg_cfp,
 		      struct rb_calling_info *calling, const struct rb_call_info *ci,
 		      const struct rb_captured_block *captured)
 {
-    VALUE val;
-    int argc;
     int kw_splat = calling->kw_splat;
     CALLER_SETUP_ARG(ec->cfp, calling, ci);
     CALLER_REMOVE_EMPTY_KW_SPLAT(ec->cfp, calling, ci);
@@ -3131,9 +3206,10 @@ vm_invoke_ifunc_block(rb_execution_context_t *ec, rb_control_frame_t *reg_cfp,
     else {
         kw_splat = calling->kw_splat;
     }
-    argc = calling->argc;
-    val = vm_yield_with_cfunc(ec, captured, captured->self, argc, STACK_ADDR_FROM_TOP(argc), kw_splat, calling->block_handler, NULL);
-    POPN(argc); /* TODO: should put before C/yield? */
+    int argc = calling->argc;
+    const VALUE *reg_sp = reg_cfp->sp;
+    VALUE val = vm_yield_with_cfunc(ec, captured, captured->self, argc, STACK_ADDR_FROM_TOP(argc), kw_splat, calling->block_handler, NULL);
+    reg_cfp->sp -= argc;
     return val;
 }
 
@@ -3220,14 +3296,14 @@ vm_once_clear(VALUE data)
 rb_control_frame_t *
 FUNC_FASTCALL(rb_vm_opt_struct_aref)(rb_execution_context_t *ec, rb_control_frame_t *reg_cfp)
 {
-    TOPN(0) = rb_struct_aref(GET_SELF(), TOPN(0));
+    reg_cfp->sp[-1] = rb_struct_aref(GET_SELF(), reg_cfp->sp[-1]);
     return reg_cfp;
 }
 
 rb_control_frame_t *
 FUNC_FASTCALL(rb_vm_opt_struct_aset)(rb_execution_context_t *ec, rb_control_frame_t *reg_cfp)
 {
-    rb_struct_aset(GET_SELF(), TOPN(0), TOPN(1));
+    rb_struct_aset(GET_SELF(), reg_cfp->sp[-1], reg_cfp->sp[-2]);
     return reg_cfp;
 }
 
@@ -3746,10 +3822,13 @@ vm_invokeblock_i(
     }
 }
 
+static VALUE vm_exec_subr_code(rb_execution_context_t *ec, rb_control_frame_t *reg_cfp, const rb_iseq_t *iseq);
+
 static VALUE
 vm_sendish(
     struct rb_execution_context_struct *ec,
     struct rb_control_frame_struct *reg_cfp,
+    VALUE *reg_sp,
     struct rb_call_info *ci,
     struct rb_call_cache *cc,
     VALUE block_handler,
@@ -3768,16 +3847,18 @@ vm_sendish(
     calling.kw_splat = IS_ARGS_KW_SPLAT(ci) > 0;
     calling.recv = recv;
     calling.argc = argc;
+    reg_cfp->sp = reg_sp;
 
     method_explorer(GET_CFP(), ci, cc, recv);
 
     val = cc->call(ec, GET_CFP(), &calling, ci, cc);
 
-    if (val != Qundef) {
-        return val;             /* CFUNC normal return */
+    if (val == Qundef) {
+        // RESTORE_REGS();         /* CFP pushed in cc->call() */
+        return vm_exec_subr_code(ec, ec->cfp, ec->cfp->iseq);
     }
     else {
-        RESTORE_REGS();         /* CFP pushed in cc->call() */
+        return val;             /* CFUNC normal return */
     }
 
 #ifdef MJIT_HEADER
@@ -3963,13 +4044,14 @@ vm_case_dispatch(CDHASH hash, OFFSET else_offset, VALUE key)
 NORETURN(static void
 	 vm_stack_consistency_error(const rb_execution_context_t *ec,
 				    const rb_control_frame_t *,
-				    const VALUE *));
+                                    const VALUE *, const VALUE *));
 static void
 vm_stack_consistency_error(const rb_execution_context_t *ec,
 			   const rb_control_frame_t *cfp,
+                           const VALUE *sp,
 			   const VALUE *bp)
 {
-    const ptrdiff_t nsp = VM_SP_CNT(ec, cfp->sp);
+    const ptrdiff_t nsp = VM_SP_CNT(ec, sp);
     const ptrdiff_t nbp = VM_SP_CNT(ec, bp);
     static const char stack_consistency_error[] =
 	"Stack consistency error (sp: %"PRIdPTRDIFF", bp: %"PRIdPTRDIFF")";
@@ -3981,64 +4063,6 @@ vm_stack_consistency_error(const rb_execution_context_t *ec,
 #else
     rb_bug(stack_consistency_error, nsp, nbp);
 #endif
-}
-
-static VALUE
-vm_opt_plus(VALUE recv, VALUE obj)
-{
-    if (FIXNUM_2_P(recv, obj) &&
-	BASIC_OP_UNREDEFINED_P(BOP_PLUS, INTEGER_REDEFINED_OP_FLAG)) {
-	return rb_fix_plus_fix(recv, obj);
-    }
-    else if (FLONUM_2_P(recv, obj) &&
-	     BASIC_OP_UNREDEFINED_P(BOP_PLUS, FLOAT_REDEFINED_OP_FLAG)) {
-	return DBL2NUM(RFLOAT_VALUE(recv) + RFLOAT_VALUE(obj));
-    }
-    else if (SPECIAL_CONST_P(recv) || SPECIAL_CONST_P(obj)) {
-	return Qundef;
-    }
-    else if (RBASIC_CLASS(recv) == rb_cFloat &&
-	     RBASIC_CLASS(obj)  == rb_cFloat &&
-	     BASIC_OP_UNREDEFINED_P(BOP_PLUS, FLOAT_REDEFINED_OP_FLAG)) {
-	return DBL2NUM(RFLOAT_VALUE(recv) + RFLOAT_VALUE(obj));
-    }
-    else if (RBASIC_CLASS(recv) == rb_cString &&
-	     RBASIC_CLASS(obj) == rb_cString &&
-	     BASIC_OP_UNREDEFINED_P(BOP_PLUS, STRING_REDEFINED_OP_FLAG)) {
-        return rb_str_opt_plus(recv, obj);
-    }
-    else if (RBASIC_CLASS(recv) == rb_cArray &&
-             RBASIC_CLASS(obj) == rb_cArray &&
-	     BASIC_OP_UNREDEFINED_P(BOP_PLUS, ARRAY_REDEFINED_OP_FLAG)) {
-	return rb_ary_plus(recv, obj);
-    }
-    else {
-	return Qundef;
-    }
-}
-
-static VALUE
-vm_opt_minus(VALUE recv, VALUE obj)
-{
-    if (FIXNUM_2_P(recv, obj) &&
-	BASIC_OP_UNREDEFINED_P(BOP_MINUS, INTEGER_REDEFINED_OP_FLAG)) {
-	return rb_fix_minus_fix(recv, obj);
-    }
-    else if (FLONUM_2_P(recv, obj) &&
-	     BASIC_OP_UNREDEFINED_P(BOP_MINUS, FLOAT_REDEFINED_OP_FLAG)) {
-	return DBL2NUM(RFLOAT_VALUE(recv) - RFLOAT_VALUE(obj));
-    }
-    else if (SPECIAL_CONST_P(recv) || SPECIAL_CONST_P(obj)) {
-	return Qundef;
-    }
-    else if (RBASIC_CLASS(recv) == rb_cFloat &&
-	     RBASIC_CLASS(obj)  == rb_cFloat &&
-	     BASIC_OP_UNREDEFINED_P(BOP_MINUS, FLOAT_REDEFINED_OP_FLAG)) {
-	return DBL2NUM(RFLOAT_VALUE(recv) - RFLOAT_VALUE(obj));
-    }
-    else {
-	return Qundef;
-    }
 }
 
 static VALUE
@@ -4132,50 +4156,22 @@ vm_opt_neq(CALL_INFO ci, CALL_CACHE cc,
 static VALUE
 vm_opt_lt(VALUE recv, VALUE obj)
 {
-    if (FIXNUM_2_P(recv, obj) &&
-	BASIC_OP_UNREDEFINED_P(BOP_LT, INTEGER_REDEFINED_OP_FLAG)) {
-	return (SIGNED_VALUE)recv < (SIGNED_VALUE)obj ? Qtrue : Qfalse;
-    }
-    else if (FLONUM_2_P(recv, obj) &&
-	     BASIC_OP_UNREDEFINED_P(BOP_LT, FLOAT_REDEFINED_OP_FLAG)) {
-	return RFLOAT_VALUE(recv) < RFLOAT_VALUE(obj) ? Qtrue : Qfalse;
-    }
-    else if (SPECIAL_CONST_P(recv) || SPECIAL_CONST_P(obj)) {
-	return Qundef;
-    }
-    else if (RBASIC_CLASS(recv) == rb_cFloat &&
-	     RBASIC_CLASS(obj)  == rb_cFloat &&
-	     BASIC_OP_UNREDEFINED_P(BOP_LT, FLOAT_REDEFINED_OP_FLAG)) {
-	CHECK_CMP_NAN(RFLOAT_VALUE(recv), RFLOAT_VALUE(obj));
-	return RFLOAT_VALUE(recv) < RFLOAT_VALUE(obj) ? Qtrue : Qfalse;
+    if (FIXNUM_2_P(recv, obj)) {
+        return (SIGNED_VALUE)recv < (SIGNED_VALUE)obj ? Qtrue : Qfalse;
     }
     else {
-	return Qundef;
+        return Qundef;
     }
 }
 
 static VALUE
 vm_opt_le(VALUE recv, VALUE obj)
 {
-    if (FIXNUM_2_P(recv, obj) &&
-	BASIC_OP_UNREDEFINED_P(BOP_LE, INTEGER_REDEFINED_OP_FLAG)) {
+    if (FIXNUM_2_P(recv, obj)) {
 	return (SIGNED_VALUE)recv <= (SIGNED_VALUE)obj ? Qtrue : Qfalse;
     }
-    else if (FLONUM_2_P(recv, obj) &&
-	     BASIC_OP_UNREDEFINED_P(BOP_LE, FLOAT_REDEFINED_OP_FLAG)) {
-	return RFLOAT_VALUE(recv) <= RFLOAT_VALUE(obj) ? Qtrue : Qfalse;
-    }
-    else if (SPECIAL_CONST_P(recv) || SPECIAL_CONST_P(obj)) {
-	return Qundef;
-    }
-    else if (RBASIC_CLASS(recv) == rb_cFloat &&
-	     RBASIC_CLASS(obj)  == rb_cFloat &&
-	     BASIC_OP_UNREDEFINED_P(BOP_LE, FLOAT_REDEFINED_OP_FLAG)) {
-	CHECK_CMP_NAN(RFLOAT_VALUE(recv), RFLOAT_VALUE(obj));
-	return RFLOAT_VALUE(recv) <= RFLOAT_VALUE(obj) ? Qtrue : Qfalse;
-    }
     else {
-	return Qundef;
+        return Qundef;
     }
 }
 
@@ -4559,6 +4555,7 @@ vm_trace(rb_execution_context_t *ec, rb_control_frame_t *reg_cfp, const VALUE *p
         }
         else {
             rb_hook_list_t *global_hooks = rb_vm_global_hooks(ec);
+            const VALUE *reg_sp = reg_cfp->sp; //TODO: fixme
 
             if (0) {
                 fprintf(stderr, "vm_trace>>%4d (%4x) - %s:%d %s\n",

@@ -188,6 +188,7 @@ rb_vmdebug_stack_dump_raw_current(void)
 {
     const rb_execution_context_t *ec = GET_EC();
     rb_vmdebug_stack_dump_raw(ec, ec->cfp);
+    fprintf(stderr, "%s\n", RSTRING_PTR(rb_iseq_disasm(ec->cfp->iseq)));
 }
 
 void

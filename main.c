@@ -50,3 +50,19 @@ main(int argc, char **argv)
 	return ruby_run_node(ruby_options(argc, argv));
     }
 }
+
+#include "vm_core.h"
+VALUE
+xxx(void)
+{
+    register VALUE *reg_pc;
+    register VALUE *reg_sp;
+    asm("mov %%r14, %0;" : "=r" (reg_pc) :  : );
+    asm("mov %%r15, %0;" : "=r" (reg_sp) :  : );
+
+    reg_pc += 1;
+
+    asm("mov %0, %%r14;" : : "r" (reg_pc) : );
+    asm("mov %0, %%r15;" : : "r" (reg_sp) : );
+    return 0;
+}

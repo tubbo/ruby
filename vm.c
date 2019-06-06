@@ -1886,46 +1886,38 @@ hook_before_rewind(rb_execution_context_t *ec, const rb_control_frame_t *cfp,
   be FALSE to avoid calling `mjit_exec` twice.
  */
 
-static inline VALUE
-vm_exec_handle_exception(rb_execution_context_t *ec, enum ruby_tag_type state,
-                         VALUE errinfo, VALUE *initial);
+static inline int vm_exec_handle_exception(rb_execution_context_t *ec, enum ruby_tag_type state, VALUE errinfo, VALUE *resultp);
 
 VALUE
 vm_exec(rb_execution_context_t *ec, int mjit_enable_p)
 {
     enum ruby_tag_type state;
-    VALUE result = Qundef;
-    VALUE initial = 0;
+    VALUE result;
 
     EC_PUSH_TAG(ec);
 
     _tag.retval = Qnil;
     if ((state = EC_EXEC_TAG()) == TAG_NONE) {
-        if (!mjit_enable_p || (result = mjit_exec(ec)) == Qundef) {
-            result = vm_exec_core(ec, initial);
-        }
-        goto vm_loop_start; /* fallback to the VM */
+        result = vm_exec_core(ec, ec->cfp);
     }
     else {
-	result = ec->errinfo;
+        VALUE errinfo = ec->errinfo;
         rb_ec_raised_reset(ec, RAISED_STACKOVERFLOW);
-        while ((result = vm_exec_handle_exception(ec, state, result, &initial)) == Qundef) {
-            /* caught a jump, exec the handler */
-            result = vm_exec_core(ec, initial);
-	  vm_loop_start:
-	    VM_ASSERT(ec->tag == &_tag);
-	    /* when caught `throw`, `tag.state` is set. */
-	    if ((state = _tag.state) == TAG_NONE) break;
-	    _tag.state = TAG_NONE;
-	}
+
+        if (vm_exec_handle_exception(ec, state, errinfo, &result)) {
+            result = vm_exec_core_until_finish(ec, ec->cfp, result);
+            VM_ASSERT(ec->tag == &_tag);
+        }
     }
     EC_POP_TAG();
+
     return result;
 }
 
-static inline VALUE
-vm_exec_handle_exception(rb_execution_context_t *ec, enum ruby_tag_type state,
-                         VALUE errinfo, VALUE *initial)
+// TRUE: continue
+// FALSE: finish
+static inline int
+vm_exec_handle_exception(rb_execution_context_t *ec, enum ruby_tag_type state, VALUE errinfo, VALUE *resultp)
 {
     struct vm_throw_data *err = (struct vm_throw_data *)errinfo;
 
@@ -1943,6 +1935,7 @@ vm_exec_handle_exception(rb_execution_context_t *ec, enum ruby_tag_type state,
 	catch_iseq = NULL;
 
 	while (ec->cfp->pc == 0 || ec->cfp->iseq == 0) {
+            // skip C-func frames
 	    if (UNLIKELY(VM_FRAME_TYPE(ec->cfp) == VM_FRAME_MAGIC_CFUNC)) {
 		EXEC_EVENT_HOOK_AND_POP_FRAME(ec, RUBY_EVENT_C_RETURN, ec->cfp->self,
 					      rb_vm_frame_method_entry(ec->cfp)->def->original_id,
@@ -1955,11 +1948,11 @@ vm_exec_handle_exception(rb_execution_context_t *ec, enum ruby_tag_type state,
 	    rb_vm_pop_frame(ec);
 	}
 
-	cfp = ec->cfp;
+        cfp = ec->cfp;
 	epc = cfp->pc - cfp->iseq->body->iseq_encoded;
+        escape_cfp = NULL;
 
-	escape_cfp = NULL;
-	if (state == TAG_BREAK || state == TAG_RETURN) {
+        if (state == TAG_BREAK || state == TAG_RETURN) {
 	    escape_cfp = THROW_DATA_CATCH_FRAME(err);
 
 	    if (cfp == escape_cfp) {
@@ -1969,6 +1962,7 @@ vm_exec_handle_exception(rb_execution_context_t *ec, enum ruby_tag_type state,
 			THROW_DATA_STATE_SET(err, state = TAG_BREAK);
 		    }
 		    else {
+                        // finish frame
 			ct = cfp->iseq->body->catch_table;
 			if (ct) for (i = 0; i < ct->size; i++) {
 			    entry = UNALIGNED_MEMBER_PTR(ct, entries[i]);
@@ -1985,22 +1979,19 @@ vm_exec_handle_exception(rb_execution_context_t *ec, enum ruby_tag_type state,
 			    ec->errinfo = Qnil;
 			    THROW_DATA_CATCH_FRAME_SET(err, cfp + 1);
 			    hook_before_rewind(ec, ec->cfp, TRUE, state, err);
-			    rb_vm_pop_frame(ec);
-			    return THROW_DATA_VAL(err);
-			}
+                            rb_vm_pop_frame(ec);
+                            *resultp = THROW_DATA_VAL(err);
+                            return FALSE;
+                        }
 		    }
 		    /* through */
 		}
 		else {
-		    /* TAG_BREAK */
-#if OPT_STACK_CACHING
-		    *initial = THROW_DATA_VAL(err);
-#else
-		    *ec->cfp->sp++ = THROW_DATA_VAL(err);
-#endif
-		    ec->errinfo = Qnil;
-		    return Qundef;
-		}
+                    /* TAG_BREAK */
+                    *resultp = THROW_DATA_VAL(err);
+                    ec->errinfo = Qnil;
+                    return TRUE;
+                }
 	    }
 	}
 
@@ -2059,20 +2050,21 @@ vm_exec_handle_exception(rb_execution_context_t *ec, enum ruby_tag_type state,
 			cont_sp = entry->sp;
 			break;
 		    }
-		    else if (entry->type == type) {
-			cfp->pc = cfp->iseq->body->iseq_encoded + entry->cont;
-			cfp->sp = vm_base_ptr(cfp) + entry->sp;
+                    else if (entry->type == type) {
+                        cfp->pc = cfp->iseq->body->iseq_encoded + entry->cont;
+                        cfp->sp = vm_base_ptr(cfp) + entry->sp;
 
-			if (state != TAG_REDO) {
-#if OPT_STACK_CACHING
-			    *initial = THROW_DATA_VAL(err);
-#else
-			    *ec->cfp->sp++ = THROW_DATA_VAL(err);
-#endif
-			}
 			ec->errinfo = Qnil;
 			VM_ASSERT(ec->tag->state == TAG_NONE);
-			return Qundef;
+
+                        if (state != TAG_REDO) {
+                            *resultp = vm_exec_core_cont_with_initial(ec, cfp, THROW_DATA_VAL(err));
+                        }
+                        else {
+                            *resultp = vm_exec_core(ec, cfp);
+                        }
+
+                        return VM_FRAME_FINISHED_P(cfp) ? FALSE : TRUE;
 		    }
 		}
 	    }
@@ -2105,33 +2097,36 @@ vm_exec_handle_exception(rb_execution_context_t *ec, enum ruby_tag_type state,
 	    /* enter catch scope */
 	    const int arg_size = 1;
 
-	    rb_iseq_check(catch_iseq);
-	    cfp->sp = vm_base_ptr(cfp) + cont_sp;
-	    cfp->pc = cfp->iseq->body->iseq_encoded + cont_pc;
+            rb_iseq_check(catch_iseq);
+            cfp->sp = vm_base_ptr(cfp) + cont_sp;
+            cfp->pc = cfp->iseq->body->iseq_encoded + cont_pc;
 
-	    /* push block frame */
+            // push rescue/ensure frame with a parameter
 	    cfp->sp[0] = (VALUE)err;
-	    vm_push_frame(ec, catch_iseq, VM_FRAME_MAGIC_RESCUE,
-			  cfp->self,
-			  VM_GUARDED_PREV_EP(cfp->ep),
-			  0, /* cref or me */
-			  catch_iseq->body->iseq_encoded,
-			  cfp->sp + arg_size /* push value */,
-			  catch_iseq->body->local_table_size - arg_size,
-			  catch_iseq->body->stack_max);
+            rb_control_frame_t *catch_cfp =
+              vm_push_frame(ec, catch_iseq, VM_FRAME_MAGIC_RESCUE,
+                            cfp->self,
+                            VM_GUARDED_PREV_EP(cfp->ep),
+                            0, /* cref or me */
+                            catch_iseq->body->iseq_encoded,
+                            cfp->sp + arg_size /* push value */,
+                            catch_iseq->body->local_table_size - arg_size,
+                            catch_iseq->body->stack_max);
 
-	    state = 0;
-	    ec->tag->state = TAG_NONE;
+            ec->tag->state = TAG_NONE;
 	    ec->errinfo = Qnil;
 
-	    return Qundef;
+            VALUE result = vm_exec_core(ec, catch_cfp);
+            *resultp = vm_exec_core_cont_with_initial(ec, cfp, result);
+            return VM_FRAME_FINISHED_P(cfp) ? FALSE : TRUE;
 	}
 	else {
 	    hook_before_rewind(ec, ec->cfp, FALSE, state, err);
 
 	    if (VM_FRAME_FINISHED_P(ec->cfp)) {
+                // throw to upper frame
 		rb_vm_pop_frame(ec);
-		ec->errinfo = (VALUE)err;
+                ec->errinfo = (VALUE)err;
 		ec->tag = ec->tag->prev;
 		EC_JUMP_TAG(ec, state);
 	    }
@@ -3269,7 +3264,15 @@ Init_VM(void)
 
     /* vm_backtrace.c */
     Init_vm_backtrace();
+
+#if SUBR_DEBUG
+    ruby_vm_subr_debug_verbose = getenv("RUBY_VM_SUBR_DEBUG_VERBOSE") ? TRUE : FALSE;
+#endif
 }
+
+#if SUBR_DEBUG
+int ruby_vm_subr_debug_verbose = 0;
+#endif
 
 void
 rb_vm_set_progname(VALUE filename)
