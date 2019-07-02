@@ -1070,7 +1070,7 @@ signal_exec(VALUE cmd, int safe, int sig)
      * 2. user calls trap(sig, "IGNORE"), setting SIG_IGN
      * 3. rb_signal_exec runs on queued signal
      */
-    if (IMMEDIATE_P(cmd))
+    if (SPECIAL_CONST_P(cmd))
 	return FALSE;
 
     ec->interrupt_mask |= TRAP_INTERRUPT_MASK;

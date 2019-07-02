@@ -436,26 +436,26 @@ VALUE rb_id2sym(ID);
 enum ruby_special_consts {
 #if USE_FLONUM
     RUBY_Qfalse = 0x00,		/* ...0000 0000 */
-    RUBY_Qtrue  = 0x14,		/* ...0001 0100 */
-    RUBY_Qnil   = 0x08,		/* ...0000 1000 */
-    RUBY_Qundef = 0x34,		/* ...0011 0100 */
+    RUBY_Qnil   = 0x04,		/* ...0000 0100 */
+    RUBY_Qtrue  = 0x0c,		/* ...0000 1100 */
+    RUBY_Qundef = 0x24,		/* ...0010 1100 */
 
     RUBY_IMMEDIATE_MASK = 0x07,
     RUBY_FIXNUM_FLAG    = 0x01,	/* ...xxxx xxx1 */
     RUBY_FLONUM_MASK    = 0x03,
     RUBY_FLONUM_FLAG    = 0x02,	/* ...xxxx xx10 */
-    RUBY_SYMBOL_FLAG    = 0x0c,	/* ...0000 1100 */
+    RUBY_SYMBOL_FLAG    = 0x14,	/* ...0001 0100 */
 #else
-    RUBY_Qfalse = 0,		/* ...0000 0000 */
-    RUBY_Qtrue  = 2,		/* ...0000 0010 */
-    RUBY_Qnil   = 4,		/* ...0000 0100 */
-    RUBY_Qundef = 6,		/* ...0000 0110 */
+    RUBY_Qfalse = 0x00,		/* ...0000 0000 */
+    RUBY_Qnil   = 0x02,		/* ...0000 0010 */
+    RUBY_Qtrue  = 0x06,		/* ...0000 0110 */
+    RUBY_Qundef = 0x0e,		/* ...0000 1110 */
 
     RUBY_IMMEDIATE_MASK = 0x03,
     RUBY_FIXNUM_FLAG    = 0x01,	/* ...xxxx xxx1 */
     RUBY_FLONUM_MASK    = 0x00,	/* any values ANDed with FLONUM_MASK cannot be FLONUM_FLAG */
     RUBY_FLONUM_FLAG    = 0x02,
-    RUBY_SYMBOL_FLAG    = 0x0e,	/* ...0000 1110 */
+    RUBY_SYMBOL_FLAG    = 0x1e,	/* ...0001 1110 */
 #endif
     RUBY_SPECIAL_SHIFT  = 8
 };
@@ -1306,7 +1306,7 @@ int rb_big_sign(VALUE);
 #define FL_USER18 	((VALUE)RUBY_FL_USER18)
 #define FL_USER19 	((VALUE)RUBY_FL_USER19)
 
-#define RB_SPECIAL_CONST_P(x) (RB_IMMEDIATE_P(x) || !RB_TEST(x))
+#define RB_SPECIAL_CONST_P(x) (RB_IMMEDIATE_P(x) || !(x))
 #define SPECIAL_CONST_P(x) RB_SPECIAL_CONST_P(x)
 
 #define RB_FL_ABLE(x) (!RB_SPECIAL_CONST_P(x) && RB_BUILTIN_TYPE(x) != RUBY_T_NODE)
@@ -2078,33 +2078,37 @@ static inline VALUE
 rb_class_of(VALUE obj)
 {
     if (RB_IMMEDIATE_P(obj)) {
-	if (RB_FIXNUM_P(obj)) return rb_cInteger;
-	if (RB_FLONUM_P(obj)) return rb_cFloat;
-	if (obj == RUBY_Qtrue)  return rb_cTrueClass;
+	if (RB_FIXNUM_P(obj))     return rb_cInteger;
+	if (RB_FLONUM_P(obj))     return rb_cFloat;
+	if (obj == RUBY_Qtrue)    return rb_cTrueClass;
 	if (RB_STATIC_SYM_P(obj)) return rb_cSymbol;
+        /* else */                return rb_cNilClass;
     }
-    else if (!RB_TEST(obj)) {
-	if (obj == RUBY_Qnil)   return rb_cNilClass;
-	if (obj == RUBY_Qfalse) return rb_cFalseClass;
+    else if (!obj) {
+        return rb_cFalseClass;
     }
-    return RBASIC(obj)->klass;
+    else {
+        return RBASIC(obj)->klass;
+    }
 }
 
 static inline int
 rb_type(VALUE obj)
 {
     if (RB_IMMEDIATE_P(obj)) {
-	if (RB_FIXNUM_P(obj)) return RUBY_T_FIXNUM;
-        if (RB_FLONUM_P(obj)) return RUBY_T_FLOAT;
-        if (obj == RUBY_Qtrue)  return RUBY_T_TRUE;
+	if (RB_FIXNUM_P(obj))     return RUBY_T_FIXNUM;
+        if (RB_FLONUM_P(obj))     return RUBY_T_FLOAT;
+        if (obj == RUBY_Qtrue)    return RUBY_T_TRUE;
 	if (RB_STATIC_SYM_P(obj)) return RUBY_T_SYMBOL;
-	if (obj == RUBY_Qundef) return RUBY_T_UNDEF;
+	if (obj == RUBY_Qundef)   return RUBY_T_UNDEF;
+        /* else */                return RUBY_T_NIL;
     }
-    else if (!RB_TEST(obj)) {
-	if (obj == RUBY_Qnil)   return RUBY_T_NIL;
-	if (obj == RUBY_Qfalse) return RUBY_T_FALSE;
+    else if (!obj) {
+        return RUBY_T_FALSE;
     }
-    return RB_BUILTIN_TYPE(obj);
+    else {
+        return RB_BUILTIN_TYPE(obj);
+    }
 }
 
 #ifdef __GNUC__
