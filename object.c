@@ -58,6 +58,24 @@ VALUE rb_cFalseClass; /*!< FalseClass class */
 
 /*! \endcond */
 
+VALUE
+rb_special_const_class_of(VALUE obj)
+{
+    if (obj) {
+        if (RB_FIXNUM_P(obj))     return rb_cInteger;
+        if (RB_FLONUM_P(obj))     return rb_cFloat;
+        if (obj == RUBY_Qtrue)    return rb_cTrueClass;
+        if (obj == RUBY_Qnil)     return rb_cNilClass;
+        else {
+            RUBY_ASSERT_WHEN(RUBY_DEBUG, RB_STATIC_SYM_P(obj));
+            return rb_cSymbol;
+        }
+    }
+    else {
+        return rb_cFalseClass;
+    }
+}
+
 /*!
  * Make the object invisible from Ruby code.
  *

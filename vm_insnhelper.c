@@ -1385,7 +1385,7 @@ rb_vm_search_method_slowpath(const struct rb_call_info *ci, struct rb_call_cache
 #endif
 }
 
-static void
+static inline void
 vm_search_method(const struct rb_call_info *ci, struct rb_call_cache *cc, VALUE recv)
 {
     VALUE klass = CLASS_OF(recv);

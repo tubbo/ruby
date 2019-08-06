@@ -2074,18 +2074,13 @@ RUBY_EXTERN VALUE rb_eMathDomainError;
 
 RUBY_EXTERN VALUE rb_stdin, rb_stdout, rb_stderr;
 
+VALUE rb_special_const_class_of(VALUE obj);
+
 static inline VALUE
 rb_class_of(VALUE obj)
 {
-    if (RB_IMMEDIATE_P(obj)) {
-	if (RB_FIXNUM_P(obj))     return rb_cInteger;
-	if (RB_FLONUM_P(obj))     return rb_cFloat;
-	if (obj == RUBY_Qtrue)    return rb_cTrueClass;
-	if (RB_STATIC_SYM_P(obj)) return rb_cSymbol;
-        /* else */                return rb_cNilClass;
-    }
-    else if (!obj) {
-        return rb_cFalseClass;
+    if (RB_SPECIAL_CONST_P(obj)) {
+        return rb_special_const_class_of(obj);
     }
     else {
         return RBASIC(obj)->klass;
@@ -2099,9 +2094,12 @@ rb_type(VALUE obj)
 	if (RB_FIXNUM_P(obj))     return RUBY_T_FIXNUM;
         if (RB_FLONUM_P(obj))     return RUBY_T_FLOAT;
         if (obj == RUBY_Qtrue)    return RUBY_T_TRUE;
-	if (RB_STATIC_SYM_P(obj)) return RUBY_T_SYMBOL;
+        if (obj == RUBY_Qnil)     return RUBY_T_NIL;
 	if (obj == RUBY_Qundef)   return RUBY_T_UNDEF;
-        /* else */                return RUBY_T_NIL;
+        else {
+            RUBY_ASSERT_WHEN(RUBY_DEBUG, RB_STATIC_SYM_P(obj));
+            return RUBY_T_SYMBOL;
+        }
     }
     else if (!obj) {
         return RUBY_T_FALSE;
