@@ -1253,7 +1253,7 @@ rb_iseq_translate_threaded_code(rb_iseq_t *iseq)
             j += emit_ret(&encoded[j]);
 
             // optimize
-#define USE_SUBR_OPTIMIZE 0
+#define USE_SUBR_OPTIMIZE 1
 
 #if USE_SUBR_OPTIMIZE
           case BIN(putobject):
