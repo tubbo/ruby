@@ -1094,10 +1094,13 @@ preludes: {$(VPATH)}prelude.c
 preludes: {$(VPATH)}miniprelude.c
 preludes: {$(srcdir)}golf_prelude.c
 
-BUILTIN_RB_SRCS = {$(VPATH)}trace_point.rb
+BUILTIN_RB_SRCS = $(srcdir)trace_point.rb $(srcdir)/ast.rb
 
 builtin_binary.inc: $(PREP) $(BUILTIN_RB_SRCS) $(srcdir)/tool/mk_builtin_binary.rb
 	$(Q) $(MINIRUBY) $(srcdir)/tool/mk_builtin_binary.rb
+
+load_ast.inc: {$(VPATH)}ast.rb $(srcdir)/tool/mk_builtin_loader.rb
+	$(Q) $(BASERUBY) $(srcdir)/tool/mk_builtin_loader.rb $(srcdir)/ast.rb
 
 load_trace_point.inc: {$(VPATH)}trace_point.rb $(srcdir)/tool/mk_builtin_loader.rb
 	$(Q) $(BASERUBY) $(srcdir)/tool/mk_builtin_loader.rb $(srcdir)/trace_point.rb
@@ -1588,6 +1591,7 @@ ast.$(OBJEXT): {$(VPATH)}id.h
 ast.$(OBJEXT): {$(VPATH)}intern.h
 ast.$(OBJEXT): {$(VPATH)}internal.h
 ast.$(OBJEXT): {$(VPATH)}iseq.h
+ast.$(OBJEXT): {$(VPATH)}load_ast.inc
 ast.$(OBJEXT): {$(VPATH)}method.h
 ast.$(OBJEXT): {$(VPATH)}missing.h
 ast.$(OBJEXT): {$(VPATH)}node.h
